@@ -12,6 +12,7 @@ Backend local-first executável como processo independente. A operação em runt
 | `config.py` | Ler TOML externo, validar campos, resolver referências a variáveis de ambiente. | `tomllib`, models |
 | `tuya_adapter.py` | Construir cliente TinyTuya, ler status LAN e escrever DPS. | TinyTuya, models |
 | `device_manager.py` | Identidade persistente por Device ID, endereço mutável, coordenação de estado, timeout, reconexão e falhas isoladas. | Adapter, config, models |
+| `command_scheduler.py` | Submissão assíncrona de operações normalizadas, coalescing de controles contínuos e ordenação discreta por dispositivo. | DeviceManager, biblioteca padrão (`threading`, `concurrent.futures`) |
 | `color.py` | Conversão RGB/HSV e serialização/validação HSV16 dos valores de cor Tuya. | Biblioteca padrão, `colorsys` |
 | `protocol.py` | Ler requests e escrever responses JSON Lines sem imprimir logs em stdout. | DeviceManager, models, JSON |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | DeviceManager |
@@ -36,7 +37,17 @@ Capacidades são específicas por dispositivo e derivadas dos DPS declarados. `L
 
 O codec C2A segue o formato HSV16 documentado pelo TinyTuya 1.20.0 (`HHHHSSSSVVVV`; hue 0–360, saturation/value 0–1000). O modo é escrito antes do valor dependente quando o DPS de modo está configurado e a última leitura indica modo diferente. Sem mapeamento de modo, não há alternância presumida. Comandos não ligam o dispositivo automaticamente. Uma troca de modo aceita seguida de falha no DPS de valor é uma falha parcial: não se faz rollback físico; o estado é atualizado por leitura de melhor esforço e a intenção incerta permanece pendente. Não há debounce nesta etapa.
 
-Escritas são serializadas por dispositivo, preservando a ordem de comandos dependentes. Polling começa em 15 segundos e não se sobrepõe a escrita no mesmo dispositivo. Depois de comandos, o estado é relido antes de ser considerado confirmado. Coalescing de 150 ms para controles contínuos permanece planejado para etapa futura; não está implementado.
+Escritas são serializadas por dispositivo, preservando a ordem de comandos dependentes. Polling começa em 15 segundos e não se sobrepõe a escrita no mesmo dispositivo. Depois de comandos, o estado é relido antes de ser considerado confirmado. O scheduler C2B adiciona coalescing para controles contínuos na camada acima do DeviceManager.
+
+### CommandScheduler (Etapa C2B)
+
+O scheduler é uma camada opcional e explicitamente iniciada por `start()`; o construtor não cria threads. Ele consulta o catálogo público do DeviceManager e cria um worker por Device ID. Uma `Condition` compartilhada coordena filas FIFO independentes; o lock é liberado antes de qualquer chamada síncrona ao DeviceManager. Assim, dispositivos diferentes progridem em paralelo, enquanto o DeviceManager continua coordenando cada comando com polling pelo lock local.
+
+Para cada dispositivo, uma intenção contínua fica elegível 150 ms após a primeira submissão do segmento; novas submissões do mesmo tipo substituem somente a intenção ainda não iniciada no final da fila e não reiniciam o prazo. A cadência limita inícios contínuos a pelo menos 150 ms, exceto quando uma barreira discreta antecipa a intenção precedente. Isso produz atualizações periódicas em um arraste longo, com atraso efetivo limitado pela duração da operação LAN em andamento. Controles incompatíveis — incluindo HSV e brilho colorido, apesar do DPS 24 compartilhado — são barreiras e preservam sua ordem.
+
+Power é discreto e nunca sofre coalescing nem espera sua própria janela. Ao chegar, antecipa os controles contínuos anteriores ainda pendentes, mantendo-os antes do power na FIFO; comandos posteriores permanecem depois dele. O scheduler não combina valores HSV nem chama TuyaAdapter diretamente.
+
+Cada API `submit_*` retorna `Future[DeviceStatus]`: enquanto aguarda, o Future não modifica nem confirma `LightState`; o resultado só é entregue após o método normalizado do DeviceManager completar sua leitura de confirmação. Um comando substituído tem Future cancelado; uma falha é propagada pelo Future preservando `BackendError`. Callbacks de Future executam sincronamente na thread que publica a conclusão e podem atrasar aquele worker e o shutdown. `stop(timeout_seconds=10)` fecha submissões, cancela comandos ainda na fila e deixa operações iniciadas terminarem. Retorna `False` se algum worker ainda está ativo no limite; também não tenta juntar a própria thread quando chamado de um callback. Uma chamada posterior de outra thread pode aguardar o encerramento. Shutdown não reinicia o scheduler e nunca cancela uma escrita iniciada.
 
 ## Erros e isolamento
 

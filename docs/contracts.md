@@ -77,3 +77,23 @@ Erro:
 ```
 
 O processo sidecar reserva stdout para essas mensagens; logs e diagnósticos vão para stderr. `requestId` é ecoado sem alteração. `payload` não aceita credenciais e responses não incluem Local Keys. `INVALID_INPUT` cobre JSON inválido, campos ausentes ou tipos incorretos.
+
+## CommandScheduler (Etapa C2B)
+
+`CommandScheduler(device_manager, coalescing_window_seconds=0.150, clock=time.monotonic)` é uma camada local, opcional e sem acesso a TinyTuya/credenciais. `start()` inicia um worker por dispositivo; repetir `start()` não duplica workers. Submissão exige scheduler iniciado, ainda aberto e Device ID conhecido. ID desconhecido gera `BackendError(INVALID_INPUT)` imediatamente. Validação de argumento/capacidade ocorre no método normalizado do DeviceManager e seu `BackendError` é preservado no Future.
+
+As APIs retornam `concurrent.futures.Future[DeviceStatus]`:
+
+- `submit_white_brightness(device_id, percent)` → `DeviceManager.set_white_brightness`.
+- `submit_color_temperature(device_id, percent)` → `DeviceManager.set_color_temperature`.
+- `submit_hsv(device_id, hue, saturation, value)` → `DeviceManager.set_hsv`.
+- `submit_color_brightness(device_id, percent)` → `DeviceManager.set_color_brightness`.
+- `submit_power(device_id, enabled)` → `DeviceManager.set_power` (discreto).
+
+Future pendente representa comando recebido aguardando execução e não altera `LightState`. `Future.running()` indica que começou. `result()` só retorna `DeviceStatus` depois que o DeviceManager finalizou a operação e seu readback; exceções preservam `BackendError`. Se uma intenção ainda não iniciada for substituída, o Future anterior fica cancelado (`Future.cancelled()`/`CancelledError`).
+
+Cada dispositivo tem uma FIFO própria. Apenas controles contínuos do mesmo tipo no fim da fila são compatíveis para substituição; atualizações não reiniciam a janela iniciada na primeira submissão. O worker mantém cadência mínima de 150 ms entre inícios contínuos, assim uma interação prolongada envia o valor mais recente periodicamente sem esperar o usuário parar. Comandos diferentes são barreiras: HSV e brilho colorido não se substituem embora compartilhem DPS 24; controles branco/cor mantêm ordem e trocas de modo são executadas pelo DeviceManager.
+
+Power sempre é enfileirado sem coalescing ou espera de janela própria. Na chegada, libera imediatamente as intenções contínuas anteriores ainda aguardando, que seguem antes de power pela FIFO; comandos que chegam depois permanecem depois de power. Uma operação já iniciada nunca é cancelada nem alterada.
+
+`stop(timeout_seconds=10.0) -> bool` fecha novas submissões, cancela Futures de comandos ainda na fila, permite comandos iniciados terminarem e aguarda os workers até o limite. `True` indica que todos os workers encerraram; `False` indica que pelo menos um ainda está ativo. Se chamado dentro de callback de Future, não tenta executar `join()` da própria thread e retorna `False` enquanto ela não tiver encerrado; uma chamada posterior de outra thread pode completar a espera. Callbacks de Future executam sincronamente na thread publicadora, podendo atrasar o worker e o shutdown. O scheduler é de ciclo único e não reinicia após stop. Workers são explicitamente não daemon; a aplicação deve chamar `stop()` no encerramento. A duração efetiva de shutdown depende dos timeouts de rede, da operação síncrona em andamento e de callbacks.
