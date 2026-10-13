@@ -83,8 +83,9 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Estado:** repositório Git existente; sem merge automático.
 - **Branch base atualizada:** `develop` em `1d96db2` (merge Code Review 02); base de desenvolvimento não é `main`.
 - **Branch de trabalho:** `feature/advanced-lighting-controls`, criada a partir de `1d96db2`.
-- **Commits C2A:** ainda não criados; alterações locais em validação.
-- **Arquivos não commitados:** `backend/src/smart_home_tray/color.py`, `backend/src/smart_home_tray/device_manager.py`, `backend/tests/test_color.py`, `backend/tests/test_device_manager.py`, `docs/PROJECT_STATUS.md`, `docs/architecture.md` e `docs/contracts.md`.
+- **Commits C2A:** `5dd0c74` (codec HSV16 e testes) e `9593803` (controles normalizados, regressões e documentação).
+- **Último commit:** `9593803 feat: add normalized lighting controls`.
+- **Arquivos não commitados:** nenhum; sem credenciais versionadas.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
