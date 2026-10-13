@@ -11,6 +11,9 @@ dependencies = [
     "tinytuya>=1.20,<2",
 ]
 
+[project.scripts]
+smart-home-tray = "smart_home_tray.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8,<9"]
 
