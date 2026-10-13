@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 1 — Backend Local-First, Etapa D (CLI + JSON Lines IPC).
-- **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` (`9e6df6c`); PR #2/C1 (`2224d2b`); Code Review 02 (`1d96db2`); PR #6/C2A (`78d4df0`); PR #7/C2B e CR-09 mergeadas em `develop` (`5a5d15c`); PR #10 sincronizou `main` com `develop` por merge commit e as árvores foram verificadas equivalentes. Etapa D e PR #11 implementadas. CI do commit `62e250b` teve 176 testes em Windows/Python 3.14 e uma falha entre 176 em Python 3.12 (CR-12). Correção CR-12 IMPLEMENTADA e TESTADA localmente em Python 3.14; aguarda push manual e CI atualizado. Nenhuma validação física realizada.
+- **Fase:** 2 - Etapa F2A (prototipo visual interativo; checkpoint em andamento).
+- **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
+- **Progresso:** Etapa D integrada em develop pela PR #11. O prototipo F2A esta implementado em feature/desktop-ui-prototype; 19 testes frontend e 177 testes backend passaram. Nenhuma validacao fisica foi realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -103,23 +103,24 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 
 ## Git
 
-- **Estado:** repositório Git existente; sem merge automático.
-- **Branch base atualizada:** `develop` em `565a09b`; PR #10 sincronizou a árvore de `main` com `develop` (árvores equivalentes antes da Etapa D).
-- **Branch de trabalho:** `feature/cli-jsonlines-protocol`, criada a partir de `origin/develop` em `565a09b`.
-- **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
-- **Último commit base:** `565a09b` (merge de sincronização #9 em `develop`; PR #10 de promoção/sincronização está incorporada conforme contexto do mantenedor).
-- **Commits C2B:** `1c4b3c8` (scheduler e testes), `cbf24a2` (documentação), `61776c3` (status) e `dcb4e8b` (correção CR-09, regressão e contratos). Atualização documental final deste checkpoint será commitada em seguida.
-- **Commits CR-10/CR-11:** `12c5905` (código e testes), `3790300` (documentação) e `62e250b` (status). **CR-12:** `207406c` (código e teste de regressão) e `cf3b997` (documentação). Arquivos não commitados: nenhum. PR #11 existente; sem push ou merge automático.
-- **PR #1:** mergeada em `develop` no commit `9e6df6c`.
-- **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
-- **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
-- **PR #6 C2A:** mergeada em `develop` no commit `78d4df0`.
-- **PR #7 C2B:** mergeada em `develop` no commit `5a5d15c`; CI passou com 140 testes antes da correção CR-09, que elevou a suíte para 141.
+- Estado: branch limpa no inicio do trabalho; alteracoes F2A locais, sem push ou merge.
+- Base: origin/develop em fb9081f, que ja inclui a Etapa D/PR #11.
+- Branch de trabalho: feature/desktop-ui-prototype, criada diretamente da base remota.
+- Commits F2A serao listados quando o checkpoint de validacao estiver completo.
+## Proximos passos
 
-- **PR #10:** sincronização por merge commit entre `develop` e `main`; árvores equivalentes foram verificadas antes deste trabalho. A Etapa D parte exclusivamente de `develop`.
-- **Etapa D / PR #11:** `feature/cli-jsonlines-protocol` → `develop`; no commit `62e250b`, CI reportou 176 passed/1 failed em Python 3.12 e 176 passed em Python 3.14. CR-12 em `207406c`; push manual pendente para atualizar a PR e aguardar os dois jobs. Branch local mantida, sem push/merge.
+1. Revisao manual das telas pelo mantenedor, pois nao havia navegador automatizavel disponivel neste ambiente.
+2. Validar compilacao Tauri depois de instalar Rust/Cargo e Microsoft C++ Build Tools.
+3. Revisar os commits locais e publicar manualmente uma PR direcionada a develop.
 
-## Próximos passos
+## Checkpoint F2A - prototipo visual interativo
 
-1. Revisar CR-12 e os commits locais atualizados da PR #11.
-2. Mantenedor publica manualmente `feature/cli-jsonlines-protocol`; aguardar CI Windows/Python 3.12/3.14 antes de liberar merge. Não avançar para Tauri/React.
+- Estado: interface React/TypeScript demonstravel no navegador, camada Tauri 2 preparada e todos os dispositivos exclusivamente simulados.
+- Base Git: branch feature/desktop-ui-prototype derivada de origin/develop fb9081f (Etapa D ja integrada).
+- Dependencias: Node 24.14.1, npm 11.11.0, Vite 8.3.4, React 19, Tailwind v4, Motion, Lucide, Vitest e Testing Library; npm ci instalou 132 pacotes e reportou zero vulnerabilidades.
+- Verificacoes frontend: typecheck, Oxlint, 19 testes em 3 arquivos e build Vite passaram.
+- Verificacao backend: backend/tests -q passou com 177 testes; nenhum arquivo Python do backend foi alterado.
+- Tauri: scaffold/configuracao Tauri 2 presente. Rust/Cargo nao estao instalados; a compilacao nativa nao foi executada. O workflow CI frontend nao compila Rust.
+- Inspecao visual: npm run dev serviu o app, mas CUA nao encontrou navegador e a sessao nao tinha js_repl/Playwright; nao foi possivel gerar screenshots. Revisao visual manual ainda recomendada.
+- Hardware, backend runtime, LAN, cloud e credenciais: nenhum foi acessado.
+- Fase 2 continua aberta; este checkpoint nao marca a fase como concluida.
