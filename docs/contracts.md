@@ -77,8 +77,8 @@ Comandos e payloads exatos:
 
 | Comando | Payload | Resultado |
 | --- | --- | --- |
-| `devices.list` | `{}` | `{ "devices": [DeviceStatus público, ...] }`, sem LAN |
-| `device.get` | `{ "deviceId": string }` | `DeviceStatus` do catálogo, sem LAN |
+| `devices.list` | `{}` | `{ "devices": [DeviceStatus público, ...] }`, sem LAN; executado fora da thread de stdin |
+| `device.get` | `{ "deviceId": string }` | `DeviceStatus` do catálogo, sem LAN; executado fora da thread de stdin |
 | `device.status` | `{ "deviceId": string }` | `DeviceStatus` após leitura LAN |
 | `device.power` | `{ "deviceId": string, "enabled": boolean }` | `DeviceStatus` após readback confirmado |
 | `device.whiteBrightness` | `{ "deviceId": string, "percent": 0..100 }` | `DeviceStatus` após readback confirmado |
@@ -87,6 +87,8 @@ Comandos e payloads exatos:
 | `device.colorBrightness` | `{ "deviceId": string, "percent": 0..100 }` | `DeviceStatus` após readback confirmado |
 
 Números devem ser finitos; booleanos não contam como números. Objetos payload são allowlists exatas, sem chaves de credenciais ou escrita DPS genérica. Escritas passam pelo `CommandScheduler`; power é discreto e controles contínuos mantêm o coalescing de 150 ms. Uma resposta pode terminar fora da ordem de recebimento devido a operações assíncronas independentes; FIFO por dispositivo continua sob responsabilidade do scheduler. Enqueue não confirma estado: sucesso só é emitido após o DeviceManager concluir readback válido.
+
+`device.status`, `device.get` e `devices.list` são despachados por executor limitado, sem criar uma thread por mensagem, para que a thread de stdin nunca espere locks ocupados por operações LAN. A inicialização lazy do scheduler consulta o snapshot lock-free de IDs do catálogo (`DeviceManager.list_device_ids()`), não estados públicos que precisam dos locks por dispositivo. O catálogo de IDs é imutável após construção; IPs e adapters podem mudar sem alterar a identidade.
 
 Substituição pelo coalescing ou cancelamento de comandos ainda não iniciados no shutdown termina com `COMMAND_CANCELED`. O código distingue apenas cancelamento conhecido; mensagem é genérica e segura. Uma operação LAN iniciada não é interrompida. Ao receber EOF, o servidor para novas submissões, fecha o scheduler cancelando fila pendente e aguarda operações iniciadas e leituras em andamento; então drena as respostas terminais do writer e encerra. O tempo de shutdown depende dos timeouts das operações. O writer é único, serializa e faz flush a cada linha; callbacks de Future apenas põem um evento em fila. stdout é reservado ao protocolo em `serve`; diagnósticos vão para stderr.
 
