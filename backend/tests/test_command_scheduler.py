@@ -43,6 +43,9 @@ class FakeDeviceManager:
     def list_devices(self):
         return self._devices
 
+    def list_device_ids(self):
+        return tuple(device.device_id for device in self._devices)
+
     def _run(self, device_id, kind, *args):
         with self._condition:
             index = sum(call[0] == device_id for call in self.calls)
