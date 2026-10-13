@@ -4,7 +4,7 @@
 
 - **Fase:** 1 — Backend Local-First.
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** Etapas A e B implementadas; correções CR-01 a CR-03 do Code Review 01 implementadas e verificadas com mocks. Aguardando revisão/PR antes de novas entregas. DeviceManager, CLI e JSON Lines ainda não iniciados.
+- **Progresso:** Etapas A e B implementadas; correções CR-01 a CR-03 do Code Review 01 implementadas e verificadas com mocks. PR #1 foi aprovada arquiteturalmente com observações não bloqueantes e está aberta para merge manual em `develop`. DeviceManager, CLI e JSON Lines ainda não iniciados.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -38,7 +38,7 @@
 - **Code Review 01:** testes focados `backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests\\test_models.py backend\\tests\\test_tuya_adapter.py -q` — **32 passed**; suíte completa `backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests -q` — **36 passed**; `compileall` — sem erros; `git diff --check` — sem erros.
 - **Dispositivos físicos:** nenhum acessado ou alterado.
 - **PyInstaller:** não instalado; nenhum empacotamento foi executado.
-- **PR:** tentativa de criação para `develop` não foi possível porque `origin` não possui branch `develop` (refs remotas verificadas: `main` e `fix/checkpoint-01-review`). Nenhuma PR foi criada.
+- **PR #1:** aberta de `fix/checkpoint-01-review` para `develop`; revisão arquitetural aprovada com observações não bloqueantes. Não mesclada. Checks automáticos ainda não configurados.
 - **Ambiente:** dependências foram instaladas inicialmente no Python 3.14 existente para validar a instalação; a suíte final foi repetida em `backend/.venv`, que será o ambiente de desenvolvimento daqui em diante.
 
 ## Decisões técnicas
@@ -51,6 +51,8 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Não há validação física automatizada; capacidades e faixas precisam permanecer identificadas como não validadas até evidência correspondente.
 - A versão mínima declarada é Python 3.12; a execução deste checkpoint foi em Python 3.14.3. A versão 3.12 ainda não foi executada localmente.
 - PyInstaller e empacotamento ainda não foram testados; compatibilidade futura foi documentada a partir da documentação oficial, não validada por build.
+- Normalizar exceções durante a inicialização do `TuyaAdapter` (pendência técnica; não implementada neste checkpoint).
+- Criar GitHub Actions para executar `pytest` automaticamente nas PRs (pendência técnica; não implementada neste checkpoint).
 
 ## Pendências arquiteturais
 
@@ -66,12 +68,12 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Commit das correções:** `fd9ab2b` (`fix: address checkpoint 01 review findings`).
 - **Último commit:** HEAD da branch `fix/checkpoint-01-review`, incluindo o registro deste checkpoint.
 - **Arquivos não commitados:** nenhum após o commit final do checkpoint.
-- **PR:** não criada; depende da criação/publicação de `develop` no remoto ou de indicação de outra base.
+- **PR:** #1 aberta com base `develop`; estado aberto, aprovada para merge manual e sem merge automático.
 
 ## Próximos passos
 
-1. Executar a suíte completa, compileall e revisar diff/segredos; atualizar este status com resultados finais.
-2. Criar/publicar a branch remota `develop` a partir de `main` ou indicar uma base remota existente; então abrir PR de `fix/checkpoint-01-review`, sem merge.
-3. Aguardar revisão do Code Review 01.
-4. Após aprovação, implementar `DeviceManager` com serialização, coalescing, estado confirmado/pendente/offline, polling e redescoberta simples de IP.
-5. Implementar parsing de estado e conversão/serialização RGB/HSV respeitando o DPS específico por dispositivo; depois CLI e protocolo JSON Lines sobre o mesmo manager.
+1. Fazer merge manual da PR #1 em `develop`, conforme o processo do repositório.
+2. Em checkpoint posterior, normalizar exceções da inicialização do `TuyaAdapter`.
+3. Adicionar GitHub Actions para executar a suíte `pytest` nas PRs.
+4. Após o merge e autorização/revisão do próximo checkpoint, implementar `DeviceManager` com serialização, coalescing, estados, polling e redescoberta simples de IP.
+5. Depois implementar parsing de estado e conversão/serialização RGB/HSV, CLI e protocolo JSON Lines sobre o mesmo manager.
