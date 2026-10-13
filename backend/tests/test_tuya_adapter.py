@@ -1,4 +1,5 @@
 import socket
+import traceback
 
 import pytest
 
@@ -172,3 +173,40 @@ def test_adapter_maps_tinytuya_write_error():
         adapter.write_dps(20, True)
 
     assert error.value.code is ErrorCode.DEVICE_OFFLINE
+
+
+@pytest.mark.parametrize(
+    ("initialization_error", "expected_code"),
+    [
+        (socket.timeout("unit-test-key-not-real"), ErrorCode.TIMEOUT),
+        (OSError("unit-test-key-not-real"), ErrorCode.DEVICE_OFFLINE),
+        (RuntimeError("unit-test-key-not-real"), ErrorCode.DEVICE_ERROR),
+    ],
+)
+def test_adapter_normalizes_factory_initialization_errors_safely(
+    initialization_error, expected_code
+):
+    def failing_factory(**_kwargs):
+        raise initialization_error
+
+    with pytest.raises(BackendError) as error:
+        TuyaAdapter(make_config(), device_factory=failing_factory)
+
+    assert error.value.code is expected_code
+    assert "unit-test-key-not-real" not in str(error.value)
+    assert error.value.__suppress_context__ is True
+
+
+def test_adapter_preserves_structured_factory_error():
+    structured_error = BackendError(ErrorCode.AUTH_FAILED, "safe authentication error")
+    structured_error.__cause__ = RuntimeError("unit-test-key-not-real")
+
+    def failing_factory(**_kwargs):
+        raise structured_error
+
+    with pytest.raises(BackendError) as error:
+        TuyaAdapter(make_config(), device_factory=failing_factory)
+
+    assert error.value is structured_error
+    rendered = "".join(traceback.format_exception(error.value))
+    assert "unit-test-key-not-real" not in rendered

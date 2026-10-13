@@ -16,16 +16,26 @@ class TuyaAdapter:
 
     def __init__(self, config: DeviceConfig, device_factory: DeviceFactory | None = None) -> None:
         self._config = config
-        self._device = (device_factory or self._default_device_factory())(
-            dev_id=config.device_id,
-            address=config.address,
-            local_key=config.local_key,
-            version=config.protocol_version,
-            connection_timeout=config.connection_timeout_seconds,
-            connection_retry_limit=1,
-            connection_retry_delay=0,
-            persist=False,
-        )
+        try:
+            factory = device_factory or self._default_device_factory()
+            self._device = factory(
+                dev_id=config.device_id,
+                address=config.address,
+                local_key=config.local_key,
+                version=config.protocol_version,
+                connection_timeout=config.connection_timeout_seconds,
+                connection_retry_limit=1,
+                connection_retry_delay=0,
+                persist=False,
+            )
+        except BackendError as error:
+            # Preserve the structured code/message but discard a possibly unsafe cause.
+            error.__cause__ = None
+            error.__context__ = None
+            error.__suppress_context__ = True
+            raise error from None
+        except Exception as error:
+            self._raise_transport_error(error)
 
     @staticmethod
     def _default_device_factory() -> DeviceFactory:
