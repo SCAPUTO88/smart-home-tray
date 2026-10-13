@@ -43,6 +43,7 @@ O construtor do `TuyaAdapter` preserva `BackendError` estruturado e normaliza ou
 | `INVALID_INPUT` | Configuração, DPS ou payload fora do contrato. |
 | `UNSUPPORTED_CAPABILITY` | Operação solicita capacidade ausente no mapa do dispositivo. |
 | `DEVICE_ERROR` | Erro do equipamento não mapeado para os códigos acima. |
+| `COMMAND_CANCELED` | Comando substituído antes de iniciar ou cancelado por shutdown; mensagem genérica quando a causa específica não é confiável. |
 
 Mapeamento documentado da TinyTuya: 903 → `INVALID_INPUT` (valor fora do intervalo); 904 → `DEVICE_ERROR` (payload inesperado, diagnóstico fixo e seguro); 907 → `UNSUPPORTED_CAPABILITY`; 914 → `AUTH_FAILED` (mensagem neutra sobre parâmetros de autenticação, sem afirmar se a causa foi chave ou protocolo). Códigos desconhecidos usam `DEVICE_ERROR`. Mensagens brutas de resposta/exceção não são repassadas.
 
@@ -56,27 +57,40 @@ O percentual do DPS de temperatura é uma normalização matemática dos limites
 
 TOML define `version = 1`, array `devices`, identidade, endereço, protocolo, timeout, `local_key_env`, tabela `[devices.dps]` e limites físicos. O nome em `local_key_env` é lido do ambiente; o valor não é serializado de volta nem incluído em erros. `config.example.toml` contém somente placeholders.
 
-## JSON Lines futuro
+## CLI e JSON Lines
 
-Uma linha JSON por mensagem, UTF-8. Requisição:
+O entrypoint `smart-home-tray` (equivalente a `python -m smart_home_tray.cli`) aceita `--config <arquivo.toml>` e os subcomandos `list`, `status --device`, `power --device (--on|--off)`, `white-brightness --device --percent`, `color-temperature --device --percent`, `hsv --device --hue --saturation --value`, `color-brightness --device --percent` e `serve`. `list` somente consulta o catálogo; `status` e comandos de controle acessam LAN explicitamente. `--help` não carrega configuração nem inicia conexões. `serve` não liga polling.
+
+O transporte `JsonLinesServer` lê e escreve bytes UTF-8: cada linha de entrada contém um objeto JSON e cada resposta ocupa exatamente uma linha JSON em stdout. Uma mensagem tem no máximo 65.536 bytes UTF-8, sem contar LF/CRLF. Linhas maiores são drenadas até o delimitador, recebem `requestId: null` e `INVALID_INPUT`; a leitura continua. JSON inválido, UTF-8 inválido, NaN e Infinity também são rejeitados.
+
+`requestId` é obrigatório: string não vazia de até 128 caracteres. O cliente deve gerar IDs únicos durante a sessão. Duplicatas enquanto a resposta anterior ainda está em andamento recebem erro com ID nulo e não afetam a requisição original. IDs saem do conjunto ativo após a resposta terminal ser gravada, evitando retenção ilimitada. ID ausente, de tipo incorreto, vazio ou longo demais retorna `requestId: null` e `INVALID_INPUT`.
+
+Envelope da requisição (campos extras são rejeitados):
 
 ```json
 {"requestId":"req-1","command":"device.status","payload":{"deviceId":"<id>"}}
 ```
 
-Sucesso:
+Sucesso usa `{"requestId":"req-1","result":...}`; erro usa `{"requestId":"req-1","error":{"code":"DEVICE_OFFLINE","message":"Device is unreachable"}}`. Para IDs inválidos, a resposta usa `requestId: null`. Status é serializado exclusivamente por `device_status_to_public_dict()`; `DeviceConfig`, `AppConfig`, DPS crus, Local Keys e exceções não são serializados.
 
-```json
-{"requestId":"req-1","result":{"deviceId":"<id>","online":true}}
-```
+Comandos e payloads exatos:
 
-Erro:
+| Comando | Payload | Resultado |
+| --- | --- | --- |
+| `devices.list` | `{}` | `{ "devices": [DeviceStatus público, ...] }`, sem LAN |
+| `device.get` | `{ "deviceId": string }` | `DeviceStatus` do catálogo, sem LAN |
+| `device.status` | `{ "deviceId": string }` | `DeviceStatus` após leitura LAN |
+| `device.power` | `{ "deviceId": string, "enabled": boolean }` | `DeviceStatus` após readback confirmado |
+| `device.whiteBrightness` | `{ "deviceId": string, "percent": 0..100 }` | `DeviceStatus` após readback confirmado |
+| `device.colorTemperature` | `{ "deviceId": string, "percent": 0..100 }` | `DeviceStatus` após readback confirmado |
+| `device.hsv` | `{ "deviceId": string, "hue": 0..360, "saturation": 0..100, "value": 0..100 }` | `DeviceStatus` após readback confirmado |
+| `device.colorBrightness` | `{ "deviceId": string, "percent": 0..100 }` | `DeviceStatus` após readback confirmado |
 
-```json
-{"requestId":"req-1","error":{"code":"DEVICE_OFFLINE","message":"Device is unreachable"}}
-```
+Números devem ser finitos; booleanos não contam como números. Objetos payload são allowlists exatas, sem chaves de credenciais ou escrita DPS genérica. Escritas passam pelo `CommandScheduler`; power é discreto e controles contínuos mantêm o coalescing de 150 ms. Uma resposta pode terminar fora da ordem de recebimento devido a operações assíncronas independentes; FIFO por dispositivo continua sob responsabilidade do scheduler. Enqueue não confirma estado: sucesso só é emitido após o DeviceManager concluir readback válido.
 
-O processo sidecar reserva stdout para essas mensagens; logs e diagnósticos vão para stderr. `requestId` é ecoado sem alteração. `payload` não aceita credenciais e responses não incluem Local Keys. `INVALID_INPUT` cobre JSON inválido, campos ausentes ou tipos incorretos.
+Substituição pelo coalescing ou cancelamento de comandos ainda não iniciados no shutdown termina com `COMMAND_CANCELED`. O código distingue apenas cancelamento conhecido; mensagem é genérica e segura. Uma operação LAN iniciada não é interrompida. Ao receber EOF, o servidor para novas submissões, fecha o scheduler cancelando fila pendente e aguarda operações iniciadas e leituras em andamento; então drena as respostas terminais do writer e encerra. O tempo de shutdown depende dos timeouts das operações. O writer é único, serializa e faz flush a cada linha; callbacks de Future apenas põem um evento em fila. stdout é reservado ao protocolo em `serve`; diagnósticos vão para stderr.
+
+Erros JSON/contrato usam `INVALID_INPUT`; códigos do DeviceManager são preservados com mensagens públicas seguras. Falha inesperada vira `DEVICE_ERROR` genérico, sem traceback ou texto interno no IPC.
 
 ## CommandScheduler (Etapa C2B)
 

@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 1 — Backend Local-First.
+- **Fase:** 1 — Backend Local-First, Etapa D (CLI + JSON Lines IPC).
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`; PR #6 (Etapa C2A) mergeada em `develop` no commit `78d4df0`. Etapa C2B implementada, testada localmente e commitada em `feature/continuous-controls-scheduler`; sem push ou PR. Nenhuma validação física realizada.
+- **Progresso:** PR #1 mergeada em `develop` (`9e6df6c`); PR #2/C1 (`2224d2b`); Code Review 02 (`1d96db2`); PR #6/C2A (`78d4df0`); PR #7/C2B e CR-09 mergeadas em `develop` (`5a5d15c`); PR #10 sincronizou `main` com `develop` por merge commit e as árvores foram verificadas equivalentes. Etapa D IMPLEMENTADA e TESTADA localmente; implementação commitada em `7c7c0db` e documentação registrada neste checkpoint. Sem push ou PR. Nenhuma validação física realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -31,7 +31,10 @@
 | Validação física de controles C2A | PLANEJADO | Nenhum dispositivo real acessado |
 | Normalização de falhas de inicialização do TuyaAdapter | TESTADO | `backend/src/smart_home_tray/tuya_adapter.py`; testes com factory que lança timeout, OSError, exceção genérica e BackendError com causa sensível |
 | CI pytest/compileall em Windows para PRs em develop/main (Python 3.12/3.14) | TESTADO | PR #2: os dois jobs da matriz passaram |
-| CLI e JSON Lines | PLANEJADO | Etapas posteriores; não fazem parte desta entrega |
+| CLI `argparse` para catálogo, status e controles explícitos | IMPLEMENTADO | `backend/src/smart_home_tray/cli.py`; entrypoint em `backend/pyproject.toml` |
+| Protocolo JSON Lines limitado, validado e correlacionado | TESTADO | `backend/src/smart_home_tray/protocol.py`; testes com streams em memória em `backend/tests/test_protocol.py` |
+| Comandos IPC encaminhados ao CommandScheduler; status em executor limitado | TESTADO | Protocolo usa métodos normalizados e mantém leitura de stdin independente de Futures |
+| CLI/IPC listam via allowlist e stdout `serve` contém apenas JSONL | TESTADO | `device_status_to_public_dict`; writer único e testes de validação/saída |
 
 ## Arquivos relevantes
 
@@ -41,7 +44,9 @@
 - DeviceManager: `backend/src/smart_home_tray/device_manager.py`.
 - Codec: `backend/src/smart_home_tray/color.py`.
 - Scheduler: `backend/src/smart_home_tray/command_scheduler.py`.
+- CLI e protocolo: `backend/src/smart_home_tray/cli.py`, `backend/src/smart_home_tray/protocol.py` e entrypoint `smart-home-tray` em `backend/pyproject.toml`.
 - Testes: `backend/tests/test_models.py`, `backend/tests/test_config.py`, `backend/tests/test_tuya_adapter.py` e `backend/tests/test_device_manager.py`.
+- Testes de scheduler/IPC/CLI: `backend/tests/test_command_scheduler.py`, `backend/tests/test_protocol.py` e `backend/tests/test_cli.py`.
 - CI: `.github/workflows/backend-tests.yml`.
 - Contratos e arquitetura: `docs/contracts.md` e `docs/architecture.md`.
 
@@ -64,8 +69,10 @@
 - **Etapa C2A:** testes focados `test_device_manager.py` + `test_color.py` — **76 passed**; suíte completa — **116 passed**; `compileall` e `git diff --check` concluídos sem erros. Testes usam somente mocks/fakes; nenhum hardware foi acessado. Inspeção final de credenciais e commits locais são os próximos passos.
 - **CI PR #6 antes desta revisão:** conforme checkpoint informado, 116 testes passaram em Windows/Python 3.12 e 3.14. Esse resultado antecede as correções CR-07/CR-08.
 - **Code Review C2A CR-07/CR-08:** testes focados `test_color.py` + `test_device_manager.py` — **83 passed**; suíte completa — **123 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; CI atualizado aguarda push manual. Testes somente com fakes/mocks; nenhum dispositivo físico acessado.
-- **Etapa C2B:** testes focados `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_command_scheduler.py -q` — **17 passed**; suíte completa `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **140 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; testes somente com fakes/mocks, sem rede ou hardware.
+- **Etapa C2B:** testes focados `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_command_scheduler.py -q` — **17 passed**; suíte completa — **140 passed**; `compileall` e `git diff --check` sem erros. Execução local Python 3.14; testes somente com fakes/mocks, sem rede ou hardware.
 - **Code Review C2B CR-09:** regressão reproduziu `RuntimeError: cannot join current thread` antes da correção; testes focados após correção — **18 passed**; suíte completa — **141 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14, somente fakes/mocks; nenhum hardware acessado.
+- **Etapa D — testes focados:** `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_protocol.py backend\tests\test_cli.py -q` — **28 passed** em Python 3.14.3; somente streams em memória e fakes.
+- **Etapa D — suíte completa:** `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **169 passed**; `compileall -q backend\src backend\tests` e `git diff --check` concluídos sem erros. Inspeção textual encontrou somente placeholders de teste existentes/explicitamente fictícios; nenhum segredo real ou configuração local foi adicionada. Nenhum hardware, cloud ou rede doméstica acessado.
 
 ## Decisões técnicas
 
@@ -90,20 +97,22 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 ## Git
 
 - **Estado:** repositório Git existente; sem merge automático.
-- **Branch base atualizada:** `develop` em `78d4df0` (merge PR #6 C2A); base de desenvolvimento não é `main`.
-- **Branch de trabalho:** `feature/continuous-controls-scheduler`, criada a partir de `78d4df0`.
+- **Branch base atualizada:** `develop` em `565a09b`; PR #10 sincronizou a árvore de `main` com `develop` (árvores equivalentes antes da Etapa D).
+- **Branch de trabalho:** `feature/cli-jsonlines-protocol`, criada a partir de `origin/develop` em `565a09b`.
 - **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
-- **Último commit base:** `78d4df0` (merge PR #6).
+- **Último commit base:** `565a09b` (merge de sincronização #9 em `develop`; PR #10 de promoção/sincronização está incorporada conforme contexto do mantenedor).
 - **Commits C2B:** `1c4b3c8` (scheduler e testes), `cbf24a2` (documentação), `61776c3` (status) e `dcb4e8b` (correção CR-09, regressão e contratos). Atualização documental final deste checkpoint será commitada em seguida.
-- **Arquivos não commitados:** somente a atualização final deste status; inspeção não encontrou credenciais reais.
+- **Arquivos não commitados:** nenhum após os commits locais do checkpoint. Código/testes e documentação estão commitados; sem push ou PR. Nenhuma credencial real foi adicionada.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
 - **PR #6 C2A:** mergeada em `develop` no commit `78d4df0`.
-- **PR #7 C2B:** aberta para `develop`; CI informado pelo mantenedor passou com 140 testes em Windows/Python 3.12 e 3.14 antes de CR-09. Estes commits locais aguardam push manual; sem merge.
+- **PR #7 C2B:** mergeada em `develop` no commit `5a5d15c`; CI passou com 140 testes antes da correção CR-09, que elevou a suíte para 141.
+
+- **PR #10:** sincronização por merge commit entre `develop` e `main`; árvores equivalentes foram verificadas antes deste trabalho. A Etapa D parte exclusivamente de `develop`.
+- **Etapa D:** commit de implementação/testes `7c7c0db` mais commit de documentação do checkpoint; CI remoto Windows/Python 3.12 e 3.14 aguarda publicação manual. Nenhum push ou PR foi executado.
 
 ## Próximos passos
 
-1. Criar commit local específico para CR-09.
-2. Mantenedor atualiza manualmente a PR #7 e aguarda CI Windows/Python 3.12/3.14 e revisão arquitetural.
-3. Não avançar para CLI/JSON Lines antes da revisão.
+1. Revisar arquiteturalmente a Etapa D e os commits locais.
+2. Mantenedor publica manualmente `feature/cli-jsonlines-protocol` e abre PR direcionada a `develop`; aguardar CI Windows/Python 3.12/3.14. Não avançar para Tauri/React antes da revisão.

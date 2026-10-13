@@ -14,12 +14,12 @@ Backend local-first executável como processo independente. A operação em runt
 | `device_manager.py` | Identidade persistente por Device ID, endereço mutável, coordenação de estado, timeout, reconexão e falhas isoladas. | Adapter, config, models |
 | `command_scheduler.py` | Submissão assíncrona de operações normalizadas, coalescing de controles contínuos e ordenação discreta por dispositivo. | DeviceManager, biblioteca padrão (`threading`, `concurrent.futures`) |
 | `color.py` | Conversão RGB/HSV e serialização/validação HSV16 dos valores de cor Tuya. | Biblioteca padrão, `colorsys` |
-| `protocol.py` | Ler requests e escrever responses JSON Lines sem imprimir logs em stdout. | DeviceManager, models, JSON |
-| `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | DeviceManager |
+| `protocol.py` | Ler requests e escrever responses JSON Lines com framing limitado, validação e correlação assíncrona. | DeviceManager, CommandScheduler, models, biblioteca padrão |
+| `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | config, DeviceManager, CommandScheduler, protocol |
 
 `DeviceManager` cria o catálogo por `Device ID`, mantém estado público sem configuração privada e instancia adapters sob demanda. Cada dispositivo tem seu próprio lock; polling é opt-in via `start_polling()` e encerra com `stop_polling()`. `poll_once()` permite uma sincronização explícita sem thread. O intervalo padrão é 15 segundos. `update_address()` atualiza o IP e descarta o adapter para reconstruí-lo na próxima operação; não há descoberta automática nesta etapa.
 
-O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe credenciais nem acessa TinyTuya diretamente.
+O CLI e o protocolo usam o mesmo DeviceManager. O frontend não recebe credenciais nem acessa TinyTuya diretamente.
 
 ## Fluxo de comunicação
 
@@ -27,7 +27,7 @@ O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe cr
 2. O DeviceManager mantém o cadastro por Device ID e usa o IP atual apenas para conectar/redescobrir.
 3. O Adapter cria a sessão TinyTuya para protocolo e timeout configurados e faz operações LAN.
 4. O Adapter converte falhas e respostas inválidas em erros estruturados e seguros. Uma escrita aceita não confirma estado físico; o DeviceManager faz leitura posterior antes de atualizar estado confirmado, pendente ou offline.
-5. CLI ou protocolo encaminham comandos normalizados ao manager; respostas não carregam configuração privada.
+5. CLI e protocolo encaminham comandos normalizados ao DeviceManager; no IPC, escritas passam pelo CommandScheduler e respostas não carregam configuração privada.
 
 O manager lê somente os DPS configurados de cada equipamento. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. Leituras divergentes atualizam o último valor observado, mas mantêm a intenção em `pending`; uma leitura posterior correspondente resolve a intenção. Na Etapa C2A, o mesmo princípio é aplicado por campo às intenções de iluminação, sem confundir confirmação de power e cor. DPS ausentes ou inválidos preservam valores anteriormente observados e não resolvem pendências. Resposta inválida degrada a qualidade para `unknown` sem converter automaticamente a conexão em offline; falha de transporte marca offline. `update_address()` preserva os valores conhecidos e eventuais intenções pendentes, mas invalida a confirmação até uma leitura no novo endereço. Falhas em um dispositivo não interrompem os demais.
 
@@ -49,9 +49,15 @@ Power é discreto e nunca sofre coalescing nem espera sua própria janela. Ao ch
 
 Cada API `submit_*` retorna `Future[DeviceStatus]`: enquanto aguarda, o Future não modifica nem confirma `LightState`; o resultado só é entregue após o método normalizado do DeviceManager completar sua leitura de confirmação. Um comando substituído tem Future cancelado; uma falha é propagada pelo Future preservando `BackendError`. Callbacks de Future executam sincronamente na thread que publica a conclusão e podem atrasar aquele worker e o shutdown. `stop(timeout_seconds=10)` fecha submissões, cancela comandos ainda na fila e deixa operações iniciadas terminarem. Retorna `False` se algum worker ainda está ativo no limite; também não tenta juntar a própria thread quando chamado de um callback. Uma chamada posterior de outra thread pode aguardar o encerramento. Shutdown não reinicia o scheduler e nunca cancela uma escrita iniciada.
 
+### CLI e JSON Lines (Etapa D)
+
+`cli.py` implementa entrypoint `argparse`; `list` e `--help` não acessam LAN. `status` e comandos de controle só acessam equipamentos quando solicitados explicitamente. O modo `serve` não inicia polling. `protocol.py` lê uma linha limitada a 65.536 bytes UTF-8 e valida os campos por allowlist; excedentes são descartados até LF e rejeitados sem derrubar o processo. `requestId` precisa ser string não vazia de até 128 caracteres e é mantido em memória somente enquanto a resposta está pendente; IDs ativos duplicados recebem erro com ID nulo.
+
+O dispatcher envia escritas normalizadas ao CommandScheduler. Leitura de status usa executor limitado para não bloquear a ingestão de stdin. Um writer dedicado é o único que produz stdout JSONL, com UTF-8 e flush por mensagem; stderr recebe diagnósticos. Callbacks de Future somente enfileiram o resultado, sem I/O. As respostas são correlacionadas por requestId, mas operações independentes podem concluir fora da ordem recebida. FIFO por dispositivo e confirmação por readback continuam nas camadas existentes. No EOF, novas entradas param, o scheduler cancela operações ainda não iniciadas, as operações LAN já iniciadas e leituras pendentes terminam sem interrupção, respostas terminais são drenadas e o writer encerra. O ciclo de espera respeita timeout por operação; duração total depende do timeout LAN e da quantidade de operações ativas.
+
 ## Erros e isolamento
 
-Erros padronizados incluem `TIMEOUT`, `DEVICE_OFFLINE`, `AUTH_FAILED`, `INVALID_INPUT` e `UNSUPPORTED_CAPABILITY`. Uma falha de dispositivo não interrompe consultas dos demais. Retornos Tuya inesperados recebem erro seguro e não expõem a chave nem dados brutos sensíveis. O erro 904 da Luz escritório permanece não crítico para o MVP.
+Erros padronizados incluem `TIMEOUT`, `DEVICE_OFFLINE`, `AUTH_FAILED`, `INVALID_INPUT`, `UNSUPPORTED_CAPABILITY`, `DEVICE_ERROR` e `COMMAND_CANCELED`. Uma falha de dispositivo não interrompe consultas dos demais. Retornos Tuya inesperados recebem erro seguro e não expõem a chave nem dados brutos sensíveis. O erro 904 da Luz escritório permanece não crítico para o MVP.
 
 ## Segurança e limites
 
@@ -73,4 +79,4 @@ backend\.venv\Scripts\python.exe -m pytest backend\tests -q
 Copy-Item backend\config.example.toml backend\config.toml
 ```
 
-Defina as variáveis de ambiente declaradas em `local_key_env` antes de iniciar o backend. O exemplo não contém credenciais. Os comandos de CLI e sidecar serão documentados quando esses módulos forem implementados.
+Defina as variáveis de ambiente declaradas em `local_key_env` antes de iniciar o backend. O exemplo não contém credenciais. CLI/sidecar, comandos, framing e lifecycle estão detalhados em [contracts.md](contracts.md). Para executar, use `backend\.venv\Scripts\smart-home-tray.exe --config backend\config.toml list` ou `backend\.venv\Scripts\python.exe -m smart_home_tray.cli --config backend\config.toml serve`.
