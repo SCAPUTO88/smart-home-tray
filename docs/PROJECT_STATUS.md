@@ -38,6 +38,7 @@
 - **Code Review 01:** testes focados `backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests\\test_models.py backend\\tests\\test_tuya_adapter.py -q` — **32 passed**; suíte completa `backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests -q` — **36 passed**; `compileall` — sem erros; `git diff --check` — sem erros.
 - **Dispositivos físicos:** nenhum acessado ou alterado.
 - **PyInstaller:** não instalado; nenhum empacotamento foi executado.
+- **PR:** tentativa de criação para `develop` não foi possível porque `origin` não possui branch `develop` (refs remotas verificadas: `main` e `fix/checkpoint-01-review`). Nenhuma PR foi criada.
 - **Ambiente:** dependências foram instaladas inicialmente no Python 3.14 existente para validar a instalação; a suíte final foi repetida em `backend/.venv`, que será o ambiente de desenvolvimento daqui em diante.
 
 ## Decisões técnicas
@@ -65,12 +66,12 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Commit das correções:** `fd9ab2b` (`fix: address checkpoint 01 review findings`).
 - **Último commit:** HEAD da branch `fix/checkpoint-01-review`, incluindo o registro deste checkpoint.
 - **Arquivos não commitados:** nenhum após o commit final do checkpoint.
-- **PR:** planejada para `develop`; ainda não criada.
+- **PR:** não criada; depende da criação/publicação de `develop` no remoto ou de indicação de outra base.
 
 ## Próximos passos
 
 1. Executar a suíte completa, compileall e revisar diff/segredos; atualizar este status com resultados finais.
-2. Criar commit na branch de correção e PR direcionada a `develop`, sem merge.
+2. Criar/publicar a branch remota `develop` a partir de `main` ou indicar uma base remota existente; então abrir PR de `fix/checkpoint-01-review`, sem merge.
 3. Aguardar revisão do Code Review 01.
 4. Após aprovação, implementar `DeviceManager` com serialização, coalescing, estado confirmado/pendente/offline, polling e redescoberta simples de IP.
 5. Implementar parsing de estado e conversão/serialização RGB/HSV respeitando o DPS específico por dispositivo; depois CLI e protocolo JSON Lines sobre o mesmo manager.
