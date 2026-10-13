@@ -106,7 +106,7 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
 - **Último commit base:** `565a09b` (merge de sincronização #9 em `develop`; PR #10 de promoção/sincronização está incorporada conforme contexto do mantenedor).
 - **Commits C2B:** `1c4b3c8` (scheduler e testes), `cbf24a2` (documentação), `61776c3` (status) e `dcb4e8b` (correção CR-09, regressão e contratos). Atualização documental final deste checkpoint será commitada em seguida.
-- **Commit CR-10/CR-11:** `12c5905` (código e testes); commit documental deste checkpoint será registrado abaixo. **Arquivos não commitados:** somente documentação desta revisão até o commit correspondente. PR #11 já existe; sem push ou merge automático.
+- **Commits CR-10/CR-11:** `12c5905` (código e testes) e `3790300` (documentação). **Arquivos não commitados:** nenhum. PR #11 já existe; sem push ou merge automático.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
