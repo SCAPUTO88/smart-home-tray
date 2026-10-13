@@ -4,7 +4,7 @@
 
 - **Fase:** 1 — Backend Local-First.
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`. Etapa C2A está implementada e em validação local na branch `feature/advanced-lighting-controls`; nenhum push foi feito, conforme instrução do mantenedor. Nenhuma validação física foi executada nesta etapa.
+- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`. C2A foi enviada pelo mantenedor como PR #6 (`feature/advanced-lighting-controls` → `develop`); antes desta correção, CI passou com 116 testes em Windows/Python 3.12 e 3.14. CR-07/CR-08 em correção na mesma branch; sem push/merge nesta revisão e sem validação física.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -24,6 +24,7 @@
 | Codec HSV16 Tuya e conversão RGB ↔ HSV | IMPLEMENTADO | `backend/src/smart_home_tray/color.py`; testes em `backend/tests/test_color.py` |
 | Leitura normalizada de brilho branco, temperatura, HSV, cena e work mode por DPS configurado | IMPLEMENTADO | `DeviceManager._read_state_unlocked()`; testes unitários com fakes |
 | Comandos normalizados de brilho branco, temperatura, HSV e brilho colorido | IMPLEMENTADO | Métodos explícitos em `device_manager.py`; readback/pendências por campo com mocks |
+| CR-07/CR-08: HSV atual obrigatório para brilho colorido; qualidade coerente após rejeição explícita | TESTADO | Regressões em `backend/tests/test_device_manager.py`; suíte completa desta revisão: 123 passed |
 | Validação física de controles C2A | PLANEJADO | Nenhum dispositivo real acessado |
 | Normalização de falhas de inicialização do TuyaAdapter | TESTADO | `backend/src/smart_home_tray/tuya_adapter.py`; testes com factory que lança timeout, OSError, exceção genérica e BackendError com causa sensível |
 | CI pytest/compileall em Windows para PRs em develop/main (Python 3.12/3.14) | TESTADO | PR #2: os dois jobs da matriz passaram |
@@ -57,6 +58,8 @@
 - **GitHub Actions:** jobs Windows Python 3.12 e 3.14 da PR #2 passaram no commit `ed43395`; o status-only commit deste checkpoint também dispara nova execução.
 - **Code Review 02:** `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_device_manager.py -q` — **25 passed**; suíte completa `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **65 passed**; `compileall` e `git diff --check` concluídos sem erros. Inspeção das alterações não encontrou credenciais; apenas o placeholder de teste `unit-test-key-not-real`. Nenhum dispositivo físico acessado.
 - **Etapa C2A:** testes focados `test_device_manager.py` + `test_color.py` — **76 passed**; suíte completa — **116 passed**; `compileall` e `git diff --check` concluídos sem erros. Testes usam somente mocks/fakes; nenhum hardware foi acessado. Inspeção final de credenciais e commits locais são os próximos passos.
+- **CI PR #6 antes desta revisão:** conforme checkpoint informado, 116 testes passaram em Windows/Python 3.12 e 3.14. Esse resultado antecede as correções CR-07/CR-08.
+- **Code Review C2A CR-07/CR-08:** testes focados `test_color.py` + `test_device_manager.py` — **83 passed**; suíte completa — **123 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; CI atualizado aguarda push manual. Testes somente com fakes/mocks; nenhum dispositivo físico acessado.
 
 ## Decisões técnicas
 
@@ -83,16 +86,15 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Estado:** repositório Git existente; sem merge automático.
 - **Branch base atualizada:** `develop` em `1d96db2` (merge Code Review 02); base de desenvolvimento não é `main`.
 - **Branch de trabalho:** `feature/advanced-lighting-controls`, criada a partir de `1d96db2`.
-- **Commits C2A:** `5dd0c74` (codec HSV16 e testes) e `9593803` (controles normalizados, regressões e documentação).
-- **Último commit:** `docs: finalize C2A status` (HEAD; hash do próprio checkpoint omitido para evitar autorreferência).
-- **Arquivos não commitados:** nenhum; sem credenciais versionadas.
+- **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
+- **Último commit funcional:** `f1f1ffa fix: keep color brightness tied to fresh HSV`; atualização documental desta revisão fica no checkpoint HEAD.
+- **Arquivos não commitados:** nenhum após o commit documental; sem credenciais versionadas.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
-- **PR C2A:** ainda não existe; push será manual pelo mantenedor após os commits locais.
+- **PR #6 C2A:** existente e aguardando estes commits; push manual pelo mantenedor, sem merge automático.
 
 ## Próximos passos
 
-1. Finalizar `compileall`, `git diff --check`, revisão de segurança e validação dos testes C2A.
-2. Criar commits locais claros; o mantenedor fará push manual e abrirá PR para `develop`, então aguardar CI Windows/Python 3.12/3.14.
-3. Aguardar revisão arquitetural da C2A; não iniciar C2B automaticamente.
+1. Mantenedor publica manualmente os commits locais na PR #6 e aguarda CI Windows/Python 3.12/3.14.
+2. Aguardar revisão arquitetural e merge manual; não iniciar C2B.
