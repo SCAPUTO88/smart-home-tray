@@ -12,7 +12,7 @@ Backend local-first executável como processo independente. A operação em runt
 | `config.py` | Ler TOML externo, validar campos, resolver referências a variáveis de ambiente. | `tomllib`, models |
 | `tuya_adapter.py` | Construir cliente TinyTuya, ler status LAN e escrever DPS. | TinyTuya, models |
 | `device_manager.py` | Identidade persistente por Device ID, endereço mutável, coordenação de estado, timeout, reconexão e falhas isoladas. | Adapter, config, models |
-| `color.py` | Conversão RGB/HSV e serialização dos valores de cor Tuya. | Biblioteca padrão |
+| `color.py` | Conversão RGB/HSV e serialização/validação HSV16 dos valores de cor Tuya. | Biblioteca padrão, `colorsys` |
 | `protocol.py` | Ler requests e escrever responses JSON Lines sem imprimir logs em stdout. | DeviceManager, models, JSON |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | DeviceManager |
 
@@ -28,13 +28,15 @@ O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe cr
 4. O Adapter converte falhas e respostas inválidas em erros estruturados e seguros. Uma escrita aceita não confirma estado físico; o DeviceManager faz leitura posterior antes de atualizar estado confirmado, pendente ou offline.
 5. CLI ou protocolo encaminham comandos normalizados ao manager; respostas não carregam configuração privada.
 
-Na Etapa C1, o manager lê apenas os DPS configurados de energia e modo. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. Leituras divergentes atualizam o último valor observado, mas mantêm a intenção em `pending`; uma leitura posterior correspondente resolve a intenção. DPS ausentes preservam valores anteriormente observados e não resolvem a pendência. Resposta inválida degrada a qualidade para `unknown` sem converter automaticamente a conexão em offline; falha de transporte marca offline. `update_address()` preserva os valores conhecidos e eventual intenção pendente, mas invalida a confirmação até uma leitura no novo endereço. Falhas em um dispositivo não interrompem os demais.
+O manager lê somente os DPS configurados de cada equipamento. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. Leituras divergentes atualizam o último valor observado, mas mantêm a intenção em `pending`; uma leitura posterior correspondente resolve a intenção. Na Etapa C2A, o mesmo princípio é aplicado por campo às intenções de iluminação, sem confundir confirmação de power e cor. DPS ausentes ou inválidos preservam valores anteriormente observados e não resolvem pendências. Resposta inválida degrada a qualidade para `unknown` sem converter automaticamente a conexão em offline; falha de transporte marca offline. `update_address()` preserva os valores conhecidos e eventuais intenções pendentes, mas invalida a confirmação até uma leitura no novo endereço. Falhas em um dispositivo não interrompem os demais.
 
 ## Estado, capacidades e sincronização
 
-Capacidades são específicas por dispositivo e derivadas dos DPS declarados. `Luz Mesa` usa DPS 22 para brilho branco e DPS 23 para temperatura; a `Fita LED` usa Value do HSV em DPS 24 para intensidade RGB. Percentuais são normalizados contra os limites físicos configurados e o modo ativo. Capacidade declarada não significa validação física.
+Capacidades são específicas por dispositivo e derivadas dos DPS declarados. `Luz Mesa` usa DPS 22 para brilho branco, DPS 23 para temperatura, DPS 24 para HSV e DPS 25 para cenas; a `Fita LED` usa Value do HSV em DPS 24 para intensidade colorida e não declara DPS de brilho branco ou temperatura. Os campos normalizados de brilho branco e intensidade HSV permanecem separados. Percentuais de brilho e temperatura usam `ValueRange`; capacidade declarada não significa validação física.
 
-Escritas serão serializadas por dispositivo, preservando a ordem de comandos dependentes. Controles contínuos terão coalescing inicial de 150 ms com a última intenção; power e cenas são discretos e não serão coalescidos. Polling começa em 15 segundos e não se sobrepõe a escrita no mesmo dispositivo. Depois de comandos, o estado será atualizado de acordo com o tempo de resposta do equipamento.
+O codec C2A segue o formato HSV16 documentado pelo TinyTuya 1.20.0 (`HHHHSSSSVVVV`; hue 0–360, saturation/value 0–1000). O modo é escrito antes do valor dependente quando o DPS de modo está configurado e a última leitura indica modo diferente. Sem mapeamento de modo, não há alternância presumida. Comandos não ligam o dispositivo automaticamente. Uma troca de modo aceita seguida de falha no DPS de valor é uma falha parcial: não se faz rollback físico; o estado é atualizado por leitura de melhor esforço e a intenção incerta permanece pendente. Não há debounce nesta etapa.
+
+Escritas são serializadas por dispositivo, preservando a ordem de comandos dependentes. Polling começa em 15 segundos e não se sobrepõe a escrita no mesmo dispositivo. Depois de comandos, o estado é relido antes de ser considerado confirmado. Coalescing de 150 ms para controles contínuos permanece planejado para etapa futura; não está implementado.
 
 ## Erros e isolamento
 
