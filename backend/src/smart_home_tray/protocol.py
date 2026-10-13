@@ -101,7 +101,9 @@ class JsonLinesServer:
             if self._scheduler_started:
                 while not self._scheduler.stop(timeout_seconds=10.0):
                     pass
-            executor.shutdown(wait=True, cancel_futures=True)
+            # Accepted catalog/status reads must finish, even if they were queued
+            # behind another read when stdin reached EOF.
+            executor.shutdown(wait=True, cancel_futures=False)
             with self._condition:
                 self._condition.wait_for(lambda: self._pending_responses == 0)
             self._events.put(_WRITER_STOP)

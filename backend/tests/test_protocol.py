@@ -11,6 +11,7 @@ from smart_home_tray.models import (
     BackendError, ConnectionStatus, DeviceCapabilities, DeviceStatus,
     DeviceStateQuality, ErrorCode, LightState,
 )
+from smart_home_tray import protocol
 from smart_home_tray.command_scheduler import CommandScheduler
 from smart_home_tray.protocol import JsonLinesServer
 
@@ -121,6 +122,65 @@ def test_list_does_not_access_lan_and_status_does():
     assert len(responses) == 2
     assert manager.catalog_reads == 1
     assert manager.lan_reads == 1
+
+
+def test_eof_drains_status_calls_waiting_in_bounded_executor(monkeypatch):
+    monkeypatch.setattr(protocol, "_STATUS_WORKERS", 1)
+
+    class QueuedReadManager(FakeManager):
+        def __init__(self):
+            super().__init__()
+            self.first_started = threading.Event()
+            self.release_first = threading.Event()
+            self.read_ids = []
+
+        def read_state(self, device_id):
+            self.read_ids.append(device_id)
+            if device_id == "first":
+                self.first_started.set()
+                assert self.release_first.wait(timeout=3)
+            return status(device_id)
+
+    manager = QueuedReadManager()
+    eof_reached = threading.Event()
+
+    class InputWithGatedEof(io.BytesIO):
+        def __init__(self):
+            super().__init__(
+                b'{"requestId":"first-read","command":"device.status","payload":{"deviceId":"first"}}\n'
+                b'{"requestId":"queued-read","command":"device.status","payload":{"deviceId":"queued"}}\n'
+            )
+            self.lines = 0
+
+        def readline(self, size=-1):
+            line = super().readline(size)
+            self.lines += 1
+            if self.lines == 2:
+                assert manager.first_started.wait(timeout=2)
+            elif not line:
+                eof_reached.set()
+            return line
+
+    output = io.BytesIO()
+    runner = threading.Thread(
+        target=JsonLinesServer(manager, FakeScheduler()).run,
+        args=(InputWithGatedEof(), output, io.StringIO()),
+        daemon=False,
+    )
+    runner.start()
+    try:
+        assert eof_reached.wait(timeout=2)
+        manager.release_first.set()
+        runner.join(timeout=4)
+    finally:
+        manager.release_first.set()
+        runner.join(timeout=4)
+
+    assert not runner.is_alive()
+    assert manager.read_ids == ["first", "queued"]
+    responses = {item["requestId"]: item for item in map(json.loads, output.getvalue().splitlines())}
+    assert responses["first-read"]["result"]["deviceId"] == "first"
+    assert responses["queued-read"]["result"]["deviceId"] == "queued"
 
 
 def test_read_only_serve_does_not_start_scheduler_workers():
@@ -454,8 +514,8 @@ def test_eof_cancels_queued_write_and_allows_started_write_to_finish():
     class InFlightManager:
         def __init__(self):
             self.started = threading.Event()
-            self.release = threading.Event()
             self.calls = []
+            self.scheduler = None
 
         def list_device_ids(self):
             return ("lamp-a",)
@@ -464,11 +524,17 @@ def test_eof_cancels_queued_write_and_allows_started_write_to_finish():
             self.calls.append(enabled)
             if enabled:
                 self.started.set()
-                assert self.release.wait(timeout=3)
+                # Hold the active operation until shutdown has first canceled
+                # queued scheduler commands, then let this started call finish.
+                with self.scheduler._condition:
+                    assert self.scheduler._condition.wait_for(
+                        lambda: self.scheduler._closed, timeout=3
+                    )
             return status(device_id)
 
     manager = InFlightManager()
     scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    manager.scheduler = scheduler
     output = io.BytesIO()
 
     class EofAfterStarted(io.BytesIO):
@@ -487,11 +553,8 @@ def test_eof_cancels_queued_write_and_allows_started_write_to_finish():
         daemon=False,
     )
     runner.start()
-    try:
-        assert manager.started.wait(timeout=2)
-    finally:
-        manager.release.set()
-        runner.join(timeout=4)
+    assert manager.started.wait(timeout=2)
+    runner.join(timeout=4)
     assert not runner.is_alive()
     responses = {item["requestId"]: item for item in map(json.loads, output.getvalue().splitlines())}
     assert "result" in responses["active"]
