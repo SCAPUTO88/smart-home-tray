@@ -4,7 +4,7 @@
 
 - **Fase:** 1 — Backend Local-First, Etapa D (CLI + JSON Lines IPC).
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` (`9e6df6c`); PR #2/C1 (`2224d2b`); Code Review 02 (`1d96db2`); PR #6/C2A (`78d4df0`); PR #7/C2B e CR-09 mergeadas em `develop` (`5a5d15c`); PR #10 sincronizou `main` com `develop` por merge commit e as árvores foram verificadas equivalentes. Etapa D e PR #11 IMPLEMENTADAS; CI anterior confirmou 169 testes em Windows/Python 3.12 e 3.14. Correções CR-10/CR-11 IMPLEMENTADAS e TESTADAS localmente; novos checks dependem de push manual. Nenhuma validação física realizada.
+- **Progresso:** PR #1 mergeada em `develop` (`9e6df6c`); PR #2/C1 (`2224d2b`); Code Review 02 (`1d96db2`); PR #6/C2A (`78d4df0`); PR #7/C2B e CR-09 mergeadas em `develop` (`5a5d15c`); PR #10 sincronizou `main` com `develop` por merge commit e as árvores foram verificadas equivalentes. Etapa D e PR #11 implementadas. CI do commit `62e250b` teve 176 testes em Windows/Python 3.14 e uma falha entre 176 em Python 3.12 (CR-12). Correção CR-12 IMPLEMENTADA e TESTADA localmente em Python 3.14; aguarda push manual e CI atualizado. Nenhuma validação física realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -37,6 +37,7 @@
 | CLI/IPC listam via allowlist e stdout `serve` contém apenas JSONL | TESTADO | `device_status_to_public_dict`; writer único e testes de validação/saída |
 | CR-10: list/get/status fora da thread de stdin e inicialização lazy sem locks LAN | TESTADO | `DeviceManager.list_device_ids()` e regressões com locks/Event em `test_protocol.py` |
 | CR-11: erros inesperados da CLI são genéricos, sem traceback ou texto de exceção | TESTADO | Regressões para inicialização, status e Future de escrita em `test_cli.py` |
+| CR-12: leituras aceitas pendentes no executor são drenadas após EOF | TESTADO | Executor limitado a um worker; primeira leitura bloqueada por Event e segunda confirmada executada/resposta terminal em `test_protocol.py` |
 
 ## Arquivos relevantes
 
@@ -77,6 +78,8 @@
 - **Etapa D — suíte completa:** `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **169 passed**; `compileall -q backend\src backend\tests` e `git diff --check` concluídos sem erros. Inspeção textual encontrou somente placeholders de teste existentes/explicitamente fictícios; nenhum segredo real ou configuração local foi adicionada. Nenhum hardware, cloud ou rede doméstica acessado.
 - **CR-10/CR-11 — testes focados:** `rtk py -m pytest backend/tests/test_protocol.py backend/tests/test_cli.py -q` — **35 passed** em Python 3.14.3; somente fakes, locks/Event e streams em memória.
 - **CR-10/CR-11 — suíte completa:** `rtk py -m pytest backend/tests -q` — **176 passed** em Python 3.14.3; `rtk py -m compileall -q backend/src backend/tests` e `rtk git diff --check` concluídos sem erros. Busca nos arquivos alterados não encontrou IPs privados nem valores com aparência de Local Key; identificadores sensíveis de regressão são explicitamente fictícios. Sem acesso a hardware/rede/cloud.
+- **CR-12 — focados:** `rtk py -m pytest backend/tests/test_protocol.py backend/tests/test_cli.py -q` — **36 passed** em Python 3.14.3.
+- **CR-12 — suíte completa:** `rtk py -m pytest backend/tests -q` — **177 passed**; `rtk py -m compileall -q backend/src backend/tests` e `rtk git diff --check` passaram. Python 3.12 não está instalado/disponível neste ambiente; o CI atualizado deverá validar essa versão. Inspeção das alterações não encontrou credenciais; somente mocks e endereços reservados de teste, sem hardware/rede/cloud.
 
 ## Decisões técnicas
 
@@ -106,7 +109,7 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
 - **Último commit base:** `565a09b` (merge de sincronização #9 em `develop`; PR #10 de promoção/sincronização está incorporada conforme contexto do mantenedor).
 - **Commits C2B:** `1c4b3c8` (scheduler e testes), `cbf24a2` (documentação), `61776c3` (status) e `dcb4e8b` (correção CR-09, regressão e contratos). Atualização documental final deste checkpoint será commitada em seguida.
-- **Commits CR-10/CR-11:** `12c5905` (código e testes) e `3790300` (documentação). **Arquivos não commitados:** nenhum. PR #11 já existe; sem push ou merge automático.
+- **Commits CR-10/CR-11:** `12c5905` (código e testes), `3790300` (documentação) e `62e250b` (status). **CR-12:** `207406c` (código e teste de regressão); documentação deste checkpoint pendente de commit. PR #11 existente; sem push ou merge automático.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
@@ -114,9 +117,9 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **PR #7 C2B:** mergeada em `develop` no commit `5a5d15c`; CI passou com 140 testes antes da correção CR-09, que elevou a suíte para 141.
 
 - **PR #10:** sincronização por merge commit entre `develop` e `main`; árvores equivalentes foram verificadas antes deste trabalho. A Etapa D parte exclusivamente de `develop`.
-- **Etapa D / PR #11:** `feature/cli-jsonlines-protocol` → `develop`; CI anterior verde com 169 testes em Windows/Python 3.12 e 3.14. Correções locais CR-10/CR-11 em `12c5905`; push manual pendente para atualizar a PR e disparar novos checks.
+- **Etapa D / PR #11:** `feature/cli-jsonlines-protocol` → `develop`; no commit `62e250b`, CI reportou 176 passed/1 failed em Python 3.12 e 176 passed em Python 3.14. CR-12 em `207406c`; push manual pendente para atualizar a PR e aguardar os dois jobs. Branch local mantida, sem push/merge.
 
 ## Próximos passos
 
-1. Revisar arquiteturalmente CR-10/CR-11 e os commits locais da PR #11.
-2. Mantenedor publica manualmente `feature/cli-jsonlines-protocol`; aguardar CI Windows/Python 3.12/3.14. Não avançar para Tauri/React antes da revisão.
+1. Revisar CR-12 e os commits locais atualizados da PR #11.
+2. Mantenedor publica manualmente `feature/cli-jsonlines-protocol`; aguardar CI Windows/Python 3.12/3.14 antes de liberar merge. Não avançar para Tauri/React.
