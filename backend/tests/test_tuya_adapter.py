@@ -60,9 +60,34 @@ def test_adapter_writes_one_dps_through_tinytuya():
     fake = FakeTuyaDevice(write_result={"dps": {"20": True}})
     adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
 
-    adapter.write_dps(24, "00006400c800")
+    result = adapter.write_dps(24, "00006400c800")
 
+    assert result is None
     assert fake.writes == [(24, "00006400c800")]
+
+
+def test_adapter_accepts_tinytuya_null_ack_without_claiming_state_confirmation():
+    fake = FakeTuyaDevice(write_result=None)
+    adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
+
+    result = adapter.write_dps(20, True)
+
+    assert result is None
+    assert fake.writes == [(20, True)]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [{}, {"dps": {}}, {"success": True}, "", []],
+)
+def test_adapter_rejects_empty_or_unexpected_write_responses(response):
+    fake = FakeTuyaDevice(write_result=response)
+    adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
+
+    with pytest.raises(BackendError) as error:
+        adapter.write_dps(20, True)
+
+    assert error.value.code is ErrorCode.DEVICE_ERROR
 
 
 def test_adapter_maps_timeout_exception_to_standard_error():
@@ -92,6 +117,41 @@ def test_adapter_maps_tinytuya_errors_without_forwarding_raw_message(response, e
 
     assert error.value.code is expected
     assert "bad key" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("tuya_code", "expected_code", "safe_message"),
+    [
+        ("903", ErrorCode.INVALID_INPUT, "outside the supported range"),
+        ("904", ErrorCode.DEVICE_ERROR, "unexpected payload"),
+        ("907", ErrorCode.UNSUPPORTED_CAPABILITY, "does not support"),
+        ("914", ErrorCode.AUTH_FAILED, "authentication parameters"),
+        ("777", ErrorCode.DEVICE_ERROR, "Tuya device returned an error"),
+    ],
+)
+def test_adapter_maps_documented_tinytuya_write_errors_safely(
+    tuya_code, expected_code, safe_message
+):
+    fake = FakeTuyaDevice(write_result={"Err": tuya_code, "Error": "private raw diagnostic"})
+    adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
+
+    with pytest.raises(BackendError) as error:
+        adapter.write_dps(20, True)
+
+    assert error.value.code is expected_code
+    assert safe_message in str(error.value)
+    assert "private raw diagnostic" not in str(error.value)
+
+
+def test_adapter_does_not_expose_exception_text_or_chain_from_transport():
+    fake = FakeTuyaDevice(status_error=RuntimeError("unit-test-key-not-real"))
+    adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
+
+    with pytest.raises(BackendError) as error:
+        adapter.read_status()
+
+    assert "unit-test-key-not-real" not in str(error.value)
+    assert error.value.__suppress_context__ is True
 
 
 def test_adapter_rejects_unexpected_status_shape():

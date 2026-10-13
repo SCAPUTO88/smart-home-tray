@@ -23,7 +23,7 @@ O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe cr
 1. `config.py` lê o arquivo TOML local e obtém Local Keys por nomes de variáveis de ambiente.
 2. O DeviceManager mantém o cadastro por Device ID e usa o IP atual apenas para conectar/redescobrir.
 3. O Adapter cria a sessão TinyTuya para protocolo e timeout configurados e faz operações LAN.
-4. O DeviceManager converte o retorno bruto usando o mapeamento de DPS e atualiza estado confirmado, pendente ou offline.
+4. O Adapter converte falhas e respostas inválidas em erros estruturados e seguros. Uma escrita aceita não confirma estado físico; o DeviceManager faz leitura posterior antes de atualizar estado confirmado, pendente ou offline.
 5. CLI ou protocolo encaminham comandos normalizados ao manager; respostas não carregam configuração privada.
 
 ## Estado, capacidades e sincronização
@@ -41,6 +41,7 @@ Erros padronizados incluem `TIMEOUT`, `DEVICE_OFFLINE`, `AUTH_FAILED`, `INVALID_
 - Runtime somente LAN; APIs de cloud/wizard da TinyTuya não são chamadas pelo backend.
 - Configuração real é externa e ignorada pelo Git. O exemplo contém placeholders e nomes de variáveis de ambiente.
 - Local Keys não aparecem em stdout IPC, respostas, logs, repr dos modelos ou testes.
+- A futura camada pública usa somente `device_status_to_public_dict`, com allowlist explícita; configurações privadas nunca são serializadas genericamente.
 - Armazenamento protegido por usuário do Windows será tratado na fase de empacotamento.
 - Testes padrão usam mocks; não executam comandos físicos.
 
