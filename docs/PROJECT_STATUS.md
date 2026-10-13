@@ -62,8 +62,9 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Estado:** repositório Git existente; sem merge automático.
 - **Branch:** `fix/checkpoint-01-review`, criada a partir de `develop` (que contém o commit inicial `d2794d3`).
 - **Commit inicial:** `d2794d3` (`initial commit`).
-- **Último commit:** HEAD da branch `fix/checkpoint-01-review` após as correções do CR-01 (commit será registrado no handoff).
-- **Arquivos não commitados:** os sete arquivos listados no diff da revisão; serão commitados antes da abertura da PR.
+- **Commit das correções:** `fd9ab2b` (`fix: address checkpoint 01 review findings`).
+- **Último commit:** HEAD da branch `fix/checkpoint-01-review`, incluindo o registro deste checkpoint.
+- **Arquivos não commitados:** nenhum após o commit final do checkpoint.
 - **PR:** planejada para `develop`; ainda não criada.
 
 ## Próximos passos
