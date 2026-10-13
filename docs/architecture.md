@@ -28,7 +28,7 @@ O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe cr
 4. O Adapter converte falhas e respostas inválidas em erros estruturados e seguros. Uma escrita aceita não confirma estado físico; o DeviceManager faz leitura posterior antes de atualizar estado confirmado, pendente ou offline.
 5. CLI ou protocolo encaminham comandos normalizados ao manager; respostas não carregam configuração privada.
 
-Na Etapa C1, o manager lê apenas os DPS configurados de energia e modo. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. A leitura preserva valores anteriormente conhecidos quando DPS mapeados estão ausentes; uma leitura válida sem valores interpretáveis não promove estado `unknown` para `confirmed`. Falhas em um dispositivo não interrompem os demais.
+Na Etapa C1, o manager lê apenas os DPS configurados de energia e modo. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. Leituras divergentes atualizam o último valor observado, mas mantêm a intenção em `pending`; uma leitura posterior correspondente resolve a intenção. DPS ausentes preservam valores anteriormente observados e não resolvem a pendência. Resposta inválida degrada a qualidade para `unknown` sem converter automaticamente a conexão em offline; falha de transporte marca offline. `update_address()` preserva os valores conhecidos e eventual intenção pendente, mas invalida a confirmação até uma leitura no novo endereço. Falhas em um dispositivo não interrompem os demais.
 
 ## Estado, capacidades e sincronização
 
