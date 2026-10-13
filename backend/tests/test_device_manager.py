@@ -680,6 +680,68 @@ def test_set_color_brightness_requires_a_previously_observed_valid_hsv():
     assert adapter.writes == []
 
 
+def test_color_brightness_rejects_invalid_current_hsv_instead_of_reusing_stale_color():
+    device = make_color_device("strip", "192.0.2.11", white=False)
+    previous_hsv = "00b4032002bc"
+    adapter = FakeAdapter(
+        statuses=[
+            {"24": previous_hsv},
+            {"21": "colour", "24": "invalid!"},
+            {"21": "colour", "24": "00b4032000fa"},
+        ]
+    )
+    manager, _ = make_manager([device], {"strip": adapter})
+    manager.read_state("strip")
+
+    with pytest.raises(BackendError) as error:
+        manager.set_color_brightness("strip", 25)
+
+    status = manager.get_device("strip")
+    assert error.value.code is ErrorCode.DEVICE_ERROR
+    assert status.state.hsv == HSVColor(180, 80, 70)
+    assert adapter.writes == []
+
+
+def test_color_brightness_rejects_missing_current_hsv_instead_of_reusing_stale_color():
+    device = make_color_device("strip", "192.0.2.11", white=False)
+    adapter = FakeAdapter(
+        statuses=[
+            {"21": "colour", "24": "00b4032002bc"},
+            {"21": "colour"},
+            {"21": "colour", "24": "00b4032000fa"},
+        ]
+    )
+    manager, _ = make_manager([device], {"strip": adapter})
+    manager.read_state("strip")
+
+    with pytest.raises(BackendError) as error:
+        manager.set_color_brightness("strip", 25)
+
+    status = manager.get_device("strip")
+    assert error.value.code is ErrorCode.DEVICE_ERROR
+    assert status.state.hsv == HSVColor(180, 80, 70)
+    assert adapter.writes == []
+
+
+def test_color_brightness_uses_current_valid_hsv_and_changes_only_value():
+    device = make_color_device("strip", "192.0.2.11", white=False)
+    adapter = FakeAdapter(
+        statuses=[
+            {"21": "colour", "24": "005a03e801f4"},
+            {"21": "colour", "24": "00b4032002bc"},
+            {"21": "colour", "24": "00b4032000fa"},
+        ]
+    )
+    manager, _ = make_manager([device], {"strip": adapter})
+    manager.read_state("strip")
+
+    status = manager.set_color_brightness("strip", 25)
+
+    assert adapter.writes == [(24, "00b4032000fa")]
+    assert status.state.hsv == HSVColor(180, 80, 25)
+    assert status.state.quality is DeviceStateQuality.CONFIRMED
+
+
 def test_led_strip_rejects_white_brightness_and_color_temperature():
     device = make_color_device("strip", "192.0.2.11", white=False)
     adapter = FakeAdapter()
@@ -806,6 +868,88 @@ def test_lighting_command_skips_redundant_write_when_fresh_state_matches():
 
     assert status.state.white_brightness_percent == 80.0
     assert adapter.writes == []
+
+
+def test_explicit_mode_rejection_restores_observed_quality_and_values():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[{"21": "white", "24": "00b4032002bc"}],
+        write_error=BackendError(ErrorCode.UNSUPPORTED_CAPABILITY, "safe rejection"),
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+    with pytest.raises(BackendError) as error:
+        manager.set_hsv("mesa", 120, 100, 50)
+
+    status = manager.get_device("mesa")
+    assert error.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    assert status.state.work_mode == "white"
+    assert status.state.hsv == HSVColor(180, 80, 70)
+    assert status.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_explicit_brightness_rejection_does_not_leave_phantom_pending_quality():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[{"21": "white", "22": 505}],
+        write_error=BackendError(ErrorCode.INVALID_INPUT, "safe rejection"),
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+    with pytest.raises(BackendError) as error:
+        manager.set_white_brightness("mesa", 80)
+
+    status = manager.get_device("mesa")
+    assert error.value.code is ErrorCode.INVALID_INPUT
+    assert status.state.white_brightness_percent == 50.0
+    assert status.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_explicit_write_rejection_preserves_independent_power_intent_until_readback():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {"20": False},
+            {"20": False, "21": "white", "22": 505},
+            {"20": True, "21": "white", "22": 505},
+        ],
+        write_errors=[None, BackendError(ErrorCode.UNSUPPORTED_CAPABILITY, "safe rejection")],
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    with pytest.raises(BackendError, match="differs"):
+        manager.set_power("mesa", True)
+    with pytest.raises(BackendError) as error:
+        manager.set_white_brightness("mesa", 80)
+
+    rejected = manager.get_device("mesa")
+    assert error.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    assert rejected.state.power is False
+    assert rejected.state.white_brightness_percent == 50.0
+    assert rejected.state.quality is DeviceStateQuality.PENDING
+
+    recovered = manager.read_state("mesa")
+    assert recovered.state.power is True
+    assert recovered.state.white_brightness_percent == 50.0
+    assert recovered.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_rejection_does_not_promote_unknown_state_and_later_valid_read_recovers():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[{}, {"21": "white", "22": 505}],
+        write_error=BackendError(ErrorCode.INVALID_INPUT, "safe rejection"),
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    with pytest.raises(BackendError):
+        manager.set_white_brightness("mesa", 80)
+
+    after_rejection = manager.get_device("mesa")
+    assert after_rejection.state.white_brightness_percent is None
+    assert after_rejection.state.quality is DeviceStateQuality.UNKNOWN
+
+    recovered = manager.read_state("mesa")
+    assert recovered.state.white_brightness_percent == 50.0
+    assert recovered.state.quality is DeviceStateQuality.CONFIRMED
 
 
 def _capture(errors, operation, device_id):

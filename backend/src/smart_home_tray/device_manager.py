@@ -49,6 +49,7 @@ class DeviceManager:
         self._pending_power: dict[str, bool] = {}
         self._last_read_power: dict[str, bool | None] = {}
         self._pending_fields: dict[str, dict[str, object]] = {}
+        self._quality_before_pending: dict[str, DeviceStateQuality] = {}
         self._last_read_fields: dict[str, dict[str, object]] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._adapter_factory = adapter_factory
@@ -218,8 +219,8 @@ class DeviceManager:
             except BackendError as error:
                 self._record_failure(device_id, error, read_failure=True)
                 raise
-            hsv = self._states[device_id].state.hsv
-            if hsv is None:
+            hsv = self._last_read_fields.get(device_id, {}).get("hsv")
+            if not isinstance(hsv, HSVColor):
                 raise BackendError(ErrorCode.DEVICE_ERROR, "Current HSV state is unavailable")
             desired = HSVColor(hue=hsv.hue, saturation=hsv.saturation, value=percent)
             encoded = encode_tuya_hsv(desired)
@@ -330,6 +331,8 @@ class DeviceManager:
         return status
 
     def _set_pending_field(self, device_id: str, field: str, value: object) -> None:
+        if not self._has_pending(device_id):
+            self._quality_before_pending[device_id] = self._states[device_id].state.quality
         self._pending_fields.setdefault(device_id, {})[field] = value
         current = self._states[device_id]
         self._states[device_id] = self._make_status(
@@ -469,6 +472,8 @@ class DeviceManager:
                 pending_fields.pop(field, None)
         if not pending_fields:
             self._pending_fields.pop(device_id, None)
+        if not self._has_pending(device_id):
+            self._quality_before_pending.pop(device_id, None)
 
         quality = (
             DeviceStateQuality.PENDING
@@ -541,15 +546,21 @@ class DeviceManager:
         connection = (
             ConnectionStatus.OFFLINE if error.code in _OFFLINE_ERRORS else current.connection
         )
-        quality = (
-            DeviceStateQuality.PENDING
-            if self._has_pending(device_id)
-            else DeviceStateQuality.OFFLINE
-            if connection is ConnectionStatus.OFFLINE
-            else DeviceStateQuality.UNKNOWN
-            if read_failure
-            else current.state.quality
-        )
+        if self._has_pending(device_id):
+            quality = DeviceStateQuality.PENDING
+        elif connection is ConnectionStatus.OFFLINE:
+            quality = DeviceStateQuality.OFFLINE
+            self._quality_before_pending.pop(device_id, None)
+        elif read_failure:
+            quality = DeviceStateQuality.UNKNOWN
+            self._quality_before_pending.pop(device_id, None)
+        elif current.state.quality is DeviceStateQuality.PENDING:
+            quality = self._quality_before_pending.pop(
+                device_id, DeviceStateQuality.UNKNOWN
+            )
+        else:
+            quality = current.state.quality
+            self._quality_before_pending.pop(device_id, None)
         state = replace(current.state, quality=quality)
         self._states[device_id] = self._make_status(self._configs[device_id], connection, state)
 
