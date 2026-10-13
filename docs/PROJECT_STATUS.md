@@ -4,7 +4,7 @@
 
 - **Fase:** 1 — Backend Local-First.
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`; PR #6 (Etapa C2A) mergeada em `develop` no commit `78d4df0`. Etapa C2B implementada e testada localmente na branch `feature/continuous-controls-scheduler`; ainda sem commit, push ou PR. Nenhuma validação física realizada.
+- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`; PR #6 (Etapa C2A) mergeada em `develop` no commit `78d4df0`. Etapa C2B implementada, testada localmente e commitada em `feature/continuous-controls-scheduler`; sem push ou PR. Nenhuma validação física realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -91,8 +91,9 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Branch base atualizada:** `develop` em `78d4df0` (merge PR #6 C2A); base de desenvolvimento não é `main`.
 - **Branch de trabalho:** `feature/continuous-controls-scheduler`, criada a partir de `78d4df0`.
 - **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
-- **Último commit base:** `78d4df0` (merge PR #6). Alterações C2B ainda não commitadas neste checkpoint.
-- **Arquivos não commitados:** scheduler, testes e documentação C2B; inspeção não encontrou credenciais reais.
+- **Último commit base:** `78d4df0` (merge PR #6).
+- **Commits C2B:** `1c4b3c8` (scheduler e testes) e `cbf24a2` (documentação); a atualização final do status será registrada em commit próprio.
+- **Arquivos não commitados:** nenhum após a atualização final do status; inspeção não encontrou credenciais reais.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
