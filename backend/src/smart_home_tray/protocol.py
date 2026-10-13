@@ -8,7 +8,7 @@ import queue
 import threading
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import BinaryIO, TextIO
+from typing import BinaryIO, Callable, TextIO
 
 from smart_home_tray.models import (
     BackendError,
@@ -195,19 +195,20 @@ class JsonLinesServer:
         if set(payload) != schemas[command]:
             raise BackendError(ErrorCode.INVALID_INPUT, "Payload fields are invalid")
         if command == "devices.list":
-            devices = [self._public_status(status) for status in self._manager.list_devices()]
-            self._emit_result(request_id, {"devices": devices})
+            future = executor.submit(self._manager.list_devices)
+            self._attach_future(request_id, future, self._public_devices)
             return
 
         device_id = payload["deviceId"]
         if not isinstance(device_id, str) or not device_id.strip():
             raise BackendError(ErrorCode.INVALID_INPUT, "deviceId is invalid")
         if command == "device.get":
-            self._emit_result(request_id, self._public_status(self._manager.get_device(device_id)))
+            future = executor.submit(self._manager.get_device, device_id)
+            self._attach_future(request_id, future, self._public_status)
             return
         if command == "device.status":
             future = executor.submit(self._manager.read_state, device_id)
-            self._attach_future(request_id, future)
+            self._attach_future(request_id, future, self._public_status)
             return
 
         if command == "device.power":
@@ -235,7 +236,7 @@ class JsonLinesServer:
                 raise BackendError(ErrorCode.INVALID_INPUT, "HSV values are outside their valid ranges")
             self._ensure_scheduler_started()
             future = self._scheduler.submit_hsv(device_id, hue, saturation, value)
-        self._attach_future(request_id, future)
+        self._attach_future(request_id, future, self._public_status)
 
     def _ensure_scheduler_started(self) -> None:
         if self._scheduler_started:
@@ -258,9 +259,22 @@ class JsonLinesServer:
             raise BackendError(ErrorCode.DEVICE_ERROR, "Device returned an invalid status")
         return device_status_to_public_dict(status)
 
-    def _attach_future(self, request_id: str, future: Future[object]) -> None:
+    @classmethod
+    def _public_devices(cls, statuses: object) -> dict[str, object]:
+        if not isinstance(statuses, (tuple, list)):
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Device catalog returned an invalid result")
+        return {"devices": [cls._public_status(status) for status in statuses]}
+
+    def _attach_future(
+        self,
+        request_id: str,
+        future: Future[object],
+        result_mapper: Callable[[object], object],
+    ) -> None:
         # Future callbacks may run on a scheduler worker; only enqueue a tiny event.
-        future.add_done_callback(lambda completed: self._events.put((request_id, completed)))
+        future.add_done_callback(
+            lambda completed: self._events.put((request_id, completed, result_mapper))
+        )
 
     def _emit_result(self, request_id: str, result: object) -> None:
         self._queue_response({"requestId": request_id, "result": result})
@@ -292,10 +306,10 @@ class JsonLinesServer:
             if isinstance(event, _ResponseEvent):
                 response, tracked, request_id = event.response, event.tracked, event.request_id
             else:
-                request_id, future = event
+                request_id, future, result_mapper = event
                 try:
-                    status = future.result()
-                    response = {"requestId": request_id, "result": self._public_status(status)}
+                    result = result_mapper(future.result())
+                    response = {"requestId": request_id, "result": result}
                 except CancelledError:
                     response = {"requestId": request_id, "error": {
                         "code": ErrorCode.COMMAND_CANCELED.value,

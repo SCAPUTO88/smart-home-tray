@@ -96,6 +96,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         print(f"Command failed: {type(error).__name__}", file=sys.stderr)
         return 2
+    except Exception:
+        print("Command failed unexpectedly", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

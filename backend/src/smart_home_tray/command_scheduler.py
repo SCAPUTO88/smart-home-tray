@@ -18,7 +18,7 @@ DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10.0
 
 
 class _DeviceManager(Protocol):
-    def list_devices(self) -> tuple[DeviceStatus, ...]: ...
+    def list_device_ids(self) -> tuple[str, ...]: ...
 
     def set_white_brightness(self, device_id: str, percent: object) -> DeviceStatus: ...
 
@@ -97,15 +97,14 @@ class CommandScheduler:
             if self._started:
                 return
 
-        devices = self._device_manager.list_devices()
+        device_ids = self._device_manager.list_device_ids()
         with self._condition:
             if self._closed:
                 raise RuntimeError("command scheduler is stopped")
             if self._started:
                 return
             self._started = True
-            for status in devices:
-                device_id = status.device_id
+            for device_id in device_ids:
                 self._queues[device_id] = deque()
                 worker = threading.Thread(
                     target=self._worker,

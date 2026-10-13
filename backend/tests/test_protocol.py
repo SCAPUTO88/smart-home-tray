@@ -11,6 +11,7 @@ from smart_home_tray.models import (
     BackendError, ConnectionStatus, DeviceCapabilities, DeviceStatus,
     DeviceStateQuality, ErrorCode, LightState,
 )
+from smart_home_tray.command_scheduler import CommandScheduler
 from smart_home_tray.protocol import JsonLinesServer
 
 
@@ -33,9 +34,9 @@ class FakeManager:
         return status()
 
 
-def status():
+def status(device_id="lamp-a"):
     return DeviceStatus(
-        device_id="lamp-a", name="Lamp", address="192.0.2.10", protocol_version=3.5,
+        device_id=device_id, name="Lamp", address="192.0.2.10", protocol_version=3.5,
         capabilities=DeviceCapabilities(True, True, True, True, True),
         connection=ConnectionStatus.UNKNOWN,
         state=LightState(quality=DeviceStateQuality.UNKNOWN),
@@ -312,6 +313,190 @@ def test_backend_errors_are_safe_and_unexpected_errors_have_no_traceback():
     assert responses[0]["error"]["code"] == "UNSUPPORTED_CAPABILITY"
     assert "sample-secret" not in json.dumps(responses) + errors
     assert "traceback" not in errors.lower()
+
+
+class LockedManager:
+    """Fake manager whose catalog methods contend with an active LAN read."""
+
+    def __init__(self):
+        self.device_ids = ("mesa", "fita")
+        self.locks = {device_id: threading.Lock() for device_id in self.device_ids}
+        self.read_entered = threading.Event()
+        self.release_read = threading.Event()
+        self.power_called = threading.Event()
+        self.power_calls = []
+
+    def list_device_ids(self):
+        # Mirrors the production immutable catalog snapshot; no device locks.
+        return self.device_ids
+
+    def list_devices(self):
+        statuses = []
+        for device_id in self.device_ids:
+            with self.locks[device_id]:
+                statuses.append(status(device_id))
+        return tuple(statuses)
+
+    def get_device(self, device_id):
+        with self.locks[device_id]:
+            return status(device_id)
+
+    def read_state(self, device_id):
+        with self.locks[device_id]:
+            if device_id == "mesa":
+                self.read_entered.set()
+                assert self.release_read.wait(timeout=3)
+            return status(device_id)
+
+    def set_power(self, device_id, enabled):
+        with self.locks[device_id]:
+            self.power_calls.append((device_id, enabled))
+            self.power_called.set()
+            return status(device_id)
+
+
+@pytest.mark.parametrize(
+    "catalog_request",
+    [
+        b'{"requestId":"catalog","command":"device.get","payload":{"deviceId":"mesa"}}\n',
+        b'{"requestId":"catalog","command":"devices.list","payload":{}}\n',
+    ],
+    ids=["get-same-device", "list-catalog"],
+)
+def test_catalog_requests_do_not_block_stdin_or_first_lazy_write(catalog_request):
+    manager = LockedManager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    power_submitted = threading.Event()
+    original_submit_power = scheduler.submit_power
+
+    def record_submit(*args, **kwargs):
+        power_submitted.set()
+        return original_submit_power(*args, **kwargs)
+
+    scheduler.submit_power = record_submit
+    lines = (
+        b'{"requestId":"read","command":"device.status","payload":{"deviceId":"mesa"}}\n'
+        + catalog_request
+        + b'{"requestId":"power-fita","command":"device.power","payload":{"deviceId":"fita","enabled":true}}\n'
+    )
+
+    class GatedInput(io.BytesIO):
+        def __init__(self, value):
+            super().__init__(value)
+            self.line_number = 0
+
+        def readline(self, size=-1):
+            self.line_number += 1
+            if self.line_number == 2:
+                assert manager.read_entered.wait(timeout=2)
+            return super().readline(size)
+
+    output, errors = io.BytesIO(), io.StringIO()
+    server = JsonLinesServer(manager, scheduler)
+    runner = threading.Thread(
+        target=server.run,
+        args=(GatedInput(lines), output, errors),
+        daemon=False,
+    )
+    runner.start()
+    try:
+        assert manager.read_entered.wait(timeout=2)
+        forwarded_while_mesa_locked = power_submitted.wait(timeout=0.75)
+    finally:
+        manager.release_read.set()
+        runner.join(timeout=4)
+    assert not runner.is_alive()
+    assert forwarded_while_mesa_locked
+    assert manager.locks["mesa"].locked() is False
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert {response["requestId"] for response in responses} == {"read", "catalog", "power-fita"}
+
+
+def test_two_same_device_writes_keep_submission_order_and_eof_drains_them():
+    class OrderedManager:
+        def __init__(self):
+            self.calls = []
+            self.condition = threading.Condition()
+
+        def list_device_ids(self):
+            return ("lamp-a",)
+
+        def set_power(self, device_id, enabled):
+            with self.condition:
+                self.calls.append(enabled)
+                self.condition.notify_all()
+            return status(device_id)
+
+    manager = OrderedManager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    input_stream = io.BytesIO(
+        b'{"requestId":"on","command":"device.power","payload":{"deviceId":"lamp-a","enabled":true}}\n'
+        b'{"requestId":"off","command":"device.power","payload":{"deviceId":"lamp-a","enabled":false}}\n'
+    )
+
+    class WaitForBoth(io.BytesIO):
+        def readline(self, size=-1):
+            line = super().readline(size)
+            if not line:
+                with manager.condition:
+                    assert manager.condition.wait_for(lambda: len(manager.calls) == 2, timeout=2)
+            return line
+
+    # Re-wrap the same bytes so EOF waits until both LAN commands have completed.
+    input_stream = WaitForBoth(input_stream.getvalue())
+    output = io.BytesIO()
+    JsonLinesServer(manager, scheduler).run(input_stream, output, io.StringIO())
+    assert manager.calls == [True, False]
+    assert {json.loads(line)["requestId"] for line in output.getvalue().splitlines()} == {"on", "off"}
+
+
+def test_eof_cancels_queued_write_and_allows_started_write_to_finish():
+    class InFlightManager:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.calls = []
+
+        def list_device_ids(self):
+            return ("lamp-a",)
+
+        def set_power(self, device_id, enabled):
+            self.calls.append(enabled)
+            if enabled:
+                self.started.set()
+                assert self.release.wait(timeout=3)
+            return status(device_id)
+
+    manager = InFlightManager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    output = io.BytesIO()
+
+    class EofAfterStarted(io.BytesIO):
+        def readline(self, size=-1):
+            line = super().readline(size)
+            if not line:
+                assert manager.started.wait(timeout=2)
+            return line
+
+    runner = threading.Thread(
+        target=JsonLinesServer(manager, scheduler).run,
+        args=(EofAfterStarted(
+            b'{"requestId":"active","command":"device.power","payload":{"deviceId":"lamp-a","enabled":true}}\n'
+            b'{"requestId":"queued","command":"device.power","payload":{"deviceId":"lamp-a","enabled":false}}\n'
+        ), output, io.StringIO()),
+        daemon=False,
+    )
+    runner.start()
+    try:
+        assert manager.started.wait(timeout=2)
+    finally:
+        manager.release.set()
+        runner.join(timeout=4)
+    assert not runner.is_alive()
+    responses = {item["requestId"]: item for item in map(json.loads, output.getvalue().splitlines())}
+    assert "result" in responses["active"]
+    assert responses["queued"]["error"]["code"] == "COMMAND_CANCELED"
+    assert manager.calls == [True]
 
 
 def test_unexpected_manager_error_is_generic_and_does_not_leak_to_stdout_or_stderr():

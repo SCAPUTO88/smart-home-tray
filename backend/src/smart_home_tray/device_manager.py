@@ -76,6 +76,14 @@ class DeviceManager:
                 statuses.append(self._states[device_id])
         return tuple(statuses)
 
+    def list_device_ids(self) -> tuple[str, ...]:
+        """Return stable catalog identities without waiting on per-device LAN locks.
+
+        Catalog membership is immutable after construction; address updates replace
+        an existing config entry and never change its Device ID.
+        """
+        return tuple(self._configs)
+
     def get_device(self, device_id: str) -> DeviceStatus:
         device_id = self._validate_device_id(device_id)
         with self._locks[device_id]:
