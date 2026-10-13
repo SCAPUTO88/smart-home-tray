@@ -17,6 +17,17 @@
 - `read_status() -> dict[str, object]`: consulta status por LAN e retorna apenas o mapa `dps` validado.
 - `write_dps(dps_index: int, value: object) -> None`: envia uma escrita DPS individual e converte erros TinyTuya em `BackendError`. Retornar sem erro significa somente que a operação TinyTuya não reportou falha; não confirma o estado físico nem atualiza estado confirmado. `None` é aceito como null ACK sem estado DPS. O `DeviceManager` deve fazer leitura posterior e só então publicar estado confirmado. Retornos não vazios devem conter um mapa DPS válido; respostas vazias ou inesperadas são `DEVICE_ERROR`.
 
+## DeviceManager (Etapa C1)
+
+- `DeviceManager(AppConfig, adapter_factory=TuyaAdapter, polling_interval_seconds=15.0)`: mantém catálogo interno por Device ID e status públicos; configurações e Local Keys nunca são retornadas. Adapters são criados sob demanda e uma falha de inicialização afeta somente o dispositivo solicitado.
+- `list_devices() -> tuple[DeviceStatus, ...]` e `get_device(device_id) -> DeviceStatus`: consultam catálogo; ID desconhecido ou inválido gera `BackendError(INVALID_INPUT)` com mensagem genérica.
+- `read_state(device_id) -> DeviceStatus`: lê LAN e interpreta apenas DPS `power` e `work_mode` configurados. DPS ausentes não geram valores inventados nem descartam o último valor observado. Um status válido sem valores interpretáveis mantém a qualidade anterior (inicialmente `unknown`). Timeout/falha de conexão marca a conexão offline preservando valores conhecidos.
+- `set_power(device_id, enabled: bool) -> DeviceStatus`: valida a capacidade por dispositivo, escreve no DPS mapeado e executa leitura posterior. Só retorna sucesso quando uma leitura DPS booleana corresponde ao valor solicitado. Divergência ou confirmação ausente gera `DEVICE_ERROR`; durante confirmação inconclusiva, qualidade `pending` é mantida e o último valor observado não é substituído. A operação não expõe escrita DPS arbitrária ao consumidor.
+- `update_address(device_id, address) -> DeviceStatus`: atualiza endereço válido mantendo Device ID, descarta adapter antigo e força construção sob demanda no próximo acesso. Descoberta automática LAN está fora desta etapa.
+- `start_polling()`, `stop_polling()`, `poll_once()`: polling não inicia no construtor; ciclo padrão de 15 segundos, encerrável explicitamente. `poll_once` executa ciclo isolado por dispositivo; locks por Device ID impedem sobreposição entre leitura/escrita no mesmo equipamento.
+
+O construtor do `TuyaAdapter` preserva `BackendError` estruturado e normaliza outras falhas de criação do cliente para `TIMEOUT`, `DEVICE_OFFLINE` ou `DEVICE_ERROR`, sem propagar mensagem/cause bruta. Não são incluídos tracebacks nas respostas públicas.
+
 ## Erros
 
 | Código | Uso |

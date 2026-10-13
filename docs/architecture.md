@@ -16,6 +16,8 @@ Backend local-first executável como processo independente. A operação em runt
 | `protocol.py` | Ler requests e escrever responses JSON Lines sem imprimir logs em stdout. | DeviceManager, models, JSON |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | DeviceManager |
 
+`DeviceManager` cria o catálogo por `Device ID`, mantém estado público sem configuração privada e instancia adapters sob demanda. Cada dispositivo tem seu próprio lock; polling é opt-in via `start_polling()` e encerra com `stop_polling()`. `poll_once()` permite uma sincronização explícita sem thread. O intervalo padrão é 15 segundos. `update_address()` atualiza o IP e descarta o adapter para reconstruí-lo na próxima operação; não há descoberta automática nesta etapa.
+
 O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe credenciais nem acessa TinyTuya diretamente.
 
 ## Fluxo de comunicação
@@ -25,6 +27,8 @@ O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe cr
 3. O Adapter cria a sessão TinyTuya para protocolo e timeout configurados e faz operações LAN.
 4. O Adapter converte falhas e respostas inválidas em erros estruturados e seguros. Uma escrita aceita não confirma estado físico; o DeviceManager faz leitura posterior antes de atualizar estado confirmado, pendente ou offline.
 5. CLI ou protocolo encaminham comandos normalizados ao manager; respostas não carregam configuração privada.
+
+Na Etapa C1, o manager lê apenas os DPS configurados de energia e modo. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. A leitura preserva valores anteriormente conhecidos quando DPS mapeados estão ausentes; uma leitura válida sem valores interpretáveis não promove estado `unknown` para `confirmed`. Falhas em um dispositivo não interrompem os demais.
 
 ## Estado, capacidades e sincronização
 
