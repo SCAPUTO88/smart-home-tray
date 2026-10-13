@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import threading
 
 import pytest
@@ -13,6 +14,8 @@ from smart_home_tray.models import (
     DeviceStateQuality,
     DPSMap,
     ErrorCode,
+    HSVColor,
+    ValueRange,
 )
 
 
@@ -27,10 +30,37 @@ def make_device(device_id: str, address: str, *, power_dps: int | None = 20) -> 
     )
 
 
+def make_color_device(
+    device_id: str,
+    address: str,
+    *,
+    white: bool = True,
+    color: bool = True,
+) -> DeviceConfig:
+    return DeviceConfig(
+        device_id=device_id,
+        name=f"Light {device_id}",
+        address=address,
+        protocol_version=3.5,
+        local_key="unit-test-key-not-real",
+        dps=DPSMap(
+            power=20,
+            work_mode=21,
+            white_brightness=22 if white else None,
+            white_temperature=23 if white else None,
+            hsv=24 if color else None,
+            scene=25,
+        ),
+        white_brightness_range=ValueRange(10, 1000) if white else None,
+        white_temperature_range=ValueRange(0, 1000) if white else None,
+    )
+
+
 class FakeAdapter:
-    def __init__(self, statuses=None, write_error=None, on_status=None, on_write=None):
+    def __init__(self, statuses=None, write_error=None, write_errors=None, on_status=None, on_write=None):
         self.statuses = list(statuses or [])
         self.write_error = write_error
+        self.write_errors = list(write_errors or [])
         self.on_status = on_status
         self.on_write = on_write
         self.writes = []
@@ -49,6 +79,10 @@ class FakeAdapter:
         if self.on_write:
             self.on_write()
         self.writes.append((index, value))
+        if self.write_errors:
+            error = self.write_errors.pop(0)
+            if error is not None:
+                raise error
         if self.write_error:
             raise self.write_error
         return None
@@ -517,6 +551,261 @@ def test_update_address_rebuilds_adapter_without_changing_device_identity():
     assert created[1].device_id == "stable-id"
     assert created[1].address == "192.0.2.12"
     assert status.state.power is False
+
+
+def test_read_state_normalizes_white_temperature_hsv_and_scene_separately():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {
+                "20": True,
+                "21": "white",
+                "22": 505,
+                "23": 250,
+                "24": "007803e800fa",
+                "25": "scene_data",
+            }
+        ]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.read_state("mesa")
+
+    assert status.state.white_brightness_percent == 50.0
+    assert status.state.color_temperature_percent == 25.0
+    assert status.state.hsv == HSVColor(120, 100, 25)
+    assert status.state.color_value_percent == 25.0
+    assert status.state.scene == "scene_data"
+    assert status.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_color_value_and_white_brightness_remain_independent():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(statuses=[{"22": 505, "24": "00b403e800fa"}])
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.read_state("mesa")
+
+    assert status.state.white_brightness_percent == 50.0
+    assert status.state.color_value_percent == 25.0
+    assert status.state.hsv == HSVColor(180, 100, 25)
+
+
+def test_invalid_lighting_dps_preserve_last_valid_observations():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {"22": 505, "23": 250, "24": "007803e800fa", "25": "scene_data"},
+            {"22": True, "23": 1001, "24": "not-a-color", "25": {"unsafe": "shape"}},
+        ]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+    manager.read_state("mesa")
+
+    status = manager.read_state("mesa")
+
+    assert status.state.white_brightness_percent == 50.0
+    assert status.state.color_temperature_percent == 25.0
+    assert status.state.hsv == HSVColor(120, 100, 25)
+    assert status.state.scene == "scene_data"
+
+
+def test_set_white_brightness_uses_its_range_and_confirms_readback():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(statuses=[{"21": "white", "22": 505}, {"21": "white", "22": 802}])
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.set_white_brightness("mesa", 80)
+
+    assert adapter.writes == [(22, 802)]
+    assert status.state.white_brightness_percent == 80.0
+    assert status.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_set_color_temperature_switches_mode_before_using_configured_dps():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[{"21": "colour", "23": 500}, {"21": "white", "23": 700}]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.set_color_temperature("mesa", 70)
+
+    assert adapter.writes == [(21, "white"), (23, 700)]
+    assert status.state.work_mode == "white"
+    assert status.state.color_temperature_percent == 70.0
+
+
+def test_set_hsv_switches_to_color_mode_before_writing_hsv():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {"21": "white", "24": "000003e803e8"},
+            {"21": "colour", "24": "007803e801f4"},
+        ]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.set_hsv("mesa", 120, 100, 50)
+
+    assert adapter.writes == [(21, "colour"), (24, "007803e801f4")]
+    assert status.state.hsv == HSVColor(120, 100, 50)
+    assert status.state.color_value_percent == 50.0
+
+
+def test_set_color_brightness_preserves_hue_and_saturation():
+    device = make_color_device("strip", "192.0.2.11", white=False)
+    adapter = FakeAdapter(
+        statuses=[{"21": "colour", "24": "00b4032002bc"}, {"21": "colour", "24": "00b4032000fa"}]
+    )
+    manager, _ = make_manager([device], {"strip": adapter})
+
+    status = manager.set_color_brightness("strip", 25)
+
+    assert adapter.writes == [(24, "00b4032000fa")]
+    assert status.state.hsv == HSVColor(180, 80, 25)
+    assert status.state.color_value_percent == 25.0
+    assert status.state.white_brightness_percent is None
+
+
+def test_set_color_brightness_requires_a_previously_observed_valid_hsv():
+    device = make_color_device("strip", "192.0.2.11", white=False)
+    adapter = FakeAdapter(statuses=[{"21": "colour", "24": "invalid!"}])
+    manager, _ = make_manager([device], {"strip": adapter})
+
+    with pytest.raises(BackendError) as error:
+        manager.set_color_brightness("strip", 25)
+
+    assert error.value.code is ErrorCode.DEVICE_ERROR
+    assert adapter.writes == []
+
+
+def test_led_strip_rejects_white_brightness_and_color_temperature():
+    device = make_color_device("strip", "192.0.2.11", white=False)
+    adapter = FakeAdapter()
+    manager, _ = make_manager([device], {"strip": adapter})
+
+    with pytest.raises(BackendError) as brightness_error:
+        manager.set_white_brightness("strip", 50)
+    with pytest.raises(BackendError) as temperature_error:
+        manager.set_color_temperature("strip", 50)
+
+    assert brightness_error.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    assert temperature_error.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    assert adapter.writes == []
+
+
+def test_lighting_command_divergence_keeps_field_intent_pending_until_readback():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {"21": "colour", "24": "000003e803e8"},
+            {"21": "colour", "24": "00f003e801f4"},
+            {"21": "colour", "24": "007803e801f4"},
+        ]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    with pytest.raises(BackendError, match="differs"):
+        manager.set_hsv("mesa", 120, 100, 50)
+
+    divergent = manager.get_device("mesa")
+    assert divergent.state.hsv == HSVColor(240, 100, 50)
+    assert divergent.state.quality is DeviceStateQuality.PENDING
+
+    confirmed = manager.read_state("mesa")
+    assert confirmed.state.hsv == HSVColor(120, 100, 50)
+    assert confirmed.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_color_readback_does_not_resolve_pending_power_intent():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {"20": False, "21": "white"},
+            {"20": False, "21": "white", "24": "000003e803e8"},
+            {"20": False, "21": "colour", "24": "007803e801f4"},
+            {"20": True, "21": "colour", "24": "007803e801f4"},
+        ]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+    with pytest.raises(BackendError):
+        manager.set_power("mesa", True)
+
+    status = manager.set_hsv("mesa", 120, 100, 50)
+
+    assert status.state.power is False
+    assert status.state.hsv == HSVColor(120, 100, 50)
+    assert status.state.quality is DeviceStateQuality.PENDING
+
+    recovered = manager.read_state("mesa")
+    assert recovered.state.power is True
+    assert recovered.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_partial_mode_switch_is_not_rolled_back_and_remains_observable():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[
+            {"21": "white", "24": "000003e803e8"},
+            {"21": "colour", "24": "000003e803e8"},
+            {"21": "colour", "24": "007803e801f4"},
+        ],
+        write_errors=[None, BackendError(ErrorCode.DEVICE_ERROR, "safe write failure")],
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    with pytest.raises(BackendError):
+        manager.set_hsv("mesa", 120, 100, 50)
+
+    partial = manager.get_device("mesa")
+    assert adapter.writes == [(21, "colour"), (24, "007803e801f4")]
+    assert partial.state.work_mode == "colour"
+    assert partial.state.hsv == HSVColor(0, 100, 100)
+    assert partial.state.quality is DeviceStateQuality.PENDING
+
+    confirmed = manager.read_state("mesa")
+    assert confirmed.state.hsv == HSVColor(120, 100, 50)
+    assert confirmed.state.quality is DeviceStateQuality.CONFIRMED
+
+
+def test_lighting_arguments_are_validated_before_any_write():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter()
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    with pytest.raises(BackendError) as brightness_error:
+        manager.set_white_brightness("mesa", math.nan)
+    with pytest.raises(BackendError) as hsv_error:
+        manager.set_hsv("mesa", True, 100, 50)
+
+    assert brightness_error.value.code is ErrorCode.INVALID_INPUT
+    assert hsv_error.value.code is ErrorCode.INVALID_INPUT
+    assert adapter.writes == []
+
+
+def test_lighting_control_does_not_leak_local_key_in_public_status():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(
+        statuses=[{"21": "white", "22": 500}, {"21": "white", "22": 505}]
+    )
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.set_white_brightness("mesa", 50)
+
+    assert status.state.white_brightness_percent == 50.0
+    assert "unit-test-key-not-real" not in repr(status)
+
+
+def test_lighting_command_skips_redundant_write_when_fresh_state_matches():
+    device = make_color_device("mesa", "192.0.2.10")
+    adapter = FakeAdapter(statuses=[{"21": "white", "22": 802}])
+    manager, _ = make_manager([device], {"mesa": adapter})
+
+    status = manager.set_white_brightness("mesa", 80)
+
+    assert status.state.white_brightness_percent == 80.0
+    assert adapter.writes == []
 
 
 def _capture(errors, operation, device_id):

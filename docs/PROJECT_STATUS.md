@@ -4,7 +4,7 @@
 
 - **Fase:** 1 — Backend Local-First.
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`, com 55 testes CI aprovados em Windows/Python 3.12 e 3.14. Code Review 02 corrige consistência de estado em branch própria, sem push conforme instrução do mantenedor; PR e CI desta correção aguardam push manual. Nenhuma validação em dispositivo real foi feita. CLI, JSON Lines, RGB/HSV e controles contínuos seguem planejados.
+- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`. Etapa C2A está implementada e em validação local na branch `feature/advanced-lighting-controls`; nenhum push foi feito, conforme instrução do mantenedor. Nenhuma validação física foi executada nesta etapa.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -21,6 +21,10 @@
 | DeviceManager: catálogo por ID, estado, leitura LAN, energia com readback, locks por dispositivo e polling explícito | TESTADO | `backend/src/smart_home_tray/device_manager.py`; suíte unitária com fakes/mocks |
 | CR-05/CR-06: intenção pendente só resolvida por leitura correspondente; falha de leitura degrada qualidade sem classificar `DEVICE_ERROR` como offline | TESTADO | `backend/src/smart_home_tray/device_manager.py`; regressões em `backend/tests/test_device_manager.py` |
 | Troca de endereço invalida confirmação, preserva valor/intenção e reconstrói adapter | TESTADO | `update_address()`; casos de estado confirmado e pendente em `test_device_manager.py` |
+| Codec HSV16 Tuya e conversão RGB ↔ HSV | IMPLEMENTADO | `backend/src/smart_home_tray/color.py`; testes em `backend/tests/test_color.py` |
+| Leitura normalizada de brilho branco, temperatura, HSV, cena e work mode por DPS configurado | IMPLEMENTADO | `DeviceManager._read_state_unlocked()`; testes unitários com fakes |
+| Comandos normalizados de brilho branco, temperatura, HSV e brilho colorido | IMPLEMENTADO | Métodos explícitos em `device_manager.py`; readback/pendências por campo com mocks |
+| Validação física de controles C2A | PLANEJADO | Nenhum dispositivo real acessado |
 | Normalização de falhas de inicialização do TuyaAdapter | TESTADO | `backend/src/smart_home_tray/tuya_adapter.py`; testes com factory que lança timeout, OSError, exceção genérica e BackendError com causa sensível |
 | CI pytest/compileall em Windows para PRs em develop/main (Python 3.12/3.14) | TESTADO | PR #2: os dois jobs da matriz passaram |
 | CLI, JSON Lines, conversões RGB/HSV e comandos contínuos | PLANEJADO | Etapas posteriores à C1 |
@@ -31,6 +35,7 @@
 - Configuração: `backend/src/smart_home_tray/config.py` e `backend/config.example.toml`.
 - Adapter: `backend/src/smart_home_tray/tuya_adapter.py`.
 - DeviceManager: `backend/src/smart_home_tray/device_manager.py`.
+- Codec: `backend/src/smart_home_tray/color.py`.
 - Testes: `backend/tests/test_models.py`, `backend/tests/test_config.py`, `backend/tests/test_tuya_adapter.py` e `backend/tests/test_device_manager.py`.
 - CI: `.github/workflows/backend-tests.yml`.
 - Contratos e arquitetura: `docs/contracts.md` e `docs/architecture.md`.
@@ -51,6 +56,7 @@
 - **Etapa C1:** `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **55 passed**; `backend\.venv\Scripts\python.exe -m compileall -q backend\src backend\tests` — sem erros; `git diff --check` — sem erros. Execução local em Python 3.14.3. Nenhum dispositivo físico acessado.
 - **GitHub Actions:** jobs Windows Python 3.12 e 3.14 da PR #2 passaram no commit `ed43395`; o status-only commit deste checkpoint também dispara nova execução.
 - **Code Review 02:** `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_device_manager.py -q` — **25 passed**; suíte completa `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **65 passed**; `compileall` e `git diff --check` concluídos sem erros. Inspeção das alterações não encontrou credenciais; apenas o placeholder de teste `unit-test-key-not-real`. Nenhum dispositivo físico acessado.
+- **Etapa C2A:** testes focados `test_device_manager.py` + `test_color.py` — **76 passed**; suíte completa — **116 passed**; `compileall` e `git diff --check` concluídos sem erros. Testes usam somente mocks/fakes; nenhum hardware foi acessado. Inspeção final de credenciais e commits locais são os próximos passos.
 
 ## Decisões técnicas
 
@@ -75,17 +81,17 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 ## Git
 
 - **Estado:** repositório Git existente; sem merge automático.
-- **Branch base atualizada:** `develop` fast-forward até `2224d2b` (merge da PR #2); base de desenvolvimento não é `main`.
-- **Branch de trabalho:** `fix/device-manager-state-consistency`, criada a partir de `2224d2b`.
-- **Commits desta correção:** `10c54aa` (código e regressões) e commit documental do checkpoint (HEAD).
-- **Último commit:** `docs: record state consistency review checkpoint` (HEAD; hash não registrado para evitar autorreferência no status).
-- **Arquivos não commitados:** nenhum; sem credenciais versionadas.
+- **Branch base atualizada:** `develop` em `1d96db2` (merge Code Review 02); base de desenvolvimento não é `main`.
+- **Branch de trabalho:** `feature/advanced-lighting-controls`, criada a partir de `1d96db2`.
+- **Commits C2A:** ainda não criados; alterações locais em validação.
+- **Arquivos não commitados:** `backend/src/smart_home_tray/color.py`, `backend/src/smart_home_tray/device_manager.py`, `backend/tests/test_color.py`, `backend/tests/test_device_manager.py`, `docs/PROJECT_STATUS.md`, `docs/architecture.md` e `docs/contracts.md`.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
-- **PR Code Review 02:** ainda não criada; requer push manual do mantenedor da branch `fix/device-manager-state-consistency`.
+- **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
+- **PR C2A:** ainda não existe; push será manual pelo mantenedor após os commits locais.
 
 ## Próximos passos
 
-1. Executar suíte completa, `compileall`, `diff --check` e inspeção de segredos neste branch.
-2. Criar commits claros e entregar a branch para push manual; após push, abrir PR para `develop` e aguardar CI Windows/Python 3.12/3.14.
-3. Aguardar revisão/merge manual do Code Review 02; não iniciar Etapa C2 antes da aprovação arquitetural.
+1. Finalizar `compileall`, `git diff --check`, revisão de segurança e validação dos testes C2A.
+2. Criar commits locais claros; o mantenedor fará push manual e abrirá PR para `develop`, então aguardar CI Windows/Python 3.12/3.14.
+3. Aguardar revisão arquitetural da C2A; não iniciar C2B automaticamente.
