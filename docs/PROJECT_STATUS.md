@@ -27,6 +27,7 @@
 | CR-07/CR-08: HSV atual obrigatório para brilho colorido; qualidade coerente após rejeição explícita | TESTADO | Regressões em `backend/tests/test_device_manager.py`; suíte completa desta revisão: 123 passed |
 | Scheduler de comandos contínuos com coalescing, barreiras discretas e FIFO por dispositivo | TESTADO | `backend/src/smart_home_tray/command_scheduler.py`; 17 testes determinísticos em `backend/tests/test_command_scheduler.py` |
 | Lifecycle explícito e Futures sem confirmação no enqueue | TESTADO | `start()`/`stop()`; teste integrado com DeviceManager fake confirma que estado só muda após readback |
+| CR-09: stop() solicitado em callback evita join da própria thread e mantém retorno booleano correto | TESTADO | Regressão em `backend/tests/test_command_scheduler.py`; callback cancela fila, operação em andamento conclui e stop externo posterior aguarda término |
 | Validação física de controles C2A | PLANEJADO | Nenhum dispositivo real acessado |
 | Normalização de falhas de inicialização do TuyaAdapter | TESTADO | `backend/src/smart_home_tray/tuya_adapter.py`; testes com factory que lança timeout, OSError, exceção genérica e BackendError com causa sensível |
 | CI pytest/compileall em Windows para PRs em develop/main (Python 3.12/3.14) | TESTADO | PR #2: os dois jobs da matriz passaram |
@@ -64,6 +65,7 @@
 - **CI PR #6 antes desta revisão:** conforme checkpoint informado, 116 testes passaram em Windows/Python 3.12 e 3.14. Esse resultado antecede as correções CR-07/CR-08.
 - **Code Review C2A CR-07/CR-08:** testes focados `test_color.py` + `test_device_manager.py` — **83 passed**; suíte completa — **123 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; CI atualizado aguarda push manual. Testes somente com fakes/mocks; nenhum dispositivo físico acessado.
 - **Etapa C2B:** testes focados `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_command_scheduler.py -q` — **17 passed**; suíte completa `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **140 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; testes somente com fakes/mocks, sem rede ou hardware.
+- **Code Review C2B CR-09:** regressão reproduziu `RuntimeError: cannot join current thread` antes da correção; testes focados após correção — **18 passed**; suíte completa — **141 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14, somente fakes/mocks; nenhum hardware acessado.
 
 ## Decisões técnicas
 
@@ -92,16 +94,16 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Branch de trabalho:** `feature/continuous-controls-scheduler`, criada a partir de `78d4df0`.
 - **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
 - **Último commit base:** `78d4df0` (merge PR #6).
-- **Commits C2B:** `1c4b3c8` (scheduler e testes) e `cbf24a2` (documentação); a atualização final do status será registrada em commit próprio.
-- **Arquivos não commitados:** nenhum após a atualização final do status; inspeção não encontrou credenciais reais.
+- **Commits C2B:** `1c4b3c8` (scheduler e testes), `cbf24a2` (documentação), `61776c3` (status) e `dcb4e8b` (correção CR-09, regressão e contratos). Atualização documental final deste checkpoint será commitada em seguida.
+- **Arquivos não commitados:** somente a atualização final deste status; inspeção não encontrou credenciais reais.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
 - **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
 - **PR #6 C2A:** mergeada em `develop` no commit `78d4df0`.
-- **PR C2B:** ainda não criada; push será manual pelo mantenedor e a nova PR deve ter base `develop`.
+- **PR #7 C2B:** aberta para `develop`; CI informado pelo mantenedor passou com 140 testes em Windows/Python 3.12 e 3.14 antes de CR-09. Estes commits locais aguardam push manual; sem merge.
 
 ## Próximos passos
 
-1. Revisar diff e criar commits locais específicos para scheduler e documentação.
-2. Mantenedor publica manualmente `feature/continuous-controls-scheduler` e abre PR para `develop`.
-3. Aguardar CI Windows/Python 3.12/3.14 e revisão arquitetural; não avançar para CLI/JSON Lines.
+1. Criar commit local específico para CR-09.
+2. Mantenedor atualiza manualmente a PR #7 e aguarda CI Windows/Python 3.12/3.14 e revisão arquitetural.
+3. Não avançar para CLI/JSON Lines antes da revisão.
