@@ -45,6 +45,7 @@ class DeviceManager:
         self._adapters: dict[str, TuyaAdapter | None] = {}
         self._states: dict[str, DeviceStatus] = {}
         self._pending_power: dict[str, bool] = {}
+        self._last_read_power: dict[str, bool | None] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._adapter_factory = adapter_factory
         self._polling_interval_seconds = float(polling_interval_seconds)
@@ -81,11 +82,11 @@ class DeviceManager:
             try:
                 return self._read_state_unlocked(device_id)
             except BackendError as error:
-                self._record_failure(device_id, error)
+                self._record_failure(device_id, error, read_failure=True)
                 raise
             except Exception:
                 error = BackendError(ErrorCode.DEVICE_ERROR, "Device status could not be read")
-                self._record_failure(device_id, error)
+                self._record_failure(device_id, error, read_failure=True)
                 raise error from None
 
     def set_power(self, device_id: str, enabled: bool) -> DeviceStatus:
@@ -136,14 +137,20 @@ class DeviceManager:
             try:
                 status = self._read_state_unlocked(device_id)
             except BackendError as error:
-                self._record_failure(device_id, error)
+                self._record_failure(device_id, error, read_failure=True)
                 raise
             except Exception:
                 error = BackendError(ErrorCode.DEVICE_ERROR, "Power state could not be confirmed")
-                self._record_failure(device_id, error)
+                self._record_failure(device_id, error, read_failure=True)
                 raise error from None
 
             if status.state.quality is DeviceStateQuality.PENDING:
+                observed_power = self._last_read_power[device_id]
+                if observed_power is not None and observed_power is not enabled:
+                    raise BackendError(
+                        ErrorCode.DEVICE_ERROR,
+                        "Power command was sent but the observed state differs from the requested value",
+                    )
                 raise BackendError(
                     ErrorCode.DEVICE_ERROR,
                     "Power command was sent but the device did not report its power state",
@@ -167,8 +174,15 @@ class DeviceManager:
             self._configs[device_id] = updated_config
             self._adapters[device_id] = None
             current = self._states[device_id]
+            quality = (
+                DeviceStateQuality.PENDING
+                if device_id in self._pending_power
+                else DeviceStateQuality.UNKNOWN
+            )
             self._states[device_id] = self._make_status(
-                updated_config, ConnectionStatus.UNKNOWN, current.state
+                updated_config,
+                ConnectionStatus.UNKNOWN,
+                replace(current.state, quality=quality),
             )
             return self._states[device_id]
 
@@ -215,6 +229,7 @@ class DeviceManager:
 
     def _read_state_unlocked(self, device_id: str) -> DeviceStatus:
         config = self._configs[device_id]
+        self._last_read_power[device_id] = None
         adapter = self._get_adapter_unlocked(device_id)
         dps = adapter.read_status()
         if not isinstance(dps, dict):
@@ -230,8 +245,9 @@ class DeviceManager:
             raw_power = dps[str(config.dps.power)]
             if isinstance(raw_power, bool):
                 power = raw_power
+                self._last_read_power[device_id] = raw_power
                 recognized_value = True
-                if pending_power is not None:
+                if pending_power is not None and raw_power is pending_power:
                     self._pending_power.pop(device_id, None)
                     pending_power = None
 
@@ -280,7 +296,13 @@ class DeviceManager:
             replace(current.state, quality=quality),
         )
 
-    def _record_failure(self, device_id: str, error: BackendError) -> None:
+    def _record_failure(
+        self,
+        device_id: str,
+        error: BackendError,
+        *,
+        read_failure: bool = False,
+    ) -> None:
         current = self._states[device_id]
         connection = (
             ConnectionStatus.OFFLINE if error.code in _OFFLINE_ERRORS else current.connection
@@ -290,6 +312,8 @@ class DeviceManager:
             if device_id in self._pending_power
             else DeviceStateQuality.OFFLINE
             if connection is ConnectionStatus.OFFLINE
+            else DeviceStateQuality.UNKNOWN
+            if read_failure
             else current.state.quality
         )
         state = replace(current.state, quality=quality)
