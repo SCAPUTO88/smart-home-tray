@@ -8,10 +8,14 @@
 - `DeviceStatus`: identidade, nome, endereço atual, protocolo, capacidades e estado de conexão; nunca inclui Local Key.
 - `BackendError`: código padronizado e mensagem segura sem credenciais ou chave local.
 
+### Representação pública
+
+`device_status_to_public_dict(DeviceStatus)` é a única conversão aprovada para expor estado pela futura camada pública/IPC. Ela constrói um dicionário por allowlist explícita de campos de identidade, capacidades e estado. Não use `dataclasses.asdict`, serializadores genéricos ou conversão de `DeviceConfig`/`AppConfig`; essas configurações podem conter Local Keys. O conversor rejeita outros tipos.
+
 ## Operações do adapter
 
 - `read_status() -> dict[str, object]`: consulta status por LAN e retorna apenas o mapa `dps` validado.
-- `write_dps(dps_index: int, value: object) -> None`: envia uma escrita DPS individual; checa o retorno e converte erros TinyTuya em `BackendError`.
+- `write_dps(dps_index: int, value: object) -> None`: envia uma escrita DPS individual e converte erros TinyTuya em `BackendError`. Retornar sem erro significa somente que a operação TinyTuya não reportou falha; não confirma o estado físico nem atualiza estado confirmado. `None` é aceito como null ACK sem estado DPS. O `DeviceManager` deve fazer leitura posterior e só então publicar estado confirmado. Retornos não vazios devem conter um mapa DPS válido; respostas vazias ou inesperadas são `DEVICE_ERROR`.
 
 ## Erros
 
@@ -23,6 +27,8 @@
 | `INVALID_INPUT` | Configuração, DPS ou payload fora do contrato. |
 | `UNSUPPORTED_CAPABILITY` | Operação solicita capacidade ausente no mapa do dispositivo. |
 | `DEVICE_ERROR` | Erro do equipamento não mapeado para os códigos acima. |
+
+Mapeamento documentado da TinyTuya: 903 → `INVALID_INPUT` (valor fora do intervalo); 904 → `DEVICE_ERROR` (payload inesperado, diagnóstico fixo e seguro); 907 → `UNSUPPORTED_CAPABILITY`; 914 → `AUTH_FAILED` (mensagem neutra sobre parâmetros de autenticação, sem afirmar se a causa foi chave ou protocolo). Códigos desconhecidos usam `DEVICE_ERROR`. Mensagens brutas de resposta/exceção não são repassadas.
 
 ## Configuração externa
 
