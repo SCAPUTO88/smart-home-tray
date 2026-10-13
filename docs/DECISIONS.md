@@ -65,3 +65,11 @@
 - **Motivo:** TinyTuya publica wheel universal Python 3 e tem matriz de testes documentada até 3.12; PyInstaller atual documenta suporte a Python 3.8+ e adicionou suporte 3.14.
 - **Trade-off:** este checkpoint valida o runtime instalado (3.14), não executa a matriz completa nem prova o empacotamento PyInstaller.
 - **Referências:** [TinyTuya no PyPI](https://pypi.org/project/tinytuya/), [matriz do projeto TinyTuya](https://github.com/jasonacox/tinytuya/blob/master/AGENTS.md), [documentação PyInstaller](https://www.pyinstaller.org/en/stable/) e [changelog](https://pyinstaller.org/en/latest/CHANGES.html).
+
+### D-010 — Scheduler contínuo com worker por dispositivo
+
+- **Estado:** aprovado para a Etapa C2B.
+- **Decisão:** adicionar `CommandScheduler` separado do DeviceManager. Após `start()`, há um worker por dispositivo; uma `Condition` compartilhada protege filas mas nunca é mantida durante operações LAN. Filas são FIFO por dispositivo. Apenas o último comando contínuo do mesmo tipo no segmento final pode ser substituído. A janela é fixa de 150 ms a partir da primeira intenção do segmento; atualizações repetidas não a reiniciam. Comandos contínuos também respeitam no mínimo 150 ms entre seus inícios, salvo quando um comando discreto antecipa uma intenção anterior. Power é FIFO discreto e antecipa a execução de controles anteriores ainda pendentes.
+- **Resultados e ciclo de vida:** cada submissão retorna `Future[DeviceStatus]`; substituição e shutdown cancelam Futures ainda não iniciados. O Future de comando iniciado só termina com resposta do DeviceManager ou erro. `stop(timeout_seconds=10)` fecha novas submissões, cancela fila pendente e aguarda operações iniciadas até o timeout; retorna `False` se alguma ainda executa, permitindo novo `stop()` para aguardar seu encerramento.
+- **Motivo:** combinar cadência previsível, entrega periódica durante arraste, ordem entre controles incompatíveis e progresso independente por lâmpada, sem alterar a API LAN síncrona do DeviceManager.
+- **Trade-offs:** número de workers é proporcional ao catálogo de dispositivos; comandos podem esperar pelo fim de uma operação LAN mais longa e callbacks de Future executam no worker que publica o resultado. Não há restart após shutdown. O limite de espera do shutdown não interrompe comandos iniciados.

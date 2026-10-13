@@ -4,7 +4,7 @@
 
 - **Fase:** 1 — Backend Local-First.
 - **Objetivo:** backend Python independente para controle LAN Tuya, com contratos prontos para integração futura via Tauri.
-- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`, com 55 testes CI aprovados em Windows/Python 3.12 e 3.14. Code Review 02 corrige consistência de estado em branch própria, sem push conforme instrução do mantenedor; PR e CI desta correção aguardam push manual. Nenhuma validação em dispositivo real foi feita. CLI, JSON Lines, RGB/HSV e controles contínuos seguem planejados.
+- **Progresso:** PR #1 mergeada em `develop` no commit `9e6df6c`; PR #2 (Etapa C1) mergeada em `develop` no commit `2224d2b`; Code Review 02 mergeada em `develop` no commit `1d96db2`; PR #6 (Etapa C2A) mergeada em `develop` no commit `78d4df0`. Etapa C2B implementada, testada localmente e commitada em `feature/continuous-controls-scheduler`; sem push ou PR. Nenhuma validação física realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -21,9 +21,17 @@
 | DeviceManager: catálogo por ID, estado, leitura LAN, energia com readback, locks por dispositivo e polling explícito | TESTADO | `backend/src/smart_home_tray/device_manager.py`; suíte unitária com fakes/mocks |
 | CR-05/CR-06: intenção pendente só resolvida por leitura correspondente; falha de leitura degrada qualidade sem classificar `DEVICE_ERROR` como offline | TESTADO | `backend/src/smart_home_tray/device_manager.py`; regressões em `backend/tests/test_device_manager.py` |
 | Troca de endereço invalida confirmação, preserva valor/intenção e reconstrói adapter | TESTADO | `update_address()`; casos de estado confirmado e pendente em `test_device_manager.py` |
+| Codec HSV16 Tuya e conversão RGB ↔ HSV | IMPLEMENTADO | `backend/src/smart_home_tray/color.py`; testes em `backend/tests/test_color.py` |
+| Leitura normalizada de brilho branco, temperatura, HSV, cena e work mode por DPS configurado | IMPLEMENTADO | `DeviceManager._read_state_unlocked()`; testes unitários com fakes |
+| Comandos normalizados de brilho branco, temperatura, HSV e brilho colorido | IMPLEMENTADO | Métodos explícitos em `device_manager.py`; readback/pendências por campo com mocks |
+| CR-07/CR-08: HSV atual obrigatório para brilho colorido; qualidade coerente após rejeição explícita | TESTADO | Regressões em `backend/tests/test_device_manager.py`; suíte completa desta revisão: 123 passed |
+| Scheduler de comandos contínuos com coalescing, barreiras discretas e FIFO por dispositivo | TESTADO | `backend/src/smart_home_tray/command_scheduler.py`; 17 testes determinísticos em `backend/tests/test_command_scheduler.py` |
+| Lifecycle explícito e Futures sem confirmação no enqueue | TESTADO | `start()`/`stop()`; teste integrado com DeviceManager fake confirma que estado só muda após readback |
+| CR-09: stop() solicitado em callback evita join da própria thread e mantém retorno booleano correto | TESTADO | Regressão em `backend/tests/test_command_scheduler.py`; callback cancela fila, operação em andamento conclui e stop externo posterior aguarda término |
+| Validação física de controles C2A | PLANEJADO | Nenhum dispositivo real acessado |
 | Normalização de falhas de inicialização do TuyaAdapter | TESTADO | `backend/src/smart_home_tray/tuya_adapter.py`; testes com factory que lança timeout, OSError, exceção genérica e BackendError com causa sensível |
 | CI pytest/compileall em Windows para PRs em develop/main (Python 3.12/3.14) | TESTADO | PR #2: os dois jobs da matriz passaram |
-| CLI, JSON Lines, conversões RGB/HSV e comandos contínuos | PLANEJADO | Etapas posteriores à C1 |
+| CLI e JSON Lines | PLANEJADO | Etapas posteriores; não fazem parte desta entrega |
 
 ## Arquivos relevantes
 
@@ -31,6 +39,8 @@
 - Configuração: `backend/src/smart_home_tray/config.py` e `backend/config.example.toml`.
 - Adapter: `backend/src/smart_home_tray/tuya_adapter.py`.
 - DeviceManager: `backend/src/smart_home_tray/device_manager.py`.
+- Codec: `backend/src/smart_home_tray/color.py`.
+- Scheduler: `backend/src/smart_home_tray/command_scheduler.py`.
 - Testes: `backend/tests/test_models.py`, `backend/tests/test_config.py`, `backend/tests/test_tuya_adapter.py` e `backend/tests/test_device_manager.py`.
 - CI: `.github/workflows/backend-tests.yml`.
 - Contratos e arquitetura: `docs/contracts.md` e `docs/architecture.md`.
@@ -51,6 +61,11 @@
 - **Etapa C1:** `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **55 passed**; `backend\.venv\Scripts\python.exe -m compileall -q backend\src backend\tests` — sem erros; `git diff --check` — sem erros. Execução local em Python 3.14.3. Nenhum dispositivo físico acessado.
 - **GitHub Actions:** jobs Windows Python 3.12 e 3.14 da PR #2 passaram no commit `ed43395`; o status-only commit deste checkpoint também dispara nova execução.
 - **Code Review 02:** `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_device_manager.py -q` — **25 passed**; suíte completa `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **65 passed**; `compileall` e `git diff --check` concluídos sem erros. Inspeção das alterações não encontrou credenciais; apenas o placeholder de teste `unit-test-key-not-real`. Nenhum dispositivo físico acessado.
+- **Etapa C2A:** testes focados `test_device_manager.py` + `test_color.py` — **76 passed**; suíte completa — **116 passed**; `compileall` e `git diff --check` concluídos sem erros. Testes usam somente mocks/fakes; nenhum hardware foi acessado. Inspeção final de credenciais e commits locais são os próximos passos.
+- **CI PR #6 antes desta revisão:** conforme checkpoint informado, 116 testes passaram em Windows/Python 3.12 e 3.14. Esse resultado antecede as correções CR-07/CR-08.
+- **Code Review C2A CR-07/CR-08:** testes focados `test_color.py` + `test_device_manager.py` — **83 passed**; suíte completa — **123 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; CI atualizado aguarda push manual. Testes somente com fakes/mocks; nenhum dispositivo físico acessado.
+- **Etapa C2B:** testes focados `backend\.venv\Scripts\python.exe -m pytest backend\tests\test_command_scheduler.py -q` — **17 passed**; suíte completa `backend\.venv\Scripts\python.exe -m pytest backend\tests -q` — **140 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14; testes somente com fakes/mocks, sem rede ou hardware.
+- **Code Review C2B CR-09:** regressão reproduziu `RuntimeError: cannot join current thread` antes da correção; testes focados após correção — **18 passed**; suíte completa — **141 passed**; `compileall -q backend\src backend\tests` e `git diff --check` sem erros. Execução local Python 3.14, somente fakes/mocks; nenhum hardware acessado.
 
 ## Decisões técnicas
 
@@ -62,7 +77,7 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Não há validação física automatizada; capacidades e faixas precisam permanecer identificadas como não validadas até evidência correspondente.
 - Atualização de IP é explícita via `update_address`; descoberta automática LAN não foi implementada.
 - A matriz Python 3.12/3.14 passou remotamente no commit `ed43395`; Python 3.12 não foi executado localmente.
-- A correção CR-05/CR-06 ainda não foi enviada: sem push manual não há PR nem execução de CI para este branch.
+- As correções CR-07/CR-08 ainda não foram enviadas à PR #6; os commits locais aguardam push manual e novos checks de CI.
 - A versão mínima declarada é Python 3.12; a execução deste checkpoint foi em Python 3.14.3. A versão 3.12 ainda não foi executada localmente.
 - PyInstaller e empacotamento ainda não foram testados; compatibilidade futura foi documentada a partir da documentação oficial, não validada por build.
 
@@ -75,17 +90,20 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 ## Git
 
 - **Estado:** repositório Git existente; sem merge automático.
-- **Branch base atualizada:** `develop` fast-forward até `2224d2b` (merge da PR #2); base de desenvolvimento não é `main`.
-- **Branch de trabalho:** `fix/device-manager-state-consistency`, criada a partir de `2224d2b`.
-- **Commits desta correção:** `10c54aa` (código e regressões) e commit documental do checkpoint (HEAD).
-- **Último commit:** `docs: record state consistency review checkpoint` (HEAD; hash não registrado para evitar autorreferência no status).
-- **Arquivos não commitados:** nenhum; sem credenciais versionadas.
+- **Branch base atualizada:** `develop` em `78d4df0` (merge PR #6 C2A); base de desenvolvimento não é `main`.
+- **Branch de trabalho:** `feature/continuous-controls-scheduler`, criada a partir de `78d4df0`.
+- **Commits C2A:** `5dd0c74` (codec HSV16 e testes), `9593803` (controles normalizados) e `f1f1ffa` (correções CR-07/08 e regressões).
+- **Último commit base:** `78d4df0` (merge PR #6).
+- **Commits C2B:** `1c4b3c8` (scheduler e testes), `cbf24a2` (documentação), `61776c3` (status) e `dcb4e8b` (correção CR-09, regressão e contratos). Atualização documental final deste checkpoint será commitada em seguida.
+- **Arquivos não commitados:** somente a atualização final deste status; inspeção não encontrou credenciais reais.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
-- **PR Code Review 02:** ainda não criada; requer push manual do mantenedor da branch `fix/device-manager-state-consistency`.
+- **Code Review 02:** PR mergeada em `develop` no commit `1d96db2`.
+- **PR #6 C2A:** mergeada em `develop` no commit `78d4df0`.
+- **PR #7 C2B:** aberta para `develop`; CI informado pelo mantenedor passou com 140 testes em Windows/Python 3.12 e 3.14 antes de CR-09. Estes commits locais aguardam push manual; sem merge.
 
 ## Próximos passos
 
-1. Executar suíte completa, `compileall`, `diff --check` e inspeção de segredos neste branch.
-2. Criar commits claros e entregar a branch para push manual; após push, abrir PR para `develop` e aguardar CI Windows/Python 3.12/3.14.
-3. Aguardar revisão/merge manual do Code Review 02; não iniciar Etapa C2 antes da aprovação arquitetural.
+1. Criar commit local específico para CR-09.
+2. Mantenedor atualiza manualmente a PR #7 e aguarda CI Windows/Python 3.12/3.14 e revisão arquitetural.
+3. Não avançar para CLI/JSON Lines antes da revisão.
