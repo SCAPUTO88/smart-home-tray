@@ -1,0 +1,27 @@
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+config.toml
+devices.json
+snapshot.json
+tinytuya.json
+tuya-raw.json
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

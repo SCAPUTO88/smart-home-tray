@@ -1,0 +1,38 @@
+version = 1
+
+# Copy to config.toml and fill in device IDs and environment variable names.
+# The referenced environment variables contain each device's Local Key.
+
+[[devices]]
+id = "replace-with-device-id"
+name = "Luz Mesa"
+address = "192.168.15.13"
+protocol_version = 3.5
+local_key_env = "SHT_LIGHT_MESA_LOCAL_KEY"
+connection_timeout_seconds = 3
+
+[devices.dps]
+power = 20
+work_mode = 21
+white_brightness = 22
+white_temperature = 23
+hsv = 24
+scene = 25
+
+[devices.ranges]
+white_brightness = [10, 1000]
+white_temperature = [0, 1000]
+
+[[devices]]
+id = "replace-with-device-id"
+name = "Fita LED"
+address = "192.168.15.3"
+protocol_version = 3.5
+local_key_env = "SHT_LED_STRIP_LOCAL_KEY"
+connection_timeout_seconds = 3
+
+[devices.dps]
+power = 20
+work_mode = 21
+hsv = 24
+scene = 25
