@@ -16,16 +16,26 @@ class TuyaAdapter:
 
     def __init__(self, config: DeviceConfig, device_factory: DeviceFactory | None = None) -> None:
         self._config = config
-        self._device = (device_factory or self._default_device_factory())(
-            dev_id=config.device_id,
-            address=config.address,
-            local_key=config.local_key,
-            version=config.protocol_version,
-            connection_timeout=config.connection_timeout_seconds,
-            connection_retry_limit=1,
-            connection_retry_delay=0,
-            persist=False,
-        )
+        try:
+            factory = device_factory or self._default_device_factory()
+            self._device = factory(
+                dev_id=config.device_id,
+                address=config.address,
+                local_key=config.local_key,
+                version=config.protocol_version,
+                connection_timeout=config.connection_timeout_seconds,
+                connection_retry_limit=1,
+                connection_retry_delay=0,
+                persist=False,
+            )
+        except BackendError as error:
+            # Preserve the structured code/message but discard a possibly unsafe cause.
+            error.__cause__ = None
+            error.__context__ = None
+            error.__suppress_context__ = True
+            raise error from None
+        except Exception as error:
+            self._raise_transport_error(error)
 
     @staticmethod
     def _default_device_factory() -> DeviceFactory:
@@ -43,8 +53,11 @@ class TuyaAdapter:
         known_errors = {
             "901": (ErrorCode.DEVICE_OFFLINE, "Device is unreachable"),
             "902": (ErrorCode.TIMEOUT, "Device response timed out"),
+            "903": (ErrorCode.INVALID_INPUT, "Requested value is outside the supported range"),
+            "904": (ErrorCode.DEVICE_ERROR, "Tuya device returned an unexpected payload (904)"),
             "905": (ErrorCode.DEVICE_OFFLINE, "Device is offline"),
-            "914": (ErrorCode.AUTH_FAILED, "Device authentication failed"),
+            "907": (ErrorCode.UNSUPPORTED_CAPABILITY, "Device does not support this operation"),
+            "914": (ErrorCode.AUTH_FAILED, "Device rejected the configured authentication parameters"),
         }
         error_code, message = known_errors.get(
             code, (ErrorCode.DEVICE_ERROR, "Tuya device returned an error")
@@ -54,10 +67,10 @@ class TuyaAdapter:
     @staticmethod
     def _raise_transport_error(error: BaseException) -> None:
         if isinstance(error, (socket.timeout, TimeoutError)):
-            raise BackendError(ErrorCode.TIMEOUT, "Device response timed out") from error
+            raise BackendError(ErrorCode.TIMEOUT, "Device response timed out") from None
         if isinstance(error, OSError):
-            raise BackendError(ErrorCode.DEVICE_OFFLINE, "Device is unreachable") from error
-        raise BackendError(ErrorCode.DEVICE_ERROR, "Tuya LAN operation failed") from error
+            raise BackendError(ErrorCode.DEVICE_OFFLINE, "Device is unreachable") from None
+        raise BackendError(ErrorCode.DEVICE_ERROR, "Tuya LAN operation failed") from None
 
     def read_status(self) -> dict[str, object]:
         """Return a validated DPS map from the device's LAN status response."""
@@ -82,7 +95,11 @@ class TuyaAdapter:
         return dps
 
     def write_dps(self, dps_index: int, value: object) -> None:
-        """Write one DPS and translate TinyTuya's result into a safe error."""
+        """Send a DPS write; this is not confirmation of physical device state.
+
+        TinyTuya may return ``None`` for a null ACK. Callers must read status
+        afterward before publishing a confirmed state.
+        """
         if isinstance(dps_index, bool) or not isinstance(dps_index, int) or dps_index <= 0:
             raise BackendError(ErrorCode.INVALID_INPUT, "DPS index must be a positive integer")
         if not isinstance(value, (str, int, float, bool)):
@@ -96,4 +113,13 @@ class TuyaAdapter:
             self._raise_transport_error(error)
         self._raise_device_error(response)
         if response is None:
-            raise BackendError(ErrorCode.DEVICE_OFFLINE, "Device did not confirm the command")
+            return
+        if not isinstance(response, dict) or not isinstance(response.get("dps"), dict):
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Tuya device returned an invalid write response")
+        if not response["dps"]:
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Tuya device returned an invalid write response")
+        for key, item in response["dps"].items():
+            if not isinstance(key, (str, int)) or isinstance(key, bool) or not isinstance(
+                item, (str, int, float, bool, type(None))
+            ):
+                raise BackendError(ErrorCode.DEVICE_ERROR, "Tuya device returned an invalid write response")

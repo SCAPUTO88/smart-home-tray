@@ -16,6 +16,8 @@ Backend local-first executável como processo independente. A operação em runt
 | `protocol.py` | Ler requests e escrever responses JSON Lines sem imprimir logs em stdout. | DeviceManager, models, JSON |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | DeviceManager |
 
+`DeviceManager` cria o catálogo por `Device ID`, mantém estado público sem configuração privada e instancia adapters sob demanda. Cada dispositivo tem seu próprio lock; polling é opt-in via `start_polling()` e encerra com `stop_polling()`. `poll_once()` permite uma sincronização explícita sem thread. O intervalo padrão é 15 segundos. `update_address()` atualiza o IP e descarta o adapter para reconstruí-lo na próxima operação; não há descoberta automática nesta etapa.
+
 O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe credenciais nem acessa TinyTuya diretamente.
 
 ## Fluxo de comunicação
@@ -23,8 +25,10 @@ O CLI e o protocolo futuro usam o mesmo DeviceManager. O frontend não recebe cr
 1. `config.py` lê o arquivo TOML local e obtém Local Keys por nomes de variáveis de ambiente.
 2. O DeviceManager mantém o cadastro por Device ID e usa o IP atual apenas para conectar/redescobrir.
 3. O Adapter cria a sessão TinyTuya para protocolo e timeout configurados e faz operações LAN.
-4. O DeviceManager converte o retorno bruto usando o mapeamento de DPS e atualiza estado confirmado, pendente ou offline.
+4. O Adapter converte falhas e respostas inválidas em erros estruturados e seguros. Uma escrita aceita não confirma estado físico; o DeviceManager faz leitura posterior antes de atualizar estado confirmado, pendente ou offline.
 5. CLI ou protocolo encaminham comandos normalizados ao manager; respostas não carregam configuração privada.
+
+Na Etapa C1, o manager lê apenas os DPS configurados de energia e modo. Power exige booleano, escreve no DPS mapeado e só confirma a intenção após leitura que reporte o valor solicitado. Leituras divergentes atualizam o último valor observado, mas mantêm a intenção em `pending`; uma leitura posterior correspondente resolve a intenção. DPS ausentes preservam valores anteriormente observados e não resolvem a pendência. Resposta inválida degrada a qualidade para `unknown` sem converter automaticamente a conexão em offline; falha de transporte marca offline. `update_address()` preserva os valores conhecidos e eventual intenção pendente, mas invalida a confirmação até uma leitura no novo endereço. Falhas em um dispositivo não interrompem os demais.
 
 ## Estado, capacidades e sincronização
 
@@ -41,6 +45,7 @@ Erros padronizados incluem `TIMEOUT`, `DEVICE_OFFLINE`, `AUTH_FAILED`, `INVALID_
 - Runtime somente LAN; APIs de cloud/wizard da TinyTuya não são chamadas pelo backend.
 - Configuração real é externa e ignorada pelo Git. O exemplo contém placeholders e nomes de variáveis de ambiente.
 - Local Keys não aparecem em stdout IPC, respostas, logs, repr dos modelos ou testes.
+- A futura camada pública usa somente `device_status_to_public_dict`, com allowlist explícita; configurações privadas nunca são serializadas genericamente.
 - Armazenamento protegido por usuário do Windows será tratado na fase de empacotamento.
 - Testes padrão usam mocks; não executam comandos físicos.
 

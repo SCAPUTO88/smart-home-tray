@@ -194,3 +194,40 @@ class DeviceStatus:
     capabilities: DeviceCapabilities
     connection: ConnectionStatus = ConnectionStatus.UNKNOWN
     state: LightState = field(default_factory=LightState)
+
+
+def device_status_to_public_dict(status: DeviceStatus) -> dict[str, object]:
+    """Convert only the public status contract; never serialize config objects."""
+    if not isinstance(status, DeviceStatus):
+        raise TypeError("public conversion requires DeviceStatus")
+
+    state = status.state
+    hsv = None if state.hsv is None else {
+        "hue": state.hsv.hue,
+        "saturation": state.hsv.saturation,
+        "value": state.hsv.value,
+    }
+    return {
+        "deviceId": status.device_id,
+        "name": status.name,
+        "address": status.address,
+        "protocolVersion": status.protocol_version,
+        "capabilities": {
+            "power": status.capabilities.power,
+            "whiteBrightness": status.capabilities.white_brightness,
+            "colorValue": status.capabilities.color_value,
+            "colorTemperature": status.capabilities.color_temperature,
+            "scenes": status.capabilities.scenes,
+        },
+        "connection": status.connection.value,
+        "state": {
+            "power": state.power,
+            "workMode": state.work_mode,
+            "whiteBrightnessPercent": state.white_brightness_percent,
+            "colorValuePercent": state.color_value_percent,
+            "colorTemperaturePercent": state.color_temperature_percent,
+            "hsv": hsv,
+            "scene": state.scene,
+            "quality": state.quality.value,
+        },
+    }

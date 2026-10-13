@@ -1,13 +1,21 @@
+import json
+
 import pytest
 
+from smart_home_tray.config import AppConfig
 from smart_home_tray.models import (
     BackendError,
+    ConnectionStatus,
     DeviceConfig,
+    DeviceStatus,
     DeviceStateQuality,
+    DeviceCapabilities,
     DPSMap,
     ErrorCode,
     HSVColor,
+    LightState,
     ValueRange,
+    device_status_to_public_dict,
 )
 
 
@@ -95,3 +103,59 @@ def test_backend_error_keeps_code_and_safe_message():
     assert error.code is ErrorCode.TIMEOUT
     assert str(error) == "Device did not respond"
     assert DeviceStateQuality.CONFIRMED.value == "confirmed"
+
+
+def test_public_device_status_conversion_has_only_allowlisted_json_fields():
+    device = DeviceConfig(
+        device_id="unit-test-device",
+        name="Test light",
+        address="192.0.2.10",
+        protocol_version=3.5,
+        local_key="unit-test-key-not-real",
+        dps=DPSMap(power=20, hsv=24),
+    )
+    status = DeviceStatus(
+        device_id=device.device_id,
+        name=device.name,
+        address=device.address,
+        protocol_version=device.protocol_version,
+        capabilities=DeviceCapabilities(True, False, True, False, False),
+        connection=ConnectionStatus.ONLINE,
+        state=LightState(
+            power=True,
+            hsv=HSVColor(hue=180, saturation=50, value=75),
+            quality=DeviceStateQuality.CONFIRMED,
+        ),
+    )
+
+    public = device_status_to_public_dict(status)
+    encoded = json.dumps(public)
+
+    assert set(public) == {
+        "deviceId", "name", "address", "protocolVersion", "capabilities", "connection", "state"
+    }
+    assert set(public["capabilities"]) == {
+        "power", "whiteBrightness", "colorValue", "colorTemperature", "scenes"
+    }
+    assert set(public["state"]) == {
+        "power", "workMode", "whiteBrightnessPercent", "colorValuePercent",
+        "colorTemperaturePercent", "hsv", "scene", "quality"
+    }
+    assert "unit-test-key-not-real" not in encoded
+    assert "local_key" not in encoded
+    assert json.loads(encoded) == public
+
+
+@pytest.mark.parametrize("private_value", [
+    DeviceConfig(
+        device_id="unit-test-device",
+        name="Test light",
+        address="192.0.2.10",
+        protocol_version=3.5,
+        local_key="unit-test-key-not-real",
+    ),
+    AppConfig(devices=()),
+])
+def test_public_device_status_conversion_rejects_private_configuration(private_value):
+    with pytest.raises(TypeError, match="DeviceStatus"):
+        device_status_to_public_dict(private_value)
