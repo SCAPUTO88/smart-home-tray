@@ -84,7 +84,7 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Branch base atualizada:** `develop` em `1d96db2` (merge Code Review 02); base de desenvolvimento não é `main`.
 - **Branch de trabalho:** `feature/advanced-lighting-controls`, criada a partir de `1d96db2`.
 - **Commits C2A:** `5dd0c74` (codec HSV16 e testes) e `9593803` (controles normalizados, regressões e documentação).
-- **Último commit:** `9593803 feat: add normalized lighting controls`.
+- **Último commit:** `docs: finalize C2A status` (HEAD; hash do próprio checkpoint omitido para evitar autorreferência).
 - **Arquivos não commitados:** nenhum; sem credenciais versionadas.
 - **PR #1:** mergeada em `develop` no commit `9e6df6c`.
 - **PR #2:** https://github.com/SCAPUTO88/smart-home-tray/pull/2, mergeada em `develop` no commit `2224d2b`.
