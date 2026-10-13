@@ -144,7 +144,10 @@ class CommandScheduler:
             future.cancel()
 
         deadline = time.monotonic() + float(timeout_seconds)
+        current_thread = threading.current_thread()
         for worker in workers:
+            if worker is current_thread:
+                continue
             remaining = max(0.0, deadline - time.monotonic())
             worker.join(timeout=remaining)
         return all(not worker.is_alive() for worker in workers)

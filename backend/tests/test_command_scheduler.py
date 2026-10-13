@@ -418,6 +418,41 @@ def test_stop_cancels_queued_futures_but_waits_for_inflight_command():
     assert scheduler.stop(timeout_seconds=2) is True
 
 
+def test_callback_can_request_stop_without_joining_its_own_worker():
+    from smart_home_tray.command_scheduler import CommandScheduler
+
+    entered, release = threading.Event(), threading.Event()
+    callback_finished = threading.Event()
+    callback_stop_results = []
+    callback_errors = []
+    manager = FakeDeviceManager(gates={("lamp-a", 0): (entered, release)})
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+
+    running = scheduler.submit_white_brightness("lamp-a", 35)
+    assert entered.wait(timeout=2)
+    queued = scheduler.submit_power("lamp-a", True)
+
+    def request_shutdown(_future):
+        try:
+            try:
+                callback_stop_results.append(scheduler.stop(timeout_seconds=0))
+            except BaseException as error:
+                callback_errors.append(error)
+        finally:
+            callback_finished.set()
+
+    running.add_done_callback(request_shutdown)
+    release.set()
+
+    assert callback_finished.wait(timeout=2)
+    assert running.result(timeout=1) == ("lamp-a", "white_brightness", (35,))
+    assert queued.cancelled()
+    assert callback_errors == []
+    assert callback_stop_results == [False]
+    assert scheduler.stop(timeout_seconds=2) is True
+
+
 def test_start_is_idempotent_and_submission_after_shutdown_is_rejected():
     from smart_home_tray.command_scheduler import CommandScheduler
 
