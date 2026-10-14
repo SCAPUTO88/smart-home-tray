@@ -93,3 +93,10 @@ A UI depende dos modelos normalizados em `desktop/src/features/devices/types.ts`
 O seletor visual Branco/RGB é uma abstração de apresentação. O protocolo JSON Lines não expõe uma operação pública isolada de troca de modo; o adapter futuro deverá traduzir essa seleção junto com uma operação de iluminação suportada, sem criar um comando IPC inexistente.
 
 Testes automáticos usam Vitest, jsdom e React Testing Library. O workflow `.github/workflows/desktop-tests.yml` valida frontend isoladamente em Windows/Node 24. Nesta etapa a configuração Rust foi gerada, mas a compilação Tauri depende de Rust/Cargo e C++ Build Tools; nenhum equipamento físico, backend Python, LAN ou serviço cloud foi acessado.
+
+
+### Representação visual F2A.1
+
+O protótipo mantém a fronteira visual da F2A: `DeviceArtwork` recebe o dispositivo selecionado e o `DeviceState` de prévia, sem importar controladores ou detalhes de reconciliação. Gradientes e clip paths SVG descrevem vidro, reflexos e base metálica da lâmpada; CSS posiciona camadas radiais de glow e estrutura a fita com PCB, emissores e difusor. Cor e intensidade derivam de HSV/Value ou temperatura/brilho branco normalizados; power off define intensidade visual zero. Temperatura é representada visualmente como quente em 0, neutra em 50 e fria em 100, sem afirmar que a orientação corresponde ao hardware Tuya.
+
+A representação usa gradientes, clip paths, opacidade e transições CSS. Não há WebGL, loop de animação de renderização nem blur animado; filtros de desfoque não são usados nas camadas dinâmicas. `prefers-reduced-motion` reduz transições CSS e o `MotionConfig` respeita a preferência do sistema. Isso limita repaints às mudanças de estado e mantém o custo proporcional à arte visível. A revisão depende de navegador manual; testes DOM não validam fidelidade de renderização.

@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 - Etapa F2A (prototipo visual interativo; checkpoint em andamento).
+- **Fase:** 2 - F2A.1 (polimento visual realista; revisão manual pendente).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** Etapa D integrada em develop pela PR #11. O prototipo F2A esta publicado na PR #13, direcionada a develop. Esta revisao local cobre CR-13/CR-14; 32 testes frontend e 177 testes backend passaram localmente apos as correcoes. Nenhuma validacao fisica foi realizada.
+- **Progresso:** PR #14 integrada em develop no commit `972f9cc`. F2A.1 implementa materiais SVG e iluminação dinâmica na branch local `feature/realistic-lighting-visuals`; 44 testes frontend, typecheck, lint e build passaram. Inspeção visual automatizada indisponível neste ambiente; validação manual pendente. Nenhuma validação física foi realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -134,3 +134,13 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Contrato futuro: Branco/RGB continua sendo abstracao visual; JSON Lines nao tem comando autonomo de modo. Adapter futuro precisa traduzir a selecao em operacao de iluminacao suportada, sem inventar comando IPC. Nenhum adapter Tauri/JSON Lines ou scheduler frontend foi implementado.
 - Testes adicionados em `desktop/src/features/devices/useLightingSession.test.tsx`, `desktop/src/mock/MockDeviceController.test.ts` e `desktop/src/app/App.test.tsx`. Typecheck, Oxlint, 32 testes frontend, build Vite e `rtk py -m pytest backend/tests -q` (177 passed) passaram.
 - A validacao continua exclusivamente simulada; nenhuma lampada, runtime backend de controle, LAN ou cloud foi acessada. Revisao visual manual e compilacao nativa Tauri permanecem pendentes.
+
+
+## F2A.1 — polimento visual realista
+
+- Estado: implementação local na branch `feature/realistic-lighting-visuals`, baseada em `origin/develop` `972f9cc`; sem push/merge.
+- `DeviceArtwork` desenha lâmpada com envelope de vidro em gradientes SVG, emissor, reflexos especulares recortados, base metálica e IDs SVG isolados por instância. A fita usa trilha dimensional, emissores individuais sob difusor translúcido e reflexão ambiente.
+- Cor e intensidade vêm apenas de `DeviceState` da prévia: HSV controla RGB, Value/brilho controla emissão e power off zera a emissão. Temperatura visual interpola âmbar, neutro e azulado. A direção do controle de temperatura Tuya continua sem validação física.
+- Glow usa camadas de gradientes radiais e transições de cor/opacidade; não há filtros blur animados. `prefers-reduced-motion` reduz transições CSS e animações existentes via MotionConfig. O acento do cartão segue a cor e intensidade da prévia.
+- Verificações: typecheck, lint, 44 testes frontend, build Vite e `git diff --check` passaram. Nenhum dispositivo, backend runtime, LAN ou cloud foi acessado.
+- Limitação: nenhuma janela de navegador/app foi disponibilizada para screenshots. Pedir revisão visual manual dos estados RGB ciano/roxo, branco quente/frio, desligado, fita roxa/baixa intensidade e larguras 420×720/360 px.
