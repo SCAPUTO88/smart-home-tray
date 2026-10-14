@@ -2,7 +2,7 @@
 
 ## Escopo
 
-Backend local-first executável como processo independente. A operação em runtime usa a rede local e não requer API cloud, assinatura ou servidor remoto. O prototipo React/TypeScript com Vite e Tauri 2 da Etapa F2A esta implementado em desktop/; o adapter nativo e a integracao com o backend continuam planejados para etapas seguintes.
+Backend local-first executável como processo independente. A operação em runtime usa a rede local e não requer API cloud, assinatura ou servidor remoto. O protótipo React/TypeScript com Vite e Tauri 2 está implementado em desktop/. F2C.1 acrescenta uma ponte nativa tipada para o contrato JSON Lines existente; navegador e modo padrão continuam no MockDeviceController.
 
 ## Componentes
 
@@ -16,6 +16,8 @@ Backend local-first executável como processo independente. A operação em runt
 | `color.py` | Conversão RGB/HSV e serialização/validação HSV16 dos valores de cor Tuya. | Biblioteca padrão, `colorsys` |
 | `protocol.py` | Ler requests e escrever responses JSON Lines com framing limitado, validação e correlação assíncrona. | DeviceManager, CommandScheduler, models, biblioteca padrão |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | config, DeviceManager, CommandScheduler, protocol |
+| bridge.rs | Supervisão do subprocesso Python, framing JSONL, correlação e comandos Tauri tipados. | Tauri, serde_json, biblioteca padrão |
+| fixture.py | Processo JSONL determinístico para testes da integração, sem LAN/TinyTuya. | Biblioteca padrão |
 
 `DeviceManager` cria o catálogo por `Device ID`, mantém estado público sem configuração privada e instancia adapters sob demanda. Cada dispositivo tem seu próprio lock; polling é opt-in via `start_polling()` e encerra com `stop_polling()`. `poll_once()` permite uma sincronização explícita sem thread. O intervalo padrão é 15 segundos. `update_address()` atualiza o IP e descarta o adapter para reconstruí-lo na próxima operação; não há descoberta automática nesta etapa. `list_device_ids()` expõe uma tupla lock-free das identidades do catálogo, cuja associação de IDs é imutável após a construção; alterações de endereço não mudam essa associação.
 
@@ -114,3 +116,19 @@ O plugin oficial `tauri-plugin-positioner` recebe eventos e mantém a âncora do
 A perda de foco não oculta automaticamente o popup nesta fase. Essa opção pode conflitar com menus contextuais e controles nativos e será reavaliada depois da validação manual. O frontend tem scroll vertical em janelas baixas e reduz a arte para não exigir uma altura mínima fixa.
 
 O workflow desktop mantém Node 24 e adiciona um job Windows/MSVC com Rust estável e cache para formatação, checagem, testes Rust e build Tauri sem bundle. Um `npm run build` só valida Vite e não serve como evidência do app nativo. F2B não inclui integração real, persistência, inicialização com Windows, assinatura, update ou publicação; integração JSON Lines permanece na F2C.
+
+## Fase 2, Etapa F2C.1 — ponte Tauri ↔ Python
+
+React depende somente de DeviceController. TauriDeviceController usa uma API interna tipada de invoke; o frontend não escolhe executável, argumentos, TOML, ambiente nem comando JSONL arbitrário. O mapper converte o DTO público allowlisted em LightingDevice, deriva capacidades do catálogo e não inclui address, protocolVersion, DPS ou credenciais no estado React. Valores nulos usam placeholders neutros acompanhados de qualidade unknown; modo unknown permanece desconhecido quando os recursos não permitem inferi-lo.
+
+Rust gerencia um subprocesso por aplicação. MOCK é o padrão no navegador e no Tauri. FIXTURE é selecionado pela variável do processo Rust SMART_HOME_TRAY_BACKEND_MODE=fixture e inicia um módulo Python fixo que implementa os mesmos envelopes JSONL sem importar TinyTuya ou rede. REAL exige SMART_HOME_TRAY_BACKEND_MODE=real, SMART_HOME_TRAY_ALLOW_REAL=1 e SMART_HOME_TRAY_CONFIG absoluto; o processo chama o entrypoint existente python -m smart_home_tray.cli --config <arquivo> serve. A WebView não tem API para alterar esse modo. Inicialização explícita com falha mostra erro e não faz fallback para MOCK. O app não é instalável de forma autossuficiente: o modo Python exige runtime externo e dependências instaladas.
+
+Os handlers Tauri são restritos a catálogo/status, energia, brilho branco, temperatura e HSV. Rust serializa envelopes exatos com requestId e payload validados. Um leitor de stdout limita cada linha a 65.536 bytes, valida o envelope e correlaciona resposta fora de ordem; stderr é drenado em separado sem expor texto bruto. Cada request tem timeout, erro permitido e mensagem sanitizada. O subprocesso persiste ao ocultar o popup e recebe shutdown na saída real do app. Não se criou scheduler no frontend: coalescing de 150 ms continua no CommandScheduler Python.
+
+No adapter, um HSV parcial é completado com canais conhecidos e intenções mais recentes ainda pendentes; se faltar um canal necessário, o comando falha sem inventar valor. Branco/RGB usa uma operação de iluminação existente: whiteBrightness (ou colorTemperature se esse for o controle branco disponível) e device.hsv completo. Não existe device.setMode. O readback público continua sendo a fonte de confirmação e useLightingSession mantém a reconciliação existente.
+
+### Backlog visual e de janela
+
+- CR-20: refinar âncora do popup em monitores com resoluções e escalas diferentes; a validação manual da F2B relatou distância excessiva do tray em configuração multi-monitor.
+- Fita LED: substituir futuramente a forma rígida por uma fita flexível parcialmente enrolada, com difusor contínuo inspirado em COB.
+- Ambos ficam fora da F2C.1 e não foram alterados.

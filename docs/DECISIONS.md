@@ -115,3 +115,11 @@
 **Trade-offs:** a janela frameless e sem taskbar parece painel de bandeja e reduz controles nativos; por isso o botão acessível de ocultar, cursor de arraste no cabeçalho e menu Sair são explícitos. Estado React só persiste no processo aberto; não há persistência em disco. A janela não fecha ao perder foco para evitar interrupções em menus/seleção. Tray event rect já é físico e usa conversão 1.0; scale factor é aplicado somente ao tamanho lógico preferencial. Taskbar auto-hide pode não criar diferença na work area; a orientação então depende da âncora disponível. Layouts/DPI ainda precisam de inspeção manual no Windows.
 
 **Segurança e escopo:** capabilities limitadas a `core:window:allow-hide` e `core:window:allow-start-dragging`, CSP mantida, sem `withGlobalTauri`, shell, filesystem ou comandos de iluminação. A UI segue no `MockDeviceController`, sem backend Python, JSON Lines ou dispositivos.
+
+### D-015 — Ponte nativa tipada e modos explícitos
+
+- **Estado:** aprovada para F2C.1.
+- **Decisão:** Rust é proprietário do subprocesso e do modo de integração. MOCK é padrão; FIXTURE usa um módulo Python determinístico; REAL requer modo explícito, opt-in independente e caminho de configuração vindo somente do ambiente do processo Rust. React acessa operações nativas por handlers Tauri fixos e tipados, sem transporte JSONL genérico.
+- **Motivo:** manter a fronteira DeviceController, preservar o contrato JSON Lines existente e impedir que a WebView selecione processos, caminhos ou credenciais.
+- **Trade-offs:** há um processo Python externo por sessão Tauri e o modo REAL depende de runtime/configuração instalados. O processo fixture duplica respostas públicas simples para validação sem dispositivos. JSONL continua em stdout; stderr é drenado sem eco. Falhas são normalizadas sem detalhes brutos.
+- **Confirmação:** respostas result só são lidas como readback; valores ausentes mantêm qualidade unknown. A composição HSV consulta estado público e intenções pendentes. CommandScheduler continua sendo o único scheduler. REAL permanece sem validação física nesta etapa.

@@ -89,6 +89,7 @@ export function createMockDeviceController(options: MockControllerOptions = {}):
   const delayedOperation = options.delayScenarioMs ?? 1400
 
   return {
+    mode: 'mock' as const,
     async list() {
       return [...devices.values()].map(copyDevice)
     },

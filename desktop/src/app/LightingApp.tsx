@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { DeviceController, LightingPatch, OperationScenario } from '../features/devices/types'
 import { useLightingSession } from '../features/devices/useLightingSession'
-import { createMockDeviceController } from '../mock/MockDeviceController'
+import { resolveDeviceController } from '../features/devices/platformController'
 import { lightingIntensity, selectedLightingColor } from '../lib/lightingVisuals'
 import { DeviceArtwork } from '../components/lighting/DeviceArtwork'
 import { PowerButton } from '../components/controls/PowerButton'
@@ -31,11 +31,28 @@ function operationLabel(status: string): string {
 }
 
 export default function LightingApp({ controller: suppliedController }: LightingAppProps) {
-  const [controller] = useState(() => suppliedController ?? createMockDeviceController())
+  const [controller, setController] = useState<DeviceController | null>(null)
+  const [startupError, setStartupError] = useState<string | null>(null)
+  useEffect(() => {
+    if (suppliedController) return
+    let active = true
+    void resolveDeviceController().then((resolved) => { if (active) setController(resolved) }).catch(() => {
+      if (active) setStartupError('Não foi possível iniciar a integração selecionada')
+    })
+    return () => { active = false }
+  }, [suppliedController])
+  const activeController = suppliedController ?? controller
+  if (startupError) return <main className="app-shell app-shell--loading"><Brand /><p role="alert">{startupError}</p></main>
+  if (!activeController) return <main className="app-shell app-shell--loading"><Brand /><div className="loading-card" role="status">Iniciando Smart Home Tray…</div></main>
+  return <LightingPanel controller={activeController} />
+}
+
+function LightingPanel({ controller }: { controller: DeviceController }) {
   const session = useLightingSession(controller)
   const [scenario, setScenario] = useState<OperationScenario>('success')
-  const { devices, selectedDevice: device, selectedView: view, issue } = session
+  const { devices, selectedDevice: device, selectedView: view, issue, loadError } = session
 
+  if (loadError) return <main className="app-shell app-shell--loading"><Brand /><p role="alert">{loadError}</p></main>
   if (!device || !view) {
     return (
       <main className="app-shell app-shell--loading">
@@ -43,8 +60,8 @@ export default function LightingApp({ controller: suppliedController }: Lighting
           className="topbar"
           title="Arraste para mover o painel"
           onMouseDown={(event) => { void startDraggingPanel(event.target, event.button) }}
-        ><Brand /><span className="connection-badge"><i /> Conectando simulação</span></header>
-        <div className="loading-card" role="status">Carregando dispositivos simulados…</div>
+        ><Brand /><span className="connection-badge"><i /> Conectando</span></header>
+        <div className="loading-card" role="status">Carregando dispositivos…</div>
       </main>
     )
   }
@@ -67,7 +84,7 @@ export default function LightingApp({ controller: suppliedController }: Lighting
           <div className="topbar-actions">
             <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>
               {device.connection === 'offline' ? <WifiOff size={12} /> : <i aria-hidden="true" />}
-              {device.connection === 'offline' ? 'Offline' : 'Conectado · simulação'}
+              {device.connection === 'offline' ? 'Offline' : state.quality === 'unknown' ? 'Estado desconhecido' : state.quality === 'pending' ? 'Aguardando confirmação' : controller.mode === 'mock' ? 'Conectado · simulação' : controller.mode === 'fixture' ? 'Fixture · simulação' : 'Conectado'}
             </div>
             <WindowControls />
           </div>
@@ -78,7 +95,7 @@ export default function LightingApp({ controller: suppliedController }: Lighting
             <span className="eyebrow">CONTROLE DE ILUMINAÇÃO</span>
             <h2>{device.name}</h2>
           </div>
-          <PowerButton deviceName={device.name} enabled={state.enabled} onToggle={() => issueValue({ enabled: !state.enabled })} />
+          <PowerButton deviceName={device.name} enabled={state.enabled} disabled={!device.capabilities.power} onToggle={() => issueValue({ enabled: !state.enabled })} />
         </div>
 
         <nav className="device-switcher" aria-label="Selecionar dispositivo">
@@ -156,8 +173,8 @@ export default function LightingApp({ controller: suppliedController }: Lighting
                 </>
               ) : device.capabilities.white ? (
                 <>
-                  <RangeControl label="Brilho branco" value={state.whiteBrightness} onChange={(whiteBrightness) => issueValue({ whiteBrightness })} />
-                  <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />
+                  {device.capabilities.white && <RangeControl label="Brilho branco" value={state.whiteBrightness} onChange={(whiteBrightness) => issueValue({ whiteBrightness })} />}
+                  {device.capabilities.temperature && <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />}
                 </>
               ) : (
                 <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { hue } })} />
@@ -165,19 +182,19 @@ export default function LightingApp({ controller: suppliedController }: Lighting
             </motion.div>
           </div>
 
-          <details className="scenario-panel">
+          {controller.mode === 'mock' && <details className="scenario-panel">
             <summary>Cenário de teste <ChevronDown size={14} aria-hidden="true" /></summary>
             <label htmlFor="scenario-select">Resposta simulada</label>
             <select id="scenario-select" value={scenario} onChange={(event) => setScenario(event.currentTarget.value as OperationScenario)}>
               {Object.entries(scenarioNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
             <p>Simulação local; nenhum dispositivo real é consultado.</p>
-          </details>
+          </details>}
 
           {view.error && <p className="error-detail" role="alert">{view.error}</p>}
         </motion.section>
 
-        <footer className="prototype-note"><span className="mock-mark" /> Protótipo visual · dispositivos simulados</footer>
+        <footer className="prototype-note"><span className="mock-mark" /> {controller.mode === 'mock' ? 'Protótipo visual · dispositivos simulados' : controller.mode === 'fixture' ? 'Processo fixture · dados simulados' : 'Controle local'}</footer>
       </main>
     </MotionConfig>
   )

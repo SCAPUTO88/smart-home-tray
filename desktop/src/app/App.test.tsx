@@ -12,6 +12,12 @@ function renderApp() {
 }
 
 describe('Smart Home Tray app', () => {
+  it('surfaces an initial catalog failure instead of remaining on an endless loading screen', async () => {
+    const controller: DeviceController = { mode: 'real', async list() { throw new Error('fixture startup failed') }, async command() { throw new Error('not used') } }
+    render(<App controller={controller} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Não foi possível carregar os dispositivos')
+  })
+
   it('shows the product and the two simulated devices', async () => {
     renderApp()
 
