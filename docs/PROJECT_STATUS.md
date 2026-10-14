@@ -183,3 +183,10 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 
 - PR #16 (F2A.1 / CR-15): integrada em `origin/develop` no merge commit `e307e69`; validação visual manual do mantenedor aprovou a lâmpada e confirmou a correção final da Fita LED.
 - F2A continua exclusivamente com mocks; a integração real do backend continua reservada à F2C.
+
+## Registro de checkpoint para retomada — 2026-10-14
+
+- CR-18 e CR-19 estão implementadas localmente na branch feature/windows-system-tray; os commits mais recentes são 6608306 (ancoragem pela borda da taskbar), c79781c (arraste pelo cabeçalho) e 77559da (documentação da revisão). A branch está limpa e quatro commits à frente da referência remota; não houve push ou merge.
+- Validações registradas: typecheck, lint, 53 testes frontend, build Vite, cargo fmt --check, cargo check --locked, 12 testes Rust, build Tauri --no-bundle e git diff --check passaram. O build Tauri emite somente o aviso não bloqueante de colisão do arquivo PDB entre binário e biblioteca.
+- O mantenedor já confirmou que npm run tauri:dev abre a janela nativa e mostra os dispositivos simulados. O arraste, as quatro bordas da taskbar, monitores secundários e escalas DPI ainda precisam de validação manual. As exigências específicas de CR-17 não foram fornecidas no contexto recuperado; não foram inferidas.
+- Próximo passo: concluir o checklist manual de desktop/README.md, revisar o job Windows/MSVC após publicação manual e obter revisão arquitetural antes de F2C. Nenhum backend, IPC, rede ou dispositivo físico foi acessado.
