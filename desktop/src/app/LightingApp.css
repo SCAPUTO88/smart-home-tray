@@ -149,3 +149,6 @@
   .range-list { gap: 10px; margin-top: 12px; }
   .scenario-panel { margin-top: 11px; }
 }
+.topbar { cursor: grab; }
+.topbar:active { cursor: grabbing; }
+.topbar button { cursor: pointer; }

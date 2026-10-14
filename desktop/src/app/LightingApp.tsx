@@ -10,6 +10,7 @@ import { RangeControl } from '../components/controls/RangeControl'
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { Activity, Check, ChevronDown, Lightbulb, Palette, SlidersHorizontal, WifiOff } from 'lucide-react'
 import WindowControls from '../platform/WindowControls'
+import { startDraggingPanel } from '../platform/tauriWindow'
 import './LightingApp.css'
 
 interface LightingAppProps {
@@ -38,7 +39,11 @@ export default function LightingApp({ controller: suppliedController }: Lighting
   if (!device || !view) {
     return (
       <main className="app-shell app-shell--loading">
-        <header className="topbar"><Brand /><span className="connection-badge"><i /> Conectando simulação</span></header>
+        <header
+          className="topbar"
+          title="Arraste para mover o painel"
+          onMouseDown={(event) => { void startDraggingPanel(event.target, event.button) }}
+        ><Brand /><span className="connection-badge"><i /> Conectando simulação</span></header>
         <div className="loading-card" role="status">Carregando dispositivos simulados…</div>
       </main>
     )
@@ -53,7 +58,11 @@ export default function LightingApp({ controller: suppliedController }: Lighting
   return (
     <MotionConfig reducedMotion="user">
       <main className="app-shell" style={{ '--accent-color': accent, '--accent-intensity': ambientIntensity } as CSSProperties}>
-        <header className="topbar">
+        <header
+          className="topbar"
+          title="Arraste para mover o painel"
+          onMouseDown={(event) => { void startDraggingPanel(event.target, event.button) }}
+        >
           <Brand />
           <div className="topbar-actions">
             <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>

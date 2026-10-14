@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allow only the native window hide action needed by the React tray panel.",
-  "windows": ["main"],
-  "permissions": ["core:window:allow-hide"]
+  "description": "Allow only the native window hide and start-dragging actions used by the panel.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:window:allow-hide",
+    "core:window:allow-start-dragging"
+  ]
 }
