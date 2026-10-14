@@ -139,8 +139,9 @@ def test_public_device_status_conversion_has_only_allowlisted_json_fields():
     }
     assert set(public["state"]) == {
         "power", "workMode", "whiteBrightnessPercent", "colorValuePercent",
-        "colorTemperaturePercent", "hsv", "scene", "quality"
+        "colorTemperaturePercent", "hsv", "scene", "quality", "knowledge"
     }
+    assert public["state"]["knowledge"] == {"power":"unknown","workMode":"unknown","whiteBrightness":"unknown","colorTemperature":"unknown","hsv":"unknown","colorValue":"unknown","scene":"unknown"}
     assert "unit-test-key-not-real" not in encoded
     assert "local_key" not in encoded
     assert json.loads(encoded) == public
