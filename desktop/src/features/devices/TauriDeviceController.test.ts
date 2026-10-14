@@ -9,6 +9,13 @@ const device: PublicDeviceStatus = {
 
 function api(): BridgeApi { return { list: vi.fn(async () => [device]), status: vi.fn(async () => device), command: vi.fn(async () => device) } }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise })
+  return { promise, resolve, reject }
+}
+
 describe('TauriDeviceController', () => {
   it('recomposes partial HSV channels with current and pending intentions', async () => {
     const bridge = api(); const controller = new TauriDeviceController(bridge); await controller.list()
@@ -170,6 +177,84 @@ describe('TauriDeviceController', () => {
     await expect(controller.command('lamp', { enabled: false })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
     await expect(controller.command('lamp', { hsv: { hue: 200 } })).resolves.toMatchObject({ deviceId: 'lamp' })
     expect(bridge.command).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let an old refresh timeout offline a device after a write readback', async () => {
+    const status = deferred<PublicDeviceStatus>()
+    const bridge = api(); bridge.status = vi.fn(() => status.promise)
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    const refresh = controller.refresh('lamp')
+    await controller.command('lamp', { enabled: false })
+    status.reject({ code: 'TIMEOUT' })
+    await expect(refresh).rejects.toMatchObject({ code: 'TIMEOUT' })
+    await expect(controller.command('lamp', { enabled: true })).resolves.toMatchObject({ connection: 'online' })
+  })
+
+  it('does not let a late command timeout replace a newer confirmed command readback', async () => {
+    const older = deferred<PublicDeviceStatus>()
+    const bridge = api(); bridge.command = vi.fn().mockResolvedValue(device).mockReturnValueOnce(older.promise).mockResolvedValueOnce({ ...device, state: { ...device.state, power: false } })
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    const first = controller.command('lamp', { enabled: false })
+    await controller.command('lamp', { enabled: true })
+    older.reject({ code: 'TIMEOUT' })
+    await expect(first).rejects.toMatchObject({ code: 'TIMEOUT' })
+    await expect(controller.command('lamp', { enabled: false })).resolves.toMatchObject({ connection: 'online' })
+  })
+
+  it('ignores an older failed refresh after a newer refresh has applied', async () => {
+    const older = deferred<PublicDeviceStatus>()
+    const newer = deferred<PublicDeviceStatus>()
+    const bridge = api(); bridge.status = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    const first = controller.refresh('lamp')
+    const second = controller.refresh('lamp')
+    newer.resolve({ ...device, state: { ...device.state, power: false } })
+    await expect(second).resolves.toMatchObject({ state: { enabled: false } })
+    older.reject({ code: 'TIMEOUT' })
+    await expect(first).rejects.toMatchObject({ code: 'TIMEOUT' })
+    await expect(controller.command('lamp', { enabled: true })).resolves.toMatchObject({ connection: 'online' })
+  })
+
+  it('applies an older valid refresh when a newer refresh failed without a readback', async () => {
+    const older = deferred<PublicDeviceStatus>()
+    const newer = deferred<PublicDeviceStatus>()
+    const bridge = api(); bridge.status = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    const first = controller.refresh('lamp')
+    const second = controller.refresh('lamp')
+    newer.reject({ code: 'TIMEOUT' })
+    await expect(second).rejects.toMatchObject({ code: 'TIMEOUT' })
+    older.resolve({ ...device, state: { ...device.state, power: false } })
+    await expect(first).resolves.toMatchObject({ connection: 'online', state: { enabled: false } })
+    await expect(controller.command('lamp', { enabled: true })).resolves.toMatchObject({ connection: 'online' })
+  })
+
+  it('keeps a current refresh timeout offline and isolated to its device', async () => {
+    const strip: PublicDeviceStatus = { ...device, deviceId: 'strip', name: 'Strip', state: { ...device.state, hsv: { hue: 10, saturation: 40, value: 50 } } }
+    const bridge: BridgeApi = {
+      list: vi.fn(async () => [device, strip]),
+      status: vi.fn(async (deviceId) => { if (deviceId === 'lamp') throw { code: 'TIMEOUT' }; return strip }),
+      command: vi.fn(async () => strip),
+    }
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    await expect(controller.refresh('lamp')).rejects.toMatchObject({ code: 'TIMEOUT' })
+    await expect(controller.command('lamp', { enabled: false })).rejects.toMatchObject({ code: 'DEVICE_OFFLINE' })
+    await expect(controller.command('strip', { enabled: false })).resolves.toMatchObject({ connection: 'online' })
+  })
+
+  it('applies an older valid readback when a later command failed without confirming its intent', async () => {
+    const earlier = deferred<PublicDeviceStatus>()
+    const bridge = api()
+    bridge.command = vi.fn().mockReturnValueOnce(earlier.promise).mockRejectedValueOnce({ code: 'TIMEOUT' }).mockResolvedValueOnce({
+      ...device, state: { ...device.state, hsv: { hue: 210, saturation: 70, value: 30 }, colorValuePercent: 30 },
+    })
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    const first = controller.command('lamp', { hsv: { hue: 210 } })
+    await expect(controller.command('lamp', { hsv: { saturation: 25 } })).rejects.toMatchObject({ code: 'TIMEOUT' })
+    earlier.resolve({ ...device, state: { ...device.state, hsv: { hue: 222, saturation: 70, value: 60 } } })
+    await expect(first).resolves.toMatchObject({ state: { hsv: { hue: 222, saturation: 70, value: 60 } } })
+    await controller.command('lamp', { hsv: { value: 30 } })
+    expect(bridge.command).toHaveBeenNthCalledWith(3, { command: 'device.hsv', payload: { deviceId: 'lamp', hue: 222, saturation: 70, value: 30 } })
   })
 
 })

@@ -30,11 +30,16 @@ export class TauriDeviceController implements DeviceController {
   private readonly known = new Map<DeviceId, LightingDevice>()
   private readonly knownPublic = new Map<DeviceId, PublicDeviceStatus>()
   private readonly confirmedBase = new Map<DeviceId, PublicDeviceStatus>()
-  private readonly latestResponse = new Map<DeviceId, number>()
+  private readonly latestIssuedCommand = new Map<DeviceId, number>()
+  private readonly latestAppliedCommand = new Map<DeviceId, number>()
+  private readonly snapshotRevision = new Map<DeviceId, number>()
+  private readonly stateRevision = new Map<DeviceId, number>()
+  private readonly pendingCommands = new Map<DeviceId, Set<number>>()
+  private readonly terminalResult = new Map<DeviceId, { commandId: number; outcome: 'succeeded' | 'failed' }>()
   private readonly pendingHsv = new Map<DeviceId, Map<number, HsvColor>>()
   private sequence = 0
-  private readonly pendingWrites = new Map<DeviceId, number>()
   private readonly refreshSequence = new Map<DeviceId, number>()
+  private readonly latestAppliedRefresh = new Map<DeviceId, number>()
   private readonly bridge: BridgeApi
 
   constructor(bridge: BridgeApi, mode: 'fixture' | 'real' = 'fixture') { this.bridge = bridge; this.mode = mode }
@@ -60,8 +65,15 @@ export class TauriDeviceController implements DeviceController {
     this.known.clear()
     this.knownPublic.clear()
     this.confirmedBase.clear()
+    this.latestIssuedCommand.clear()
+    this.latestAppliedCommand.clear()
+    this.snapshotRevision.clear()
+    this.stateRevision.clear()
+    this.pendingCommands.clear()
+    this.terminalResult.clear()
     this.pendingHsv.clear()
-    this.latestResponse.clear()
+    this.refreshSequence.clear()
+    this.latestAppliedRefresh.clear()
     const devices = statuses.map(mapPublicDevice)
     for (const status of statuses) {
       const device = devices.find((item) => item.deviceId === status.deviceId)
@@ -69,31 +81,53 @@ export class TauriDeviceController implements DeviceController {
       this.knownPublic.set(status.deviceId, status)
       this.known.set(status.deviceId, device)
       if (hasObservedReadback(status)) this.confirmedBase.set(status.deviceId, status)
+      this.latestIssuedCommand.set(status.deviceId, 0)
+      this.latestAppliedCommand.set(status.deviceId, 0)
+      this.snapshotRevision.set(status.deviceId, 0)
+      this.stateRevision.set(status.deviceId, 0)
+      this.pendingCommands.set(status.deviceId, new Set())
+      this.latestAppliedRefresh.set(status.deviceId, 0)
     }
     return devices
   }
 
   async refresh(deviceId: DeviceId): Promise<LightingDevice> {
-    if ((this.pendingWrites.get(deviceId) ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
+    if ((this.pendingCommands.get(deviceId)?.size ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
     const current = this.knownPublic.get(deviceId)
     if (!current) throw new OperationError('DEVICE_ERROR')
-    const version = this.latestResponse.get(deviceId) ?? 0
+    const issuedVersion = this.latestIssuedCommand.get(deviceId) ?? 0
+    const snapshotVersion = this.snapshotRevision.get(deviceId) ?? 0
+    const stateVersion = this.stateRevision.get(deviceId) ?? 0
     const refreshId = (this.refreshSequence.get(deviceId) ?? 0) + 1
     this.refreshSequence.set(deviceId, refreshId)
     try {
       const status = await this.bridge.status(deviceId)
-      if (status.deviceId !== deviceId || (this.latestResponse.get(deviceId) ?? 0) !== version || this.refreshSequence.get(deviceId) !== refreshId || (this.pendingWrites.get(deviceId) ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
+      if (status.deviceId !== deviceId || (this.latestIssuedCommand.get(deviceId) ?? 0) !== issuedVersion || (this.snapshotRevision.get(deviceId) ?? 0) !== snapshotVersion || refreshId <= (this.latestAppliedRefresh.get(deviceId) ?? 0) || (this.pendingCommands.get(deviceId)?.size ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
       const mapped = mapPublicDevice(status)
       this.knownPublic.set(deviceId, status)
       this.known.set(deviceId, mapped)
       if (status.connection === 'online') this.confirmedBase.set(deviceId, status)
+      else this.confirmedBase.delete(deviceId)
+      this.latestAppliedRefresh.set(deviceId, refreshId)
+      this.snapshotRevision.set(deviceId, snapshotVersion + 1)
+      this.stateRevision.set(deviceId, (this.stateRevision.get(deviceId) ?? 0) + 1)
       return mapped
     } catch (error) {
       const normalized = parseBridgeError(error)
-      if (normalized.code === 'DEVICE_OFFLINE' || normalized.code === 'TIMEOUT' || normalized.code === 'AUTH_FAILED') {
-        const offline = offlineStatus(current)
-        this.knownPublic.set(deviceId, offline)
-        this.known.set(deviceId, mapPublicDevice(offline))
+      const isTransportFailure = normalized.code === 'DEVICE_OFFLINE' || normalized.code === 'TIMEOUT' || normalized.code === 'AUTH_FAILED'
+      const isCurrent = (this.latestIssuedCommand.get(deviceId) ?? 0) === issuedVersion
+        && this.stateRevision.get(deviceId) === stateVersion
+        && this.refreshSequence.get(deviceId) === refreshId
+        && (this.snapshotRevision.get(deviceId) ?? 0) === snapshotVersion
+        && (this.pendingCommands.get(deviceId)?.size ?? 0) === 0
+      if (isTransportFailure && isCurrent) {
+        const latest = this.knownPublic.get(deviceId)
+        if (latest) {
+          const offline = offlineStatus(latest)
+          this.knownPublic.set(deviceId, offline)
+          this.known.set(deviceId, mapPublicDevice(offline))
+          this.stateRevision.set(deviceId, stateVersion + 1)
+        }
       }
       throw normalized
     }
@@ -138,42 +172,59 @@ export class TauriDeviceController implements DeviceController {
       this.pendingHsv.set(deviceId, operations)
     } else throw new OperationError('INVALID_INPUT')
 
-    this.pendingWrites.set(deviceId, (this.pendingWrites.get(deviceId) ?? 0) + 1)
-    this.latestResponse.set(deviceId, id)
+    const pending = this.pendingCommands.get(deviceId) ?? new Set<number>()
+    pending.add(id)
+    this.pendingCommands.set(deviceId, pending)
+    this.latestIssuedCommand.set(deviceId, id)
+    const snapshotVersion = this.snapshotRevision.get(deviceId) ?? 0
+    const stateVersion = this.stateRevision.get(deviceId) ?? 0
     try {
       const status = await this.bridge.command(request)
       if (status.deviceId !== deviceId) throw new OperationError('DEVICE_ERROR')
       const response = mapPublicDevice(status)
-      const latest = this.latestResponse.get(deviceId) ?? 0
-      if (id >= latest) {
-        this.latestResponse.set(deviceId, id)
+      this.recordTerminalResult(deviceId, id, 'succeeded')
+      const isApplicable = id > (this.latestAppliedCommand.get(deviceId) ?? 0)
+        && (this.snapshotRevision.get(deviceId) ?? 0) === snapshotVersion
+      if (isApplicable) {
         this.known.set(deviceId, response)
         this.knownPublic.set(deviceId, status)
-        if (hasObservedReadback(status)) this.confirmedBase.set(deviceId, status)
-        const operations = this.pendingHsv.get(deviceId)
-        if (operations) {
-          for (const pendingId of operations.keys()) if (pendingId <= id) operations.delete(pendingId)
-          if (operations.size === 0) this.pendingHsv.delete(deviceId)
-        }
+        if (status.connection === 'online') this.confirmedBase.set(deviceId, status)
+        else this.confirmedBase.delete(deviceId)
+        this.latestAppliedCommand.set(deviceId, id)
+        this.snapshotRevision.set(deviceId, snapshotVersion + 1)
+        this.stateRevision.set(deviceId, (this.stateRevision.get(deviceId) ?? 0) + 1)
       }
+      this.settlePendingHsv(deviceId, id)
       return response
     } catch (error) {
       const normalized = parseBridgeError(error)
+      this.recordTerminalResult(deviceId, id, 'failed')
       if (normalized.code === 'DEVICE_OFFLINE' || normalized.code === 'TIMEOUT' || normalized.code === 'AUTH_FAILED') {
         const current = this.knownPublic.get(deviceId)
-        if (current) {
+        const isCurrent = this.stateRevision.get(deviceId) === stateVersion
+        if (current && isCurrent) {
           const offline = offlineStatus(current)
           this.knownPublic.set(deviceId, offline)
           this.known.set(deviceId, mapPublicDevice(offline))
+          this.stateRevision.set(deviceId, stateVersion + 1)
         }
       }
-      this.pendingHsv.get(deviceId)?.delete(id)
-      if (this.pendingHsv.get(deviceId)?.size === 0) this.pendingHsv.delete(deviceId)
+      this.settlePendingHsv(deviceId, id)
       throw normalized
     } finally {
-      const count = (this.pendingWrites.get(deviceId) ?? 1) - 1
-      if (count > 0) this.pendingWrites.set(deviceId, count)
-      else this.pendingWrites.delete(deviceId)
+      pending.delete(id)
+    }
+  }
+
+  private settlePendingHsv(deviceId: DeviceId, commandId: number): void {
+    const operations = this.pendingHsv.get(deviceId)
+    operations?.delete(commandId)
+    if (operations?.size === 0) this.pendingHsv.delete(deviceId)
+  }
+
+  private recordTerminalResult(deviceId: DeviceId, commandId: number, outcome: 'succeeded' | 'failed'): void {
+    if (commandId >= (this.terminalResult.get(deviceId)?.commandId ?? 0)) {
+      this.terminalResult.set(deviceId, { commandId, outcome })
     }
   }
 }

@@ -131,3 +131,10 @@
 - **Decisão:** anexar ao snapshot LightState um mapa tipado de conhecimento por campo (observed/stale/unknown), derivado exclusivamente da leitura validada de DPS. Valores nullable e quality global permanecem; knowledge não representa confirmação de escrita. Leitura parcial pode atualizar um campo enquanto preserva os demais como stale.
 - **Refresh:** uma ação explícita consulta somente device.status do dispositivo selecionado; não há polling ou retry automático. Refresh é bloqueado durante escrita pendente para manter a ordem do readback, e respostas obsoletas/desmontadas não alteram a sessão.
 - **Trade-off:** campos stale continuam visíveis como última observação, mas seus controles ficam bloqueados até novo readback válido. A UI não usa defaults de apresentação como observação física.
+
+### D-017 — Precedência por snapshot aplicado na F2C.2
+
+- **Estado:** adotada para as correções CR-28/CR-29/CR-30 da PR #21; revisão do delta pendente.
+- **Decisão:** manter por dispositivo uma sequência de comandos emitidos, IDs pendentes, resultado terminal da sequência mais nova e versão do último snapshot aplicado. Sucesso só substitui a base quando seu readback ainda é aplicável; erros de transporte só mudam conexão se nenhuma atualização posterior já mudou o estado. Refresh obsoleto não altera valores nem conexão. Readbacks válidos de operações anteriores ainda podem ser usados se operações posteriores falharem.
+- **Motivo:** emissão não equivale a confirmação. Um comando mais novo pode falhar depois que um anterior confirmou valores diferentes da intenção; o snapshot confirmado deve prevalecer, sem preservar intenção terminal como se ainda estivesse pendente.
+- **Trade-offs:** o controller guarda revisões e resultado terminal por dispositivo e mantém as regras de precedência alinhadas à sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.

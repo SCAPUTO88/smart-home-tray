@@ -2,7 +2,7 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2C.2 preparada para revisão arquitetural na branch feature/real-mode-readiness; modo REAL não validado com equipamentos.
+- **Fase:** 2 — F2C.2 CR-28/29/30 corrigidas e validadas localmente na branch feature/real-mode-readiness; PR #21 aguarda revisão do delta. Modo REAL não validado com equipamentos.
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
 - **Progresso:** PR #17 (F2B, CR-16–19) integrada em origin/develop no merge 893e1ca. F2C.1 implementa a ponte tipada Tauri ↔ Python com MOCK por padrão, FIXTURE JSONL sem rede e REAL somente por opt-in controlado pelo processo Rust. A validação automatizada desta entrega foi concluída; nenhuma lâmpada física foi acessada. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
@@ -201,3 +201,13 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 - Bridge Rust verifica o caminho TOML REAL como arquivo existente e valida funcionalidade do subprocesso por devices.list antes de marcar o bridge disponível. A saída continua normalizada.
 - Validação executada no worktree: frontend typecheck, lint, build Vite e 82 testes; backend pytest 182 testes e compileall; Rust fmt, check e 24 testes; build Tauri Windows sem bundle. O detalhamento final consta no handoff desta branch.
 - Nenhum hardware ou modo REAL foi acionado. O subprocesso REAL só valida configuração via arquivo absoluto existente e handshake devices.list, que não consulta LAN.
+
+## Revisão F2C.2 CR-28 / CR-29 / CR-30 — correções locais para PR #21
+
+- **CR-28:** merge de readback agora atualiza knowledge somente para os campos aceitos pela precedência por campo. HSV e colorValue avançam juntos; refresh bem-sucedido recupera knowledge stale/unknown. Testes cobrem stale/observed, coerência HSV e isolamento de knowledge de operações independentes.
+- **CR-29:** sessão e controller descartam efeitos de erros de refresh/comando quando já houve uma operação ou snapshot mais recente aplicável. A precedência usa revisões por dispositivo; falhas atuais continuam marcando offline, sem afetar outros dispositivos.
+- **CR-30:** controller separa sequência emitida, conjunto de operações pendentes, resultado terminal da maior sequência e sequência/revisão do último snapshot aplicado. Um readback válido de A ainda pode ser aplicado quando B falhou; intenções sem confirmação são removidas e não viram base HSV.
+- **Regressões:** 9 testes novos entre `TauriDeviceController.test.ts` e `useLightingSession.test.tsx`; os casos RED foram observados antes das correções. Suíte frontend completa: 91 testes aprovados.
+- **Validação:** frontend typecheck, lint, 91 testes e build Vite aprovados; Rust fmt/check/test (24 testes) aprovados; build Tauri Windows `--no-bundle` aprovado; backend pytest (182 testes) e compileall aprovados; `git diff --check` aprovado.
+- **Ajuste do harness:** Vitest usou config temporário sem o plugin Tailwind, config loader nativo e pool de threads porque o carregamento padrão tentou subprocessos bloqueados pelo shell (`spawn EPERM`). O build Vite/Tauri foi concluído com `--configLoader native`; o build Tauri usou override local do `beforeBuildCommand`, sem alterar configuração versionada.
+- **Estado de integração:** correções locais ainda não publicadas nem mergeadas; PR #21 precisa receber o delta e passar nova revisão. Nenhum modo REAL, hardware, LAN doméstica ou cloud foi acessado; testes usam bridge fake, controladores deferred, MOCK/FIXTURE e subprocessos artificiais.

@@ -85,6 +85,7 @@ function visiblePreview(confirmed: DeviceViewState['confirmed'], operations: Pen
 
 function mergeReadback(confirmed: DeviceViewState['confirmed'], response: LightingDevice, acceptedFields: LightingField[]) {
   let next = { ...confirmed, hsv: { ...confirmed.hsv } }
+  const knowledge = { ...confirmed.knowledge }
   for (const field of acceptedFields) next = applyPatch(next, setField({}, field, fieldValue({
     enabled: response.state.enabled,
     mode: response.state.mode,
@@ -92,8 +93,19 @@ function mergeReadback(confirmed: DeviceViewState['confirmed'], response: Lighti
     whiteTemperature: response.state.whiteTemperature,
     hsv: response.state.hsv,
   }, field)), response.state.quality)
+  for (const field of acceptedFields) {
+    switch (field) {
+      case 'enabled': knowledge.power = response.state.knowledge.power; break
+      case 'mode': knowledge.workMode = response.state.knowledge.workMode; break
+      case 'whiteBrightness': knowledge.whiteBrightness = response.state.knowledge.whiteBrightness; break
+      case 'whiteTemperature': knowledge.colorTemperature = response.state.knowledge.colorTemperature; break
+      default:
+        knowledge.hsv = response.state.knowledge.hsv
+        knowledge.colorValue = response.state.knowledge.colorValue
+    }
+  }
   // Keep quality from the readback verbatim; a successful command cannot invent a known device state.
-  return next
+  return { ...next, knowledge }
 }
 
 export function useLightingSession(controller: DeviceController) {
@@ -250,7 +262,7 @@ export function useLightingSession(controller: DeviceController) {
         return { ...current, [deviceId]: { ...view, confirmed, preview: confirmed, error: null, status: 'idle' } }
       })
     } catch (error) {
-      if (!mounted.current || refreshSequence.current[deviceId] !== requestId) return
+      if (!mounted.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
       if (error instanceof OperationError && error.code === 'COMMAND_CANCELED') return
       const offline = error instanceof OperationError && (error.code === 'DEVICE_OFFLINE' || error.code === 'TIMEOUT' || error.code === 'AUTH_FAILED')
       if (offline) setDevices((current) => current.map((item) => item.deviceId === deviceId ? { ...item, connection: 'offline', state: { ...item.state, quality: 'offline', knowledge: Object.fromEntries(Object.entries(item.state.knowledge).map(([key, value]) => [key, value === 'observed' ? 'stale' : value])) as typeof item.state.knowledge } } : item))
