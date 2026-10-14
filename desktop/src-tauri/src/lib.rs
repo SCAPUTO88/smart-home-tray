@@ -9,7 +9,6 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use tauri_plugin_positioner::{Position, WindowExt};
 
 const OPEN_MENU_ID: &str = "open-panel";
 const QUIT_MENU_ID: &str = "quit-app";
@@ -25,46 +24,54 @@ fn show_panel(window: &WebviewWindow, tray: Option<positioning::Rect>) {
         let _ = window.unminimize();
     }
 
-    let tray_monitor = tray.and_then(|rect| {
-        let center_x = rect.x as f64 + rect.width as f64 / 2.0;
-        let center_y = rect.y as f64 + rect.height as f64 / 2.0;
-        window.monitor_from_point(center_x, center_y).ok().flatten()
-    });
-    let monitor = tray_monitor
-        .or_else(|| window.current_monitor().ok().flatten())
-        .or_else(|| window.primary_monitor().ok().flatten());
+    // Keep a manually moved visible panel in place when another instance requests "Open".
+    if !window.is_visible().unwrap_or(false) {
+        let tray_monitor = tray.and_then(|rect| {
+            let center_x = rect.x as f64 + rect.width as f64 / 2.0;
+            let center_y = rect.y as f64 + rect.height as f64 / 2.0;
+            window.monitor_from_point(center_x, center_y).ok().flatten()
+        });
+        let has_tray_monitor = tray_monitor.is_some();
+        let monitor = tray_monitor
+            .or_else(|| window.current_monitor().ok().flatten())
+            .or_else(|| window.primary_monitor().ok().flatten());
+        let tray = tray.filter(|_| has_tray_monitor);
 
-    if let Some(monitor) = monitor {
-        let work = monitor.work_area();
-        let area = positioning::Rect {
-            x: work.position.x,
-            y: work.position.y,
-            width: work.size.width,
-            height: work.size.height,
-        };
-        let original_size = window.outer_size().unwrap_or(PhysicalSize::new(420, 720));
-        let width = original_size.width.min(area.width);
-        let height = original_size.height.min(area.height);
-        if width != original_size.width || height != original_size.height {
-            let _ = window.set_size(PhysicalSize::new(width, height));
+        if let Some(monitor) = monitor {
+            let work = monitor.work_area();
+            let area = positioning::Rect {
+                x: work.position.x,
+                y: work.position.y,
+                width: work.size.width,
+                height: work.size.height,
+            };
+            let preferred = positioning::preferred_size(area, monitor.scale_factor());
+            let _ = window.set_size(PhysicalSize::new(preferred.width, preferred.height));
+            let size = window
+                .outer_size()
+                .unwrap_or(PhysicalSize::new(preferred.width, preferred.height));
+            let width = size.width.min(area.width);
+            let height = size.height.min(area.height);
+            if width != size.width || height != size.height {
+                let _ = window.set_size(PhysicalSize::new(width, height));
+            }
+
+            let point = if let Some(tray) = tray {
+                let monitor_position = monitor.position();
+                let monitor_size = monitor.size();
+                let bounds = positioning::Rect {
+                    x: monitor_position.x,
+                    y: monitor_position.y,
+                    width: monitor_size.width,
+                    height: monitor_size.height,
+                };
+                let edge = positioning::infer_taskbar_edge(bounds, area, Some(tray));
+                positioning::popup_position(area, tray, edge, width, height, 10)
+            } else {
+                positioning::fallback_position(area, width, height)
+            };
+            let _ = window.set_position(PhysicalPosition::new(point.x, point.y));
         }
-
-        let positioned_from_tray =
-            tray.is_some() && window.move_window(Position::TrayRight).is_ok();
-        let desired = if positioned_from_tray {
-            window
-                .outer_position()
-                .ok()
-                .map(|point| positioning::Point {
-                    x: point.x,
-                    y: point.y,
-                })
-                .unwrap_or_else(|| positioning::fallback_position(area, width, height))
-        } else {
-            positioning::fallback_position(area, width, height)
-        };
-        let point = positioning::clamp_position(area, width, height, desired);
-        let _ = window.set_position(PhysicalPosition::new(point.x, point.y));
     }
 
     let _ = window.show();
@@ -80,6 +87,7 @@ fn remember_tray_rect(event: &TrayIconEvent) -> Option<positioning::Rect> {
         | TrayIconEvent::Leave { rect, .. } => rect,
         _ => return None,
     };
+    // tray-icon reports this event rectangle in physical pixels; scale 1.0 preserves them.
     let position: PhysicalPosition<f64> = rect.position.to_physical(1.0);
     let size: PhysicalSize<f64> = rect.size.to_physical(1.0);
     Some(positioning::Rect {
@@ -95,7 +103,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
-                show_panel(&window, None);
+                let anchor = app
+                    .state::<TrayAnchor>()
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|value| *value);
+                show_panel(&window, anchor);
             }
         }))
         .plugin(tauri_plugin_positioner::init())
