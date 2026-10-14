@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2B (desktop Windows e system tray; revisão local, inspeção manual ainda pendente).
+- **Fase:** 2 — F2B (desktop Windows e system tray; revisão arquitetural local, eventos do tray pendentes de validação manual).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** PR #16 (CR-15) está integrada em origin/develop no merge e307e69 e a correção visual final foi validada manualmente pelo mantenedor. F2B implementa tray, janela oculta, single instance e posicionamento. Frontend 49 testes, typecheck/lint/build Vite; Rust fmt/check/test e build Tauri --no-bundle passaram localmente. Revisão manual de interação e monitores ainda pendente.
+- **Progresso:** PR #16 (CR-15) está integrada em origin/develop no merge e307e69 e a correção visual final foi validada manualmente pelo mantenedor. F2B implementa tray, janela oculta, single instance e posicionamento. Frontend 49 testes, typecheck/lint/build Vite; Rust fmt/check/test e build Tauri --no-bundle passaram localmente. O mantenedor também confirmou que npm run tauri:dev abre a janela nativa e renderiza Luz Mesa e Fita LED simuladas. Interações do tray, ciclo de vida, posicionamento e monitores seguem pendentes de validação manual.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -163,7 +163,8 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - **Implementado localmente:** startup oculto, tray com alternância de botão esquerdo, menu nativo Abrir/Sair, ocultação no close, foco/restauração, single instance, botão React acessível somente no Tauri, posicionamento por monitor/work area e testes geométricos.
 - **Segurança:** interface usa exclusivamente `MockDeviceController`; nenhum backend Python, JSON Lines, LAN, cloud ou dispositivo físico foi conectado.
 - **Validação disponível:** frontend: typecheck, lint, 49 testes e build Vite aprovados. Windows/MSVC: cargo fmt --check, cargo check --locked, cargo test --locked (5 testes) e build Tauri --no-bundle aprovados. Inspeção manual de tray, foco, DPI e múltiplos monitores ainda pendente.
-- **Critério de conclusão:** revisão manual do tray/janela em Windows ainda pendente; CI do job Rust/Tauri também aguarda execução após push manual.
+- **Validação manual já realizada:** o mantenedor abriu npm run tauri:dev no Windows e confirmou a janela Tauri nativa e a renderização de Luz Mesa e Fita LED usando mocks.
+- **Critério de conclusão:** revisão manual de interações do tray/janela em Windows ainda pendente; CI do job Rust/Tauri também aguarda execução após push manual.
 
 ## Próximas ações
 
