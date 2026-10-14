@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2B (desktop Windows e system tray; revisão arquitetural local, eventos do tray pendentes de validação manual).
+- **Fase:** 2 — F2B (desktop Windows e system tray; revisão arquitetural local, validação manual dos novos eventos pendente).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** PR #16 (CR-15) está integrada em origin/develop no merge e307e69 e a correção visual final foi validada manualmente pelo mantenedor. F2B implementa tray, janela oculta, single instance e posicionamento. Frontend 49 testes, typecheck/lint/build Vite; Rust fmt/check/test e build Tauri --no-bundle passaram localmente. O mantenedor também confirmou que npm run tauri:dev abre a janela nativa e renderiza Luz Mesa e Fita LED simuladas. Interações do tray, ciclo de vida, posicionamento e monitores seguem pendentes de validação manual.
+- **Progresso:** PR #16 (CR-15) está integrada em origin/develop no merge e307e69. F2B inclui tray, ciclo de vida, instância única, arraste no cabeçalho e popup ancorado à borda da taskbar com tamanho preferencial por monitor/DPI. Typecheck, lint, 53 testes frontend, build Vite, cargo fmt/check, 12 testes Rust e build Tauri sem bundle passaram localmente. A abertura/renderização mock foi confirmada pelo mantenedor; tray/arraste e layouts multimonitor ainda precisam de validação manual.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -154,29 +154,30 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Limitação do checkpoint visual original: não havia janela de navegador para screenshots automatizadas. Depois, o mantenedor revisou manualmente a gravação, aprovou a lâmpada e identificou CR-15 na fita; a correção local ainda aguarda inspeção visual manual.
 # Smart Home Tray — Project Status
 
-## Checkpoint F2B — implementação local em revisão
+## Checkpoint F2B — CR-18/CR-19 locais para revisão da PR #17
 
 - **Branch:** `feature/windows-system-tray`, criada a partir de `origin/develop`.
 - **Base verificada:** `origin/develop` contém o merge da PR #16 no commit `e307e69`.
 - **Fase anterior:** F2A.1 / CR-15 está publicada na PR #16, integrada em develop e validada visualmente pelo mantenedor; o problema de emissão residual foi corrigido antes da integração.
 - **Fase atual:** F2B — tray Windows, janela popup e ciclo de vida Tauri.
-- **Implementado localmente:** startup oculto, tray com alternância de botão esquerdo, menu nativo Abrir/Sair, ocultação no close, foco/restauração, single instance, botão React acessível somente no Tauri, posicionamento por monitor/work area e testes geométricos.
+- **Integração de tamanho:** o cálculo usa a preferência de 420 × 720 pixels lógicos e reaplica dimensões adequadas ao monitor ao reabrir, cobrindo o requisito de restauração após monitores menores descrito junto ao CR-16.
+- **Implementado localmente:** startup oculto, tray com alternância no clique esquerdo, menu Abrir/Sair, ocultação no close, foco/restauração, single instance, botão acessível, arraste no cabeçalho fora de elementos interativos, posicionamento taskbar-aware e tamanho preferencial restaurável.
 - **Segurança:** interface usa exclusivamente `MockDeviceController`; nenhum backend Python, JSON Lines, LAN, cloud ou dispositivo físico foi conectado.
-- **Validação disponível:** frontend: typecheck, lint, 49 testes e build Vite aprovados. Windows/MSVC: cargo fmt --check, cargo check --locked, cargo test --locked (5 testes) e build Tauri --no-bundle aprovados. Inspeção manual de tray, foco, DPI e múltiplos monitores ainda pendente.
-- **Validação manual já realizada:** o mantenedor abriu npm run tauri:dev no Windows e confirmou a janela Tauri nativa e a renderização de Luz Mesa e Fita LED usando mocks.
+- **Validação disponível:** typecheck, lint, 53 testes frontend e build Vite aprovados. Windows/MSVC: cargo fmt --check, cargo check --locked, cargo test --locked (12 testes) e build Tauri --no-bundle aprovados. Build emite aviso não bloqueante de colisão do PDB bin/lib.
+- **Validação manual já realizada:** o mantenedor abriu npm run tauri:dev no Windows e confirmou janela nativa e dispositivos simulados. Arraste, lados da taskbar, escalas e monitores secundários ainda não foram confirmados manualmente.
 - **Critério de conclusão:** revisão manual de interações do tray/janela em Windows ainda pendente; CI do job Rust/Tauri também aguarda execução após push manual.
 
 ## Próximas ações
 
-1. Completar o checklist visual e de ciclo de vida em `desktop/README.md` (tray, close, single instance, monitores e DPI).
+1. Completar o checklist CR-18/CR-19 em `desktop/README.md` (arraste, bordas da taskbar, DPI, reabertura e restauração do tamanho).
 2. Revisar o job Windows/MSVC no GitHub Actions após push manual autorizado pelo mantenedor.
 3. Fazer revisão arquitetural antes de iniciar F2C.
 
 ## Resumo técnico F2B
 
-Rust/Tauri mantém tray e menu, controla visibilidade/foco/saída e encaminha uma segunda instância para a janela existente. React conserva controles e estado da sessão; a camada `src/platform` só oferece detecção Tauri e ocultação. `tauri-plugin-positioner` acompanha os eventos e fornece a âncora nativa, mas a aplicação calcula a posição final com coordenadas físicas e `Monitor::work_area()` para respeitar taskbar. A geometria fica em função Rust independente testada para limites, coordenadas negativas, escala física, taskbar superior e fallback.
+Rust/Tauri mantém tray/menu, visibilidade/foco/saída e encaminha uma segunda instância para a janela existente. React conserva controles e estado da sessão; `src/platform` oferece detecção Tauri, ocultação e arraste. `tauri-plugin-positioner` recebe eventos; a geometria em pixels físicos seleciona o monitor, infere a borda da taskbar e posiciona na `Monitor::work_area()`. A preferência de 420 × 720 pixels lógicos converte por DPI e é restaurada ao reabrir em monitor maior. Posição manual não muda enquanto visível.
 
-O job Windows/MSVC fica separado do job Node. `cargo fmt --check`, `cargo check --locked`, `cargo test --locked` (5 testes) e build Tauri sem bundle passaram localmente. Nenhum teste unitário pretende simular eventos nativos do tray. Sem perda de foco automática nesta fase: esse refinamento será reconsiderado após validação manual do menu e dos controles nativos.
+O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 12 testes Rust, 53 testes frontend, typecheck/lint/build Vite e build Tauri sem bundle passaram. Testes unitários não simulam eventos nativos; interação manual de tray/arraste e monitores continua pendente. Sem ocultação automática por perda de foco.
 
 ## Estado anterior
 

@@ -57,13 +57,13 @@ cargo test --locked
 ## Arquitetura e permissões
 
 - `src-tauri/src/lib.rs`: tray, menu, instância única, foco, ocultação e fechamento explícito.
-- `src-tauri/src/positioning.rs`: posicionamento em pixels físicos e testes para work areas, monitor secundário com coordenadas negativas, taskbar superior e fallback.
-- `src/platform/`: detecção do Tauri e ação de ocultar. Capability concede somente `core:window:allow-hide`.
+- `src-tauri/src/positioning.rs`: posicionamento por lado da taskbar, tamanho preferencial com DPI do monitor, clamp na work area e testes geométricos.
+- `src/platform/`: detecção Tauri, ocultação e arraste do painel. A capability concede `core:window:allow-hide` e `core:window:allow-start-dragging`.
 - React mantém toda a interface e usa `MockDeviceController`. Não há comando de iluminação nativo.
 
-`tauri-plugin-positioner` recebe os eventos do tray e atualiza a localização do ícone. A posição final é limitada à `work_area` do monitor para descontar a barra de tarefas; o helper do plugin limita à resolução total, então o app complementa essa etapa com a API de monitor do Tauri. Tray e monitores são consultados em coordenadas físicas para evitar conversão manual de DPI. Se o rect/monitor do tray não estiver disponível, o fallback fica no canto inferior direito da área útil primária. A barra de tarefas que se move enquanto a janela está aberta e troca de monitor após a abertura serão verificadas manualmente.
+`tauri-plugin-positioner` recebe os eventos do tray. O app identifica o monitor pela âncora física e compara `Monitor::size()` com `Monitor::work_area()`: taskbar superior abre abaixo do ícone, inferior acima, esquerda à direita e direita à esquerda. A janela fica a 10 px físicos do ícone e dentro da work area. O retângulo do tray já está em pixels físicos; `to_physical(1.0)` preserva os valores sem segunda escala. Se a âncora não corresponder a um monitor, o fallback usa a work area disponível.
 
-O popup não fecha ao perder foco; esse comportamento fica reservado porque competir com menus nativos e controles de seleção pode ocultar a janela durante uma interação. O tamanho é reduzido à área de trabalho disponível em monitores menores e CSS permite rolagem vertical.
+O popup não fecha ao perder foco para evitar conflitos com menus/seleção. Cada abertura oculta aplica o tamanho preferencial de 420 × 720 pixels lógicos convertido pelo DPI do monitor; em work area menor, reduz a janela e volta ao tamanho preferido ao reabrir num monitor maior. Só posiciona ao abrir, preservando a posição manual enquanto visível. O conteúdo permite rolagem vertical.
 
 ## Checklist de validação manual no Windows
 
@@ -79,4 +79,11 @@ O popup não fecha ao perder foco; esse comportamento fica reservado porque comp
 10. Testar navegação por teclado e reduced motion.
 11. Mover os controles simulados e confirmar que nenhuma lâmpada/dispositivo físico é alterado.
 
-O mantenedor confirmou no Windows que `npm run tauri:dev` abre a janela nativa e renderiza os dois dispositivos simulados. Isso valida a inicialização e a interface; o checklist de interação do tray, foco, escala e múltiplos monitores acima ainda aguarda validação manual. No ambiente de desenvolvimento, `cargo fmt --check`, `cargo check --locked`, `cargo test --locked` (5 testes) e `npm run tauri:build -- --no-bundle` passaram. O estado detalhado fica em `docs/PROJECT_STATUS.md`; a integração JSON Lines/backend segue reservada à F2C.
+12. Arrastar pelo cabeçalho e confirmar que Ocultar painel continua clicável sem mover a janela.
+13. Com o painel visível, usar Abrir por uma segunda instância e confirmar que a posição manual não muda.
+14. Ocultar e reabrir pelo tray; confirmar que a janela volta para perto do ícone.
+15. Repetir com taskbar superior/inferior/esquerda/direita, monitor secundário e escalas 100%, 125% e 150%; verificar 8–12 px de margem e nenhum corte.
+16. Reabrir após usar monitor pequeno e depois um maior; confirmar restauração dos 420 × 720 pixels lógicos quando couber.
+
+
+O mantenedor confirmou no Windows que `npm run tauri:dev` abre a janela nativa e renderiza os dispositivos simulados. A interação do arraste e o novo ancoramento ainda precisam de confirmação manual. Nesta revisão: cargo fmt/check passaram, 12 testes Rust, 53 testes frontend, typecheck/lint/build Vite e `npm run tauri:build -- --no-bundle` passaram. O build mostra aviso não bloqueante de colisão PDB entre bin/lib. CI remoto aguarda execução.
