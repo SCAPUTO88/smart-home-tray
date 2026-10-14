@@ -103,3 +103,15 @@
 - **Decisão:** representar lâmpada e fita com SVG/CSS em camadas. A lâmpada usa gradientes de vidro/metal, reflexos especulares estáticos e emissor interno; a fita usa emissores discretos sob difusor translúcido. Halo e ambiente usam gradientes radiais cuja cor e opacidade derivam exclusivamente do estado normalizado de prévia. Temperatura visual usa três âncoras: âmbar, neutra e azulada; power off zera todas as camadas emissivas.
 - **Motivo:** aumentar materialidade e leitura de luz sem adicionar runtime 3D ou alterar arquitetura de controle.
 - **Trade-offs:** SVG e gradientes mantêm o custo baixo e permitem emissão colorida; gradientes ainda repintam quando a cor muda. Para preservar fluidez, blur não é animado, não há loop contínuo, e `prefers-reduced-motion` reduz transições. A escala visual de temperatura não confirma a orientação física Tuya e exige validação no equipamento.
+
+## F2B — Tray como proprietário do ciclo de vida do popup
+
+**Estado:** adotada para a etapa F2B.
+
+**Decisão:** tray, menu, instância única, posição, foco, ocultação e saída são controlados por Rust/Tauri. A janela inicia oculta e permanece viva quando ocultada; fechar pela janela equivale a ocultar. O menu **Sair** é o único caminho explícito de término dentro da UI nativa. O React recebe apenas uma ação mínima de hide, permitida exclusivamente dentro do Tauri; no navegador o protótipo segue sem API nativa.
+
+**Posicionamento:** encaminhar eventos ao plugin oficial `tauri-plugin-positioner` e usar o retângulo físico do tray mais `Monitor::work_area()` para decidir a posição final. O helper do plugin limita a resolução do monitor inteiro e não desconta taskbar; o cálculo próprio pequeno e testável complementa esse comportamento para impedir que o painel cubra/ultrapasse a área útil. Instância única usa `tauri-plugin-single-instance` registrado primeiro, conforme a ordem recomendada.
+
+**Trade-offs:** a janela frameless e sem taskbar dá aparência de painel de bandeja e reduz controles nativos visíveis, por isso o botão acessível de ocultar e o menu de saída são explícitos. O estado React só persiste enquanto o processo está aberto; não há persistência em disco. A janela não fecha ao perder foco para evitar interações de menu/seleção interrompidas. Posicionamento é calculado em pixels físicos, e sua correção final depende de validação manual em Windows com layouts de taskbar e DPI diferentes.
+
+**Segurança e escopo:** capability limitada a `core:window:allow-hide`, CSP mantida, sem `withGlobalTauri`, shell, filesystem ou commands de iluminação. A UI segue exclusivamente no `MockDeviceController`; não há acesso ao backend Python, JSON Lines ou dispositivos.
