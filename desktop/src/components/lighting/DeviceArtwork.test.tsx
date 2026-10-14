@@ -50,6 +50,12 @@ describe('DeviceArtwork', () => {
     const artwork = screen.getByRole('img', { name: 'Ilustração Fita LED' })
     expect(artwork.style.getPropertyValue('--lamp-color')).toBe('rgb(0 128 128)')
     expect(artwork.style.getPropertyValue('--lamp-intensity')).toBe('0')
+    expect(artwork).toHaveClass('is-off')
+    expect(artwork.querySelectorAll('.strip-emitter i')).toHaveLength(14)
+    expect(artwork.querySelector('.strip-diffuser')).toBeInTheDocument()
+    expect(artwork.querySelector('.strip-specular')).toBeInTheDocument()
+    expect(artwork.querySelector('.strip-track')).toBeInTheDocument()
+    expect(artwork.querySelector('.strip-circuit')).toBeInTheDocument()
   })
 
   it('renders physical glass reflections and metallic base with instance-scoped SVG definitions', () => {
@@ -68,6 +74,14 @@ describe('DeviceArtwork', () => {
     expect(ids.length).toBeGreaterThan(0)
     expect(new Set(ids).size).toBe(ids.length)
     expect(first.querySelector('svg')).not.toBe(second.querySelector('svg'))
+  })
+
+  it('keeps emitters bound to selected HSV color at full intensity', () => {
+    render(<DeviceArtwork device={device('strip', 'led-strip', 'Fita LED')} state={state({ hsv: { hue: 270, saturation: 100, value: 100 } })} />)
+    const artwork = screen.getByRole('img', { name: /Fita LED/ })
+    expect(artwork.style.getPropertyValue('--lamp-color')).toBe('rgb(128 0 255)')
+    expect(artwork.style.getPropertyValue('--lamp-intensity')).toBe('1')
+    expect(artwork.querySelectorAll('.strip-emitter i')).toHaveLength(14)
   })
 
   it('renders one selected HSV color beneath the LED diffuser', () => {

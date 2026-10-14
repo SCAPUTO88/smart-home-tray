@@ -97,7 +97,7 @@ export default function LightingApp({ controller: suppliedController }: Lighting
             <DeviceArtwork device={device} state={state} />
             <div className="stage-caption">
               <span className="stage-mode"><Palette size={13} /> {state.mode === 'rgb' ? 'Espectro RGB' : 'Luz branca'}</span>
-              <span className="stage-value">{Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness)}% intensidade</span>
+              <span className="stage-value">{state.enabled ? Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness) + '% intensidade' : 'Desligada'}</span>
             </div>
           </motion.section>
         </AnimatePresence>

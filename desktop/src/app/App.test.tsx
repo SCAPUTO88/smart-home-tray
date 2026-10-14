@@ -72,6 +72,21 @@ describe('Smart Home Tray app', () => {
     expect(screen.getByRole('img', { name: /Ilustração Luz Mesa/ })).toHaveAttribute('data-powered', 'false')
   })
 
+  it('shows the strip as off without changing its configured RGB intensity', async () => {
+    const user = renderApp()
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    await user.click(screen.getByRole('button', { name: 'Fita LED' }))
+    await screen.findByRole('heading', { name: 'Fita LED' })
+
+    expect(screen.getByRole('slider', { name: 'Intensidade RGB' })).toHaveValue('70')
+    await user.click(screen.getByRole('button', { name: 'Desligar Fita LED' }))
+
+    expect(await screen.findByRole('button', { name: 'Ligar Fita LED' })).toHaveAttribute('aria-pressed', 'false')
+    const stripStage = await screen.findByRole('region', { name: 'Visualização Fita LED' })
+    await waitFor(() => expect(stripStage.querySelector('.stage-value')).toHaveTextContent('Desligada'))
+    expect(screen.getByRole('slider', { name: 'Intensidade RGB' })).toHaveValue('70')
+  })
+
   it('switches white and RGB controls by mode', async () => {
     const user = renderApp()
     await screen.findByRole('heading', { name: 'Luz Mesa' })
