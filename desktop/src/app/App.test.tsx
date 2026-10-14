@@ -156,4 +156,30 @@ describe('Smart Home Tray app', () => {
     fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '196' } })
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Offline'))
   })
+
+  it('tracks white temperature in the visible bulb color', async () => {
+    renderApp()
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Branco' }))
+    const artwork = screen.getByRole('img', { name: /Ilustração Luz Mesa/ })
+    const shell = screen.getByRole('main')
+    const temperature = await screen.findByRole('slider', { name: 'Temperatura de branco' })
+
+    fireEvent.change(temperature, { target: { value: '0' } })
+    expect(artwork.style.getPropertyValue('--lamp-color')).toBe('rgb(255 174 100)')
+    expect(shell.style.getPropertyValue('--accent-color')).toBe('rgb(255 174 100)')
+    fireEvent.change(temperature, { target: { value: '100' } })
+    expect(artwork.style.getPropertyValue('--lamp-color')).toBe('rgb(205 225 255)')
+    expect(shell.style.getPropertyValue('--accent-color')).toBe('rgb(205 225 255)')
+  })
+
+  it('removes the ambient card tint when the light is switched off', async () => {
+    const user = renderApp()
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    const shell = screen.getByRole('main')
+    expect(shell.style.getPropertyValue('--accent-intensity')).toBe('0.82')
+    await user.click(screen.getByRole('button', { name: 'Desligar Luz Mesa' }))
+    await screen.findByRole('button', { name: 'Ligar Luz Mesa' })
+    expect(shell.style.getPropertyValue('--accent-intensity')).toBe('0')
+  })
 })

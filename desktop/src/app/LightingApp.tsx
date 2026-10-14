@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 import type { DeviceController, LightingPatch, OperationScenario } from '../features/devices/types'
 import { useLightingSession } from '../features/devices/useLightingSession'
 import { createMockDeviceController } from '../mock/MockDeviceController'
-import { hsvToRgb, rgbCss } from '../lib/color'
+import { lightingIntensity, selectedLightingColor } from '../lib/lightingVisuals'
 import { DeviceArtwork } from '../components/lighting/DeviceArtwork'
 import { PowerButton } from '../components/controls/PowerButton'
 import { RangeControl } from '../components/controls/RangeControl'
@@ -44,14 +44,14 @@ export default function LightingApp({ controller: suppliedController }: Lighting
   }
 
   const state = view.preview
-  const rgb = hsvToRgb(state.hsv)
-  const accent = state.mode === 'rgb' ? rgbCss(rgb) : 'rgb(246 204 147)'
+  const accent = selectedLightingColor(state)
+  const ambientIntensity = lightingIntensity(state)
   const issueValue = (patch: LightingPatch) => issue(device.deviceId, patch, scenario)
   const statusText = operationLabel(view.status)
 
   return (
     <MotionConfig reducedMotion="user">
-      <main className="app-shell" style={{ '--accent-color': accent } as CSSProperties}>
+      <main className="app-shell" style={{ '--accent-color': accent, '--accent-intensity': ambientIntensity } as CSSProperties}>
         <header className="topbar">
           <Brand />
           <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>

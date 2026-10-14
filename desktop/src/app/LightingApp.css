@@ -1,9 +1,14 @@
+@property --lamp-color { syntax: "<color>"; inherits: true; initial-value: #70d9ff; }
+@property --lamp-intensity { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --accent-intensity { syntax: "<number>"; inherits: true; initial-value: 0; }
+
 #root {
   min-height: 100vh;
   min-height: 100dvh;
 }
 
 .app-shell {
+  --accent-intensity: 0;
   --accent-color: #70d9ff;
   width: min(100%, 460px);
   min-height: 100vh;
@@ -12,9 +17,9 @@
   padding: 23px 22px 18px;
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 51% 28%, color-mix(in srgb, var(--accent-color) 7%, transparent), transparent 46%),
+    radial-gradient(ellipse at 51% 28%, color-mix(in srgb, var(--accent-color) calc(var(--accent-intensity) * 8%), transparent), transparent 46%),
     linear-gradient(160deg, #0b111b 0%, #080d15 50%, #0b1019 100%);
-  transition: background 420ms ease;
+  transition: background 420ms ease, --accent-intensity 300ms ease;
 }
 
 .app-shell--loading { display: flex; flex-direction: column; }
@@ -38,22 +43,37 @@
 .device-tab.is-selected { color: #e6f4ff; background: #182330; }
 .tab-indicator { position: absolute; inset: auto 17px -4px; height: 1px; background: var(--accent-color); box-shadow: 0 0 8px var(--accent-color); }
 .device-stage { position: relative; height: 236px; margin: 5px -12px 0; overflow: hidden; }
-.device-art { position: absolute; inset: 0; display: grid; place-items: center; isolation: isolate; }
-.art-glow { position: absolute; z-index: -1; width: 218px; height: 190px; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--lamp-color) calc(var(--lamp-intensity) * 46%), transparent) 0%, color-mix(in srgb, var(--lamp-color) calc(var(--lamp-intensity) * 17%), transparent) 28%, transparent 70%); filter: blur(15px); opacity: calc(.18 + var(--lamp-intensity) * .82); transition: opacity .6s ease, background .4s ease; }
-.bulb-svg { width: 183px; height: 207px; overflow: visible; filter: drop-shadow(0 12px 22px #0008); transition: filter .5s ease, opacity .5s ease; }
-.bulb-glass { stroke: color-mix(in srgb, var(--lamp-color) 42%, #cad9e9); stroke-width: 1.3; transition: fill .42s ease, stroke .42s ease; }
-.bulb-reflection { fill: color-mix(in srgb, var(--lamp-color) 88%, white); opacity: calc(var(--lamp-intensity) * .28); filter: blur(13px); transition: opacity .45s ease; }
-.bulb-core { fill: none; stroke: color-mix(in srgb, var(--lamp-color) 85%, white); stroke-width: 3; stroke-linecap: round; opacity: calc(var(--lamp-intensity) * .82); filter: drop-shadow(0 0 6px var(--lamp-color)); transition: opacity .4s ease, stroke .4s ease; }
-.bulb-neck { fill: url(#bulb-base); stroke: #aab8c9; stroke-opacity: .45; stroke-width: 1; }
-.bulb-screw { fill: none; stroke: #94a2b5; stroke-width: 2; stroke-linecap: round; }
-.bulb-foot { fill: #77869a; }
-.bulb-glass, .bulb-core, .bulb-reflection { opacity: calc(.46 + var(--lamp-intensity) * .54); }
-.device-art--led-strip .art-glow { width: 255px; height: 104px; }
-.strip-art { position: relative; display: grid; place-items: center; width: 274px; height: 100px; transform: rotate(-7deg); }
-.strip-track { position: relative; display: grid; grid-template-columns: repeat(14, 1fr); align-items: center; gap: 5px; width: 252px; height: 37px; padding: 5px 8px; border: 1px solid #a9c2d44d; border-radius: 13px; background: linear-gradient(180deg, #dbe8f31b, #63788e20 56%, #101925); box-shadow: 0 17px 24px #0008, inset 0 1px #ffffff18; }
-.strip-track::before { position: absolute; inset: 16px -10px auto; height: 3px; border-radius: 50%; background: var(--lamp-color); content: ''; opacity: calc(var(--lamp-intensity) * .68); filter: blur(10px); transition: opacity .4s ease, background .4s ease; }
-.strip-segment { position: relative; z-index: 1; height: 16px; border: 1px solid color-mix(in srgb, var(--lamp-color) 65%, #fff); border-radius: 5px; background: color-mix(in srgb, var(--lamp-color) calc(var(--lamp-intensity) * 85%), #242f3d); box-shadow: 0 0 9px color-mix(in srgb, var(--lamp-color) calc(var(--lamp-intensity) * 74%), transparent); transition: background .35s ease, box-shadow .35s ease; }
-.strip-reflection { position: absolute; top: 70px; width: 205px; height: 16px; border-radius: 50%; background: color-mix(in srgb, var(--lamp-color) 25%, transparent); filter: blur(17px); opacity: calc(var(--lamp-intensity) * .72); }
+.device-art { position: absolute; inset: 0; display: grid; place-items: center; isolation: isolate; --lamp-color-transition: 460ms; --lamp-light-transition: 260ms; transition: --lamp-color var(--lamp-color-transition) ease, --lamp-intensity var(--lamp-light-transition) ease; }
+.art-light { position: absolute; z-index: -1; pointer-events: none; border-radius: 50%; opacity: var(--lamp-intensity); transition: opacity var(--lamp-light-transition) ease; }
+.art-light--ambient { width: 330px; height: 205px; background: radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--lamp-color) 26%, transparent) 0%, color-mix(in srgb, var(--lamp-color) 14%, transparent) 27%, transparent 72%); }
+.art-light--halo { width: 248px; height: 188px; background: radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--lamp-color) 36%, transparent) 0%, color-mix(in srgb, var(--lamp-color) 19%, transparent) 23%, color-mix(in srgb, var(--lamp-color) 7%, transparent) 47%, transparent 74%); }
+.device-art--led-strip .art-light--ambient { width: 350px; height: 126px; }
+.device-art--led-strip .art-light--halo { width: 300px; height: 92px; }
+.bulb-svg { width: 183px; height: 207px; overflow: visible; }
+.bulb-contact-shadow { fill: #000; opacity: .58; }
+.bulb-inner-envelope { opacity: calc(var(--lamp-intensity) * .76); transition: opacity var(--lamp-light-transition) ease; }
+.bulb-glass { stroke-width: 1.15; }
+.bulb-neck { stroke: #dbe5f1; stroke-opacity: .4; stroke-width: 1; }
+.bulb-speculars { pointer-events: none; }
+.bulb-side-highlight { fill: none; stroke: #fff; stroke-width: 3.2; stroke-linecap: round; opacity: .68; }
+.bulb-specular-arc { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; opacity: .82; }
+.bulb-soft-reflection { fill: none; stroke: #d9edff; stroke-width: 1.2; stroke-linecap: round; opacity: .54; }
+.bulb-reflection { fill: color-mix(in srgb, var(--lamp-color) 24%, #fff); opacity: .7; transition: fill var(--lamp-color-transition) ease; }
+.bulb-lower-reflection { fill: none; stroke: #fff; stroke-width: 1.2; stroke-linecap: round; opacity: .28; }
+.bulb-emitter { opacity: calc(var(--lamp-intensity) * .84); transition: opacity var(--lamp-light-transition) ease; }
+.bulb-filament { fill: none; stroke: color-mix(in srgb, var(--lamp-color) 68%, #fff); stroke-width: 2.1; stroke-linecap: round; opacity: calc(var(--lamp-intensity) * .95); transition: stroke var(--lamp-color-transition) ease, opacity var(--lamp-light-transition) ease; }
+.bulb-neck-rim { fill: none; stroke: #f4f8ff; stroke-width: .9; opacity: .36; }
+.bulb-screw { fill: none; stroke: #293647; stroke-width: 1.15; stroke-linecap: round; opacity: .74; }
+.bulb-foot-highlight { fill: #f7fbff; opacity: .62; }
+.strip-art { position: relative; display: grid; place-items: center; width: 284px; height: 106px; transform: perspective(650px) rotateX(8deg) rotateZ(-5deg); }
+.strip-track { position: relative; width: 258px; height: 39px; border: 1px solid #b6c6d77d; border-radius: 10px; background: linear-gradient(180deg, #eaf4ff24, #8b9aab1c 46%, #2a3543 100%); box-shadow: 0 13px 16px #0009, inset 0 1px #fff8, inset 0 -4px 8px #050a11a8; }
+.strip-circuit { position: absolute; inset: auto 7px 4px; height: 7px; border: 1px solid #8b9cad4a; border-radius: 3px; background: linear-gradient(180deg, #708296, #253142 48%, #101722); box-shadow: inset 0 1px #fff3; }
+.strip-emitters { position: absolute; inset: 8px 10px 12px; display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); align-items: center; gap: 5px; }
+.strip-emitter { display: grid; place-items: center; height: 15px; border: 1px solid #dce5ef57; border-radius: 3px; background: linear-gradient(145deg, #f5f8fc, #8a9aab 54%, #344052); box-shadow: inset 0 1px #fff9, 0 1px 2px #0009; }
+.strip-emitter i { display: block; width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--lamp-color) calc(var(--lamp-intensity) * 86%), #263342); box-shadow: 0 0 7px color-mix(in srgb, var(--lamp-color) calc(var(--lamp-intensity) * 72%), transparent); opacity: calc(.16 + var(--lamp-intensity) * .84); transition: background var(--lamp-color-transition) ease, box-shadow var(--lamp-color-transition) ease, opacity var(--lamp-light-transition) ease; }
+.strip-diffuser { position: absolute; inset: 0; border: 1px solid #eef6ff7a; border-radius: 10px; background: linear-gradient(174deg, #ffffff5c 0%, #eaf4ff20 18%, #9eb1c51a 54%, #202c3a55 100%); box-shadow: inset 0 1px 2px #fff9, inset 0 -2px 3px #07101b75; pointer-events: none; }
+.strip-specular { position: absolute; top: 2px; right: 12px; left: 12px; height: 1px; border-radius: 50%; background: #fff; opacity: .62; pointer-events: none; }
+.strip-reflection { position: absolute; top: 66px; width: 236px; height: 25px; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--lamp-color) 38%, transparent), transparent 72%); opacity: calc(var(--lamp-intensity) * .76); transition: opacity var(--lamp-light-transition) ease; }
 .art-label { position: absolute; bottom: 10px; display: flex; align-items: center; gap: 6px; color: #748399; font-size: 8px; font-weight: 650; letter-spacing: .15em; text-transform: uppercase; }
 .art-label span:last-child { color: var(--lamp-color); font-size: 7px; text-shadow: 0 0 8px var(--lamp-color); }
 .stage-caption { position: absolute; right: 10px; bottom: 8px; left: 10px; display: flex; justify-content: space-between; color: #748297; font-size: 9px; }
