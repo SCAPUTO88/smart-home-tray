@@ -95,3 +95,23 @@
 - **Decisão:** o mock e a sessão acompanham a precedência de intenção por dispositivo e por campo; HSV é reconciliado por canal. Respostas assíncronas só mesclam valores dos campos ainda pertencentes àquela operação. A prévia aplica patches pendentes sobre o último estado confirmado. Cancelamento/erro restaura a prévia dos campos afetados; offline invalida operações pendentes e mantém os valores conhecidos com qualidade offline. Estado desconhecido não é promovido a confirmado sem readback que o confirme.
 - **Motivo:** preservar comandos independentes e evitar que um resultado atrasado ou uma falha pareça uma atualização confirmada.
 - **Trade-offs:** o modelo visual acompanha intenções por campo sem ordenar ou agendar comandos no frontend. A integração JSON Lines futura deve usar respostas de readback do backend e continuar delegando ordenação/coalescing ao `CommandScheduler` Python. O seletor visual Branco/RGB precisará ser traduzido para uma operação de iluminação suportada; o protocolo não possui comando autônomo de modo.
+
+
+### D-014 — Renderização de iluminação material na F2A.1
+
+- **Estado:** aprovada para F2A.1.
+- **Decisão:** representar lâmpada e fita com SVG/CSS em camadas. A lâmpada usa gradientes de vidro/metal, reflexos especulares estáticos e emissor interno; a fita usa emissores discretos sob difusor translúcido. Halo e ambiente usam gradientes radiais cuja cor e opacidade derivam exclusivamente do estado normalizado de prévia. Temperatura visual usa três âncoras: âmbar, neutra e azulada; power off zera todas as camadas emissivas.
+- **Motivo:** aumentar materialidade e leitura de luz sem adicionar runtime 3D ou alterar arquitetura de controle.
+- **Trade-offs:** SVG e gradientes mantêm o custo baixo e permitem emissão colorida; gradientes ainda repintam quando a cor muda. Para preservar fluidez, blur não é animado, não há loop contínuo, e `prefers-reduced-motion` reduz transições. A escala visual de temperatura não confirma a orientação física Tuya e exige validação no equipamento.
+
+## F2B — Tray como proprietário do ciclo de vida do popup
+
+**Estado:** adotada para a etapa F2B.
+
+**Decisão:** tray, menu, instância única, posição, foco, ocultação e saída são controlados por Rust/Tauri. A janela inicia oculta e continua viva quando ocultada; fechar a janela equivale a ocultar. O menu **Sair** é o encerramento explícito. React recebe ações mínimas de hide e startDragging, somente no Tauri; o navegador não usa APIs nativas.
+
+**Posicionamento:** encaminhar eventos pelo plugin `tauri-plugin-positioner`, usar o retângulo físico do tray, os limites do monitor e `Monitor::work_area()` para inferir o lado da taskbar. O popup fica 10 px físicos na direção oposta à barra, e posição/tamanho são limitados à work area. O tamanho lógico de 420 × 720 converte pelo scale factor do monitor a cada abertura, permitindo restauração após monitores menores. Só reposiciona quando oculto. O plugin limita à resolução total, não desconta taskbar; a geometria local complementa isso. Single instance continua registrada primeiro.
+
+**Trade-offs:** a janela frameless e sem taskbar parece painel de bandeja e reduz controles nativos; por isso o botão acessível de ocultar, cursor de arraste no cabeçalho e menu Sair são explícitos. Estado React só persiste no processo aberto; não há persistência em disco. A janela não fecha ao perder foco para evitar interrupções em menus/seleção. Tray event rect já é físico e usa conversão 1.0; scale factor é aplicado somente ao tamanho lógico preferencial. Taskbar auto-hide pode não criar diferença na work area; a orientação então depende da âncora disponível. Layouts/DPI ainda precisam de inspeção manual no Windows.
+
+**Segurança e escopo:** capabilities limitadas a `core:window:allow-hide` e `core:window:allow-start-dragging`, CSP mantida, sem `withGlobalTauri`, shell, filesystem ou comandos de iluminação. A UI segue no `MockDeviceController`, sem backend Python, JSON Lines ou dispositivos.

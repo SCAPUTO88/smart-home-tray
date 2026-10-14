@@ -1,53 +1,89 @@
-# Smart Home Tray - frontend
+# Smart Home Tray — desktop
 
-Prototipo visual da Fase 2, Etapa F2A. A interface roda em React/TypeScript no navegador e usa exclusivamente `MockDeviceController`; nenhum equipamento, backend Python, processo externo, socket, rede local, cloud ou API nativa Tauri e consultado.
+A aplicação usa React/Vite para a interface, Tauri 2/Rust para a janela e o system tray, e exclusivamente `MockDeviceController` para os controles. Não inicia o backend Python, não abre JSON Lines, não acessa LAN/cloud e não controla dispositivos físicos.
 
-## Requisitos
+## Pré-requisitos no Windows
 
-- Node.js 24 LTS e npm 11.
-- Para abrir a janela desktop Tauri no Windows: Rust estavel, Microsoft C++ Build Tools com “Desktop development with C++” e WebView2. Consulte [pre-requisitos oficiais do Tauri 2](https://v2.tauri.app/start/prerequisites/).
+Instale os pré-requisitos oficiais do Tauri 2:
 
-## Executar no Windows
+- Node.js 24 e npm 11.
+- Rust estável com o alvo MSVC (x86_64-pc-windows-msvc).
+- Visual Studio Build Tools com **Desktop development with C++**, incluindo o Windows SDK.
+- Microsoft Edge WebView2 Runtime. Ele já vem com versões atuais do Windows 10/11; instale o Evergreen Runtime se estiver ausente.
 
-No PowerShell, a partir desta pasta:
+Consulte [Tauri 2 — prerequisites](https://v2.tauri.app/start/prerequisites/). O projeto exige Rust 1.90 ou posterior (edition 2024).
+
+## Executar
+
+No PowerShell, dentro de `desktop/`:
 
 ```powershell
 npm ci
 npm run dev
 ```
 
-`npm run dev` abre o prototipo no navegador em `http://localhost:5173`. O comando Tauri usa um servidor dedicado sem abrir outra janela. Para executar na janela desktop (requer os pre-requisitos nativos):
+Isso inicia somente a versão de navegador em `http://localhost:5173`. Ela continua útil para validar a interface; o botão nativo **Ocultar painel** não aparece no navegador.
+
+Para executar a aplicação desktop:
 
 ```powershell
 npm run tauri:dev
 ```
 
-## Verificacoes
+A janela começa oculta. Use o clique esquerdo no ícone de bandeja para abrir/ocultar, o menu de contexto para **Abrir Smart Home Tray** ou **Sair**, ou o botão acessível **Ocultar painel** na interface. Fechar a janela pelo sistema oculta o painel e preserva o WebView/estado React. Uma segunda execução traz a instância existente para frente.
+
+## Testes e compilação
+
+No diretório `desktop/`:
 
 ```powershell
 npm run typecheck
 npm run lint
 npm test
 npm run build
+npm run tauri:build -- --no-bundle
 ```
 
-`npm run lint` usa Oxlint, um linter rapido compativel com TypeScript/React. `npm run build` valida TypeScript e gera `dist/`.
+No diretório `desktop/src-tauri/`:
 
-## Mock e estado
+```powershell
+cargo fmt --all -- --check
+cargo check --locked
+cargo test --locked
+```
 
-`MockDeviceController` fornece Luz Mesa e Fita LED com IDs ficticios. A lampada declara energia, RGB, brilho branco e temperatura; a fita declara apenas energia e RGB. O painel “Cenario de teste” permite simular sucesso, atraso, cancelamento, erro e dispositivo offline. A demora e deterministica; os testes podem configura-la sem espera aleatoria.
+`npm run build` valida e compila Vite, mas não substitui o build Rust/Tauri. `npm run tauri:build -- --no-bundle` valida a aplicação Windows sem criar instalador/empacotamento. O workflow `.github/workflows/desktop-tests.yml` mantém o job Node e adiciona um job Windows/MSVC para fmt, check, testes Rust e build sem bundle; ele ainda precisa executar no GitHub Actions para evidenciar a compilação nativa desta etapa.
 
-`useLightingSession` mantem por dispositivo o patch solicitado, a previa que a interface mostra imediatamente, as operacoes pendentes, o ultimo estado confirmado pelo controlador e o erro/resultado. A precedencia e controlada por campo e por canal HSV. Cada resposta atualiza somente os campos que ainda pertencem a sua intencao, fazendo merge do readback sem desfazer alteracoes independentes. Durante pending a previa combina valores confirmados e pedidos ativos; apos cancelamento/erro ela retorna aos ultimos valores confirmados. Offline preserva esses valores e marca qualidade/conexao como offline. Qualidade `unknown` nao e promovida artificialmente.
+## Arquitetura e permissões
 
-## Relacao com o backend
+- `src-tauri/src/lib.rs`: tray, menu, instância única, foco, ocultação e fechamento explícito.
+- `src-tauri/src/positioning.rs`: posicionamento por lado da taskbar, tamanho preferencial com DPI do monitor, clamp na work area e testes geométricos.
+- `src/platform/`: detecção Tauri, ocultação e arraste do painel. A capability concede `core:window:allow-hide` e `core:window:allow-start-dragging`.
+- React mantém toda a interface e usa `MockDeviceController`. Não há comando de iluminação nativo.
 
-Os tipos cobrem identidade (`deviceId`, `name`), capabilities, conexao, estado, qualidade e HSV normalizado compativeis conceitualmente com os contratos publicos da Etapa D. O contrato do backend usa allowlist para nao expor configuracao privada; este frontend nao copia `DeviceConfig`, TOML, DPS ou credenciais.
+`tauri-plugin-positioner` recebe os eventos do tray. O app identifica o monitor pela âncora física e compara `Monitor::size()` com `Monitor::work_area()`: taskbar superior abre abaixo do ícone, inferior acima, esquerda à direita e direita à esquerda. A janela fica a 10 px físicos do ícone e dentro da work area. O retângulo do tray já está em pixels físicos; `to_physical(1.0)` preserva os valores sem segunda escala. Se a âncora não corresponder a um monitor, o fallback usa a work area disponível.
 
-A integracao futura substituira o controlador simulado por um adapter Tauri para comandos JSON Lines. Nao ha IPC real nem sidecar nesta branch. O scheduler de comandos continua pertencendo ao backend; o frontend nao implementa outro scheduler. Branco/RGB e um seletor visual, nao um comando IPC existente: o adapter devera associar a selecao a uma operacao de iluminacao suportada, sem inventar um comando de troca de modo.
+O popup não fecha ao perder foco para evitar conflitos com menus/seleção. Cada abertura oculta aplica o tamanho preferencial de 420 × 720 pixels lógicos convertido pelo DPI do monitor; em work area menor, reduz a janela e volta ao tamanho preferido ao reabrir num monitor maior. Só posiciona ao abrir, preservando a posição manual enquanto visível. O conteúdo permite rolagem vertical.
 
-## Limites
+## Checklist de validação manual no Windows
 
-- IDs, estados e respostas sao demonstrativos e nao persistem apos recarregar a pagina.
-- A cor branca por temperatura e apenas uma aproximacao visual; o percentual nao indica direcao fisica quente/fria.
-- Nenhuma validacao foi feita em lampadas reais.
-- Rust/Cargo nao estavam instalados no ambiente de implementacao; a configuracao Tauri foi gerada, mas o alvo nativo nao foi compilado.
+1. Iniciar com `npm run tauri:dev` e confirmar que a janela inicia oculta.
+2. Confirmar o ícone e tooltip **Smart Home Tray** na bandeja.
+3. Clicar no ícone com o botão esquerdo para abrir; clicar novamente para ocultar.
+4. Usar **Ocultar painel** e reabrir, confirmando que seleção e controles permanecem.
+5. Abrir pelo menu contextual e confirmar foco; testar **Sair** e confirmar remoção do ícone/processo.
+6. Executar uma segunda instância e confirmar que a primeira abre sem tray duplicado.
+7. Repetir com tray em monitor secundário e taskbar inferior, superior ou lateral quando disponível.
+8. Repetir com escalas 100% e 125%, se disponíveis; verificar ausência de corte fora da work area.
+9. Diminuir a área útil/resolução e confirmar que a janela cabe e o conteúdo rola.
+10. Testar navegação por teclado e reduced motion.
+11. Mover os controles simulados e confirmar que nenhuma lâmpada/dispositivo físico é alterado.
+
+12. Arrastar pelo cabeçalho e confirmar que Ocultar painel continua clicável sem mover a janela.
+13. Com o painel visível, usar Abrir por uma segunda instância e confirmar que a posição manual não muda.
+14. Ocultar e reabrir pelo tray; confirmar que a janela volta para perto do ícone.
+15. Repetir com taskbar superior/inferior/esquerda/direita, monitor secundário e escalas 100%, 125% e 150%; verificar 8–12 px de margem e nenhum corte.
+16. Reabrir após usar monitor pequeno e depois um maior; confirmar restauração dos 420 × 720 pixels lógicos quando couber.
+
+
+O mantenedor confirmou no Windows que `npm run tauri:dev` abre a janela nativa e renderiza os dispositivos simulados. A interação do arraste e o novo ancoramento ainda precisam de confirmação manual. Nesta revisão: cargo fmt/check passaram, 12 testes Rust, 53 testes frontend, typecheck/lint/build Vite e `npm run tauri:build -- --no-bundle` passaram. O build mostra aviso não bloqueante de colisão PDB entre bin/lib. CI remoto aguarda execução.

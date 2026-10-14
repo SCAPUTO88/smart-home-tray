@@ -93,3 +93,24 @@ A UI depende dos modelos normalizados em `desktop/src/features/devices/types.ts`
 O seletor visual Branco/RGB é uma abstração de apresentação. O protocolo JSON Lines não expõe uma operação pública isolada de troca de modo; o adapter futuro deverá traduzir essa seleção junto com uma operação de iluminação suportada, sem criar um comando IPC inexistente.
 
 Testes automáticos usam Vitest, jsdom e React Testing Library. O workflow `.github/workflows/desktop-tests.yml` valida frontend isoladamente em Windows/Node 24. Nesta etapa a configuração Rust foi gerada, mas a compilação Tauri depende de Rust/Cargo e C++ Build Tools; nenhum equipamento físico, backend Python, LAN ou serviço cloud foi acessado.
+
+
+### Representação visual F2A.1
+
+O protótipo mantém a fronteira visual da F2A: `DeviceArtwork` recebe o dispositivo selecionado e o `DeviceState` de prévia, sem importar controladores ou detalhes de reconciliação. Gradientes e clip paths SVG descrevem vidro, reflexos e base metálica da lâmpada; CSS posiciona camadas radiais de glow e estrutura a fita com PCB, emissores e difusor. Cor e intensidade derivam de HSV/Value ou temperatura/brilho branco normalizados; power off define intensidade visual zero. Temperatura é representada visualmente como quente em 0, neutra em 50 e fria em 100, sem afirmar que a orientação corresponde ao hardware Tuya.
+
+A representação usa gradientes, clip paths, opacidade e transições CSS. Não há WebGL, loop de animação de renderização nem blur animado; filtros de desfoque não são usados nas camadas dinâmicas. `prefers-reduced-motion` reduz transições CSS e o `MotionConfig` respeita a preferência do sistema. Isso limita repaints às mudanças de estado e mantém o custo proporcional à arte visível. A revisão depende de navegador manual; testes DOM não validam fidelidade de renderização.
+
+## Fase 2, Etapa F2B — desktop Windows e system tray
+
+A composição mantém a fronteira da F2A: React/Vite e `MockDeviceController` são proprietários da UI e do estado visual. Rust/Tauri é proprietário do tray, menu nativo, janela, posicionamento, foco, single instance e encerramento explícito. A F2B não inicia backend, sidecar ou scheduler e não abre JSON Lines, LAN ou cloud.
+
+O app registra `tauri-plugin-single-instance` primeiro; uma segunda invocação reutiliza a janela da primeira instância. O setup cria um ícone Tauri com tooltip e menu nativo Abrir/Sair. Clique esquerdo alterna visibilidade em `MouseButtonState::Up`; no Windows, quando `DoubleClick` esquerdo chega antes do release final, a política consome somente esse `Click/Up` pendente. Assim, o primeiro clique do duplo executa a ação imediatamente e o segundo não a desfaz; cliques independentes continuam alternando, sem debounce ou espera. MouseDown e botão direito não alternam. Menu Abrir/Sair permanece separado. A janela é criada oculta, sem decoração, sem fullscreen, sem taskbar e sem always-on-top. CloseRequested vira hide para preservar o WebView; somente Sair marca encerramento explícito e chama `app.exit`.
+
+A camada `desktop/src/platform` detecta `isTauri()` e oferece hide e `startDragging()` somente no Tauri. O cabeçalho é a área de arraste, com controles interativos excluídos; navegador não chama APIs nativas. Capability limitada a `core:window:allow-hide` e `core:window:allow-start-dragging`; `withGlobalTauri` permanece desativado e CSP preservada.
+
+O plugin oficial `tauri-plugin-positioner` recebe eventos e mantém a âncora do tray. O app seleciona o monitor pelo centro físico do retângulo, infere o lado da taskbar pela diferença entre limites do monitor e `Monitor::work_area()`, e posiciona a janela 10 px físicos na borda apropriada. `positioning.rs` limita a posição/tamanho à work area e cobre coordenadas negativas. O retângulo do tray já é físico (`to_physical(1.0)` preserva os valores); `scale_factor` converte somente o tamanho preferencial 420 × 720 lógico. A cada abertura oculta, reaplica a preferência e reduz se preciso, restaurando-a ao voltar a um monitor maior. Não reposiciona o painel enquanto está visível. Sem monitor para a âncora, usa fallback na work area disponível.
+
+A perda de foco não oculta automaticamente o popup nesta fase. Essa opção pode conflitar com menus contextuais e controles nativos e será reavaliada depois da validação manual. O frontend tem scroll vertical em janelas baixas e reduz a arte para não exigir uma altura mínima fixa.
+
+O workflow desktop mantém Node 24 e adiciona um job Windows/MSVC com Rust estável e cache para formatação, checagem, testes Rust e build Tauri sem bundle. Um `npm run build` só valida Vite e não serve como evidência do app nativo. F2B não inclui integração real, persistência, inicialização com Windows, assinatura, update ou publicação; integração JSON Lines permanece na F2C.

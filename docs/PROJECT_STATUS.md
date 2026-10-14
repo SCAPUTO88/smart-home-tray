@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 - Etapa F2A (prototipo visual interativo; checkpoint em andamento).
+- **Fase:** 2 — F2B (desktop Windows e system tray; revisão arquitetural local, validação manual dos novos eventos pendente).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** Etapa D integrada em develop pela PR #11. O prototipo F2A esta publicado na PR #13, direcionada a develop. Esta revisao local cobre CR-13/CR-14; 32 testes frontend e 177 testes backend passaram localmente apos as correcoes. Nenhuma validacao fisica foi realizada.
+- **Progresso:** PR #16 (CR-15) está integrada em origin/develop no merge e307e69. F2B inclui tray, ciclo de vida, instância única, arraste no cabeçalho e popup ancorado à borda da taskbar com tamanho preferencial por monitor/DPI. Typecheck, lint, 53 testes frontend, build Vite, cargo fmt/check, 12 testes Rust e build Tauri sem bundle passaram localmente. A abertura/renderização mock foi confirmada pelo mantenedor; tray/arraste e layouts multimonitor ainda precisam de validação manual.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -114,6 +114,14 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 2. Validar compilacao Tauri depois de instalar Rust/Cargo e Microsoft C++ Build Tools.
 3. Concluir a revisao arquitetural de CR-13/CR-14 e, depois da aprovacao do mantenedor, publicar os commits locais na branch da PR #13 direcionada a develop.
 
+## Revisão de código F2A.1 — CR-15
+
+- PR #16 foi publicada na branch feature/realistic-lighting-visuals; o mantenedor realizou revisão visual manual da gravação, aprovou o refinamento da lâmpada e identificou emissão residual branca na fita LED após Power OFF.
+- Causa visual: cápsulas quase brancas e ponto interno com opacidade mínima de 16% continuavam visíveis como emissores mesmo com intensidade normalizada zero.
+- Correção local CR-15: cápsulas de LEDs agora usam acabamento escuro metálico; ponto emissor usa a cor RGB já normalizada por HSV/Value e desaparece com opacidade zero quando desligado. Reflexos do difusor, specular, trilha e circuito seguem materiais visíveis sem emissão ativa. A legenda passa a dizer “Desligada” sem zerar o valor mantido no slider.
+- Testes frontend adicionados para desligamento e preservação do corpo físico, cor HSV em intensidade total e legenda sem alterar o percentual configurado. Os testes DOM/CSS validam estado e estrutura, mas não substituem nova inspeção visual da gravação após CR-15.
+- Verificações após CR-15: typecheck e lint aprovados; 46 testes frontend passaram; build Vite e git diff --check aprovados. Sem alterações no backend, nos contratos, no scheduler ou na reconciliação. Hardware e LAN não foram acessados.
+
 ## Checkpoint F2A - prototipo visual interativo
 
 - Estado: interface React/TypeScript demonstravel no navegador, camada Tauri 2 preparada e todos os dispositivos exclusivamente simulados.
@@ -134,3 +142,43 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Contrato futuro: Branco/RGB continua sendo abstracao visual; JSON Lines nao tem comando autonomo de modo. Adapter futuro precisa traduzir a selecao em operacao de iluminacao suportada, sem inventar comando IPC. Nenhum adapter Tauri/JSON Lines ou scheduler frontend foi implementado.
 - Testes adicionados em `desktop/src/features/devices/useLightingSession.test.tsx`, `desktop/src/mock/MockDeviceController.test.ts` e `desktop/src/app/App.test.tsx`. Typecheck, Oxlint, 32 testes frontend, build Vite e `rtk py -m pytest backend/tests -q` (177 passed) passaram.
 - A validacao continua exclusivamente simulada; nenhuma lampada, runtime backend de controle, LAN ou cloud foi acessada. Revisao visual manual e compilacao nativa Tauri permanecem pendentes.
+
+
+## F2A.1 — polimento visual realista
+
+- Estado: PR #16 (F2A.1 / CR-15) integrada em `origin/develop` pelo merge `e307e69`. O mantenedor aprovou a lâmpada e validou visualmente a correção final da fita.
+- `DeviceArtwork` desenha lâmpada com envelope de vidro em gradientes SVG, emissor, reflexos especulares recortados, base metálica e IDs SVG isolados por instância. A fita usa trilha dimensional, emissores individuais sob difusor translúcido e reflexão ambiente.
+- Cor e intensidade vêm apenas de `DeviceState` da prévia: HSV controla RGB, Value/brilho controla emissão e power off zera a emissão. Temperatura visual interpola âmbar, neutro e azulado. A direção do controle de temperatura Tuya continua sem validação física.
+- Glow usa camadas de gradientes radiais e transições de cor/opacidade; não há filtros blur animados. `prefers-reduced-motion` reduz transições CSS e animações existentes via MotionConfig. O acento do cartão segue a cor e intensidade da prévia.
+- Verificações: typecheck, lint, 44 testes frontend, build Vite e `git diff --check` passaram. Nenhum dispositivo, backend runtime, LAN ou cloud foi acessado.
+- Limitação do checkpoint visual original: não havia janela de navegador para screenshots automatizadas. Depois, o mantenedor revisou manualmente a gravação, aprovou a lâmpada e confirmou visualmente a correção CR-15 da fita antes da integração da PR #16 em e307e69.
+# Smart Home Tray — Project Status
+
+## Checkpoint F2B — PR #17: CR-16/18/19 publicadas, CR-17 concluída localmente
+
+- **Branch:** feature/windows-system-tray, base origin/develop com a PR #16 integrada em e307e69. A PR #17 está aberta e aponta para develop.
+- **Correção já publicada:** CR-16 e CR-18/CR-19 estão no head publicado 70ce1e4 da PR #17. Não são alterações locais pendentes.
+- **CR-17 local:** o Windows traduz a sequência de duplo clique em Click/Up, DoubleClick, Click/Up depois do primeiro Click/Up. A política mantém o toggle no release do clique simples e suprime somente o release final após DoubleClick esquerdo. Não há debounce temporal; MouseDown, botão direito e duplo clique direito não alternam. Menu Abrir/Sair segue em callbacks independentes.
+- **Testes sintéticos:** três regressões cobrem cliques simples independentes, sequência de duplo clique e eventos de botão direito/Down. Esses testes exercitam a política Rust; não simulam o tray nativo do Windows.
+- **Validação local desta revisão:** cargo fmt --check, cargo check --locked, cargo test --locked (15 testes Rust), typecheck, lint, 53 testes frontend, build Vite e build Tauri sem bundle passaram.
+- **CI da PR #17 no head publicado 70ce1e4:** workflow Desktop frontend/Windows shell run #8 passou nos jobs Node 24 e Windows MSVC; workflow Backend tests run #24 passou em Python 3.12 e 3.14. Esses resultados antecedem CR-17; o commit local de CR-17 precisará de CI após publicação manual.
+- **Validação manual:** o mantenedor já confirmou abertura nativa e renderização mock. A sequência real de clique duplo, arraste, posições de taskbar, DPI e monitores ainda precisa de confirmação no Windows.
+- **Escopo:** MockDeviceController preservado; nenhum backend, JSON Lines, rede ou dispositivo físico foi acessado. Não iniciar F2C.
+- **Git local:** as alterações de CR-17 permanecem no worktree sem commit. O sandbox recusou git add por negar escrita em .git/index.lock; não houve push ou merge.
+
+## Próximas ações
+
+1. Validar no Windows os cliques simples, duplo, botão direito, menu e posição/arraste já implementados.
+2. Publicar manualmente o commit local de CR-17 e conferir novamente os jobs da PR #17.
+3. Fazer a revisão arquitetural final antes de iniciar F2C.
+
+## Resumo técnico F2B
+
+Rust/Tauri mantém tray/menu, visibilidade/foco/saída e encaminha uma segunda instância para a janela existente. React conserva controles e estado da sessão; `src/platform` oferece detecção Tauri, ocultação e arraste. `tauri-plugin-positioner` recebe eventos; a geometria em pixels físicos seleciona o monitor, infere a borda da taskbar e posiciona na `Monitor::work_area()`. A preferência de 420 × 720 pixels lógicos converte por DPI e é restaurada ao reabrir em monitor maior. Posição manual não muda enquanto visível.
+
+O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 12 testes Rust, 53 testes frontend, typecheck/lint/build Vite e build Tauri sem bundle passaram. Testes unitários não simulam eventos nativos; interação manual de tray/arraste e monitores continua pendente. Sem ocultação automática por perda de foco.
+
+## Estado anterior
+
+- PR #16 (F2A.1 / CR-15): integrada em `origin/develop` no merge commit `e307e69`; validação visual manual do mantenedor aprovou a lâmpada e confirmou a correção final da Fita LED.
+- F2A continua exclusivamente com mocks; a integração real do backend continua reservada à F2C.

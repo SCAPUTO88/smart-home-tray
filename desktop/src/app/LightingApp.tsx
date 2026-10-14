@@ -3,12 +3,14 @@ import type { CSSProperties } from 'react'
 import type { DeviceController, LightingPatch, OperationScenario } from '../features/devices/types'
 import { useLightingSession } from '../features/devices/useLightingSession'
 import { createMockDeviceController } from '../mock/MockDeviceController'
-import { hsvToRgb, rgbCss } from '../lib/color'
+import { lightingIntensity, selectedLightingColor } from '../lib/lightingVisuals'
 import { DeviceArtwork } from '../components/lighting/DeviceArtwork'
 import { PowerButton } from '../components/controls/PowerButton'
 import { RangeControl } from '../components/controls/RangeControl'
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { Activity, Check, ChevronDown, Lightbulb, Palette, SlidersHorizontal, WifiOff } from 'lucide-react'
+import WindowControls from '../platform/WindowControls'
+import { startDraggingPanel } from '../platform/tauriWindow'
 import './LightingApp.css'
 
 interface LightingAppProps {
@@ -37,26 +39,37 @@ export default function LightingApp({ controller: suppliedController }: Lighting
   if (!device || !view) {
     return (
       <main className="app-shell app-shell--loading">
-        <header className="topbar"><Brand /><span className="connection-badge"><i /> Conectando simulação</span></header>
+        <header
+          className="topbar"
+          title="Arraste para mover o painel"
+          onMouseDown={(event) => { void startDraggingPanel(event.target, event.button) }}
+        ><Brand /><span className="connection-badge"><i /> Conectando simulação</span></header>
         <div className="loading-card" role="status">Carregando dispositivos simulados…</div>
       </main>
     )
   }
 
   const state = view.preview
-  const rgb = hsvToRgb(state.hsv)
-  const accent = state.mode === 'rgb' ? rgbCss(rgb) : 'rgb(246 204 147)'
+  const accent = selectedLightingColor(state)
+  const ambientIntensity = lightingIntensity(state)
   const issueValue = (patch: LightingPatch) => issue(device.deviceId, patch, scenario)
   const statusText = operationLabel(view.status)
 
   return (
     <MotionConfig reducedMotion="user">
-      <main className="app-shell" style={{ '--accent-color': accent } as CSSProperties}>
-        <header className="topbar">
+      <main className="app-shell" style={{ '--accent-color': accent, '--accent-intensity': ambientIntensity } as CSSProperties}>
+        <header
+          className="topbar"
+          title="Arraste para mover o painel"
+          onMouseDown={(event) => { void startDraggingPanel(event.target, event.button) }}
+        >
           <Brand />
-          <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>
-            {device.connection === 'offline' ? <WifiOff size={12} /> : <i aria-hidden="true" />}
-            {device.connection === 'offline' ? 'Offline' : 'Conectado · simulação'}
+          <div className="topbar-actions">
+            <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>
+              {device.connection === 'offline' ? <WifiOff size={12} /> : <i aria-hidden="true" />}
+              {device.connection === 'offline' ? 'Offline' : 'Conectado · simulação'}
+            </div>
+            <WindowControls />
           </div>
         </header>
 
@@ -97,7 +110,7 @@ export default function LightingApp({ controller: suppliedController }: Lighting
             <DeviceArtwork device={device} state={state} />
             <div className="stage-caption">
               <span className="stage-mode"><Palette size={13} /> {state.mode === 'rgb' ? 'Espectro RGB' : 'Luz branca'}</span>
-              <span className="stage-value">{Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness)}% intensidade</span>
+              <span className="stage-value">{state.enabled ? Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness) + '% intensidade' : 'Desligada'}</span>
             </div>
           </motion.section>
         </AnimatePresence>
