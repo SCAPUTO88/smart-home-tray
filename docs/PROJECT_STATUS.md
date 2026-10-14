@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2B (desktop Windows e system tray; revisão arquitetural local, validação manual dos novos eventos pendente).
+- **Fase:** 2 — F2C.1 (ponte Tauri ↔ Python com modo MOCK padrão e fixture isolado; revisão arquitetural desta etapa pendente).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** PR #16 (CR-15) está integrada em origin/develop no merge e307e69. F2B inclui tray, ciclo de vida, instância única, arraste no cabeçalho e popup ancorado à borda da taskbar com tamanho preferencial por monitor/DPI. Typecheck, lint, 53 testes frontend, build Vite, cargo fmt/check, 12 testes Rust e build Tauri sem bundle passaram localmente. A abertura/renderização mock foi confirmada pelo mantenedor; tray/arraste e layouts multimonitor ainda precisam de validação manual.
+- **Progresso:** PR #17 (F2B, CR-16–19) integrada em origin/develop no merge 893e1ca. F2C.1 implementa a ponte tipada Tauri ↔ Python com MOCK por padrão, FIXTURE JSONL sem rede e REAL somente por opt-in controlado pelo processo Rust. A validação automatizada desta entrega foi concluída; nenhuma lâmpada física foi acessada. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -154,31 +154,40 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Limitação do checkpoint visual original: não havia janela de navegador para screenshots automatizadas. Depois, o mantenedor revisou manualmente a gravação, aprovou a lâmpada e confirmou visualmente a correção CR-15 da fita antes da integração da PR #16 em e307e69.
 # Smart Home Tray — Project Status
 
-## Checkpoint F2B — PR #17: CR-16/18/19 publicadas, CR-17 concluída localmente
+## Checkpoint F2B — PR #17 integrada
 
-- **Branch:** feature/windows-system-tray, base origin/develop com a PR #16 integrada em e307e69. A PR #17 está aberta e aponta para develop.
-- **Correção já publicada:** CR-16 e CR-18/CR-19 estão no head publicado 70ce1e4 da PR #17. Não são alterações locais pendentes.
-- **CR-17 local:** o Windows traduz a sequência de duplo clique em Click/Up, DoubleClick, Click/Up depois do primeiro Click/Up. A política mantém o toggle no release do clique simples e suprime somente o release final após DoubleClick esquerdo. Não há debounce temporal; MouseDown, botão direito e duplo clique direito não alternam. Menu Abrir/Sair segue em callbacks independentes.
-- **Testes sintéticos:** três regressões cobrem cliques simples independentes, sequência de duplo clique e eventos de botão direito/Down. Esses testes exercitam a política Rust; não simulam o tray nativo do Windows.
-- **Validação local desta revisão:** cargo fmt --check, cargo check --locked, cargo test --locked (15 testes Rust), typecheck, lint, 53 testes frontend, build Vite e build Tauri sem bundle passaram.
-- **CI da PR #17 no head publicado 70ce1e4:** workflow Desktop frontend/Windows shell run #8 passou nos jobs Node 24 e Windows MSVC; workflow Backend tests run #24 passou em Python 3.12 e 3.14. Esses resultados antecedem CR-17; o commit local de CR-17 precisará de CI após publicação manual.
-- **Validação manual:** o mantenedor já confirmou abertura nativa e renderização mock. A sequência real de clique duplo, arraste, posições de taskbar, DPI e monitores ainda precisa de confirmação no Windows.
-- **Escopo:** MockDeviceController preservado; nenhum backend, JSON Lines, rede ou dispositivo físico foi acessado. Não iniciar F2C.
-- **Git local:** as alterações de CR-17 permanecem no worktree sem commit. O sandbox recusou git add por negar escrita em .git/index.lock; não houve push ou merge.
-
-## Próximas ações
-
-1. Validar no Windows os cliques simples, duplo, botão direito, menu e posição/arraste já implementados.
-2. Publicar manualmente o commit local de CR-17 e conferir novamente os jobs da PR #17.
-3. Fazer a revisão arquitetural final antes de iniciar F2C.
-
+- **Integração:** PR #17 foi integrada à develop no merge commit 893e1ca0cdccf2398dcef89b381878419037b608, descendente da base da F2A.1.
+- **Escopo integrado:** tray nativo, ciclo de vida do popup, instância única, arraste pelo cabeçalho, geometria para quatro bordas da taskbar e tamanho lógico ajustado ao DPI.
+- **CI registrado na revisão da PR:** frontend Node 24, backend Python 3.12/3.14, cargo fmt, cargo check, cargo test e build sem bundle aprovados conforme checks publicados na PR. A revisão CR-17 adicionou testes sintéticos para clique simples/duplo; eles não substituem validação do tray nativo.
+- **Validação manual:** mantenedor confirmou inicialização/renderização nativa e apontou que o popup pode ficar distante do tray em configuração multi-monitor. A limitação permanece no backlog como CR-20. O arraste e os eventos nativos dependem de confirmação manual no Windows.
+- **Histórico corrigido:** as alterações CR-17 foram publicadas na PR antes do merge. Não há commit local CR-17 pendente na branch desta etapa.
 ## Resumo técnico F2B
 
 Rust/Tauri mantém tray/menu, visibilidade/foco/saída e encaminha uma segunda instância para a janela existente. React conserva controles e estado da sessão; `src/platform` oferece detecção Tauri, ocultação e arraste. `tauri-plugin-positioner` recebe eventos; a geometria em pixels físicos seleciona o monitor, infere a borda da taskbar e posiciona na `Monitor::work_area()`. A preferência de 420 × 720 pixels lógicos converte por DPI e é restaurada ao reabrir em monitor maior. Posição manual não muda enquanto visível.
 
-O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 12 testes Rust, 53 testes frontend, typecheck/lint/build Vite e build Tauri sem bundle passaram. Testes unitários não simulam eventos nativos; interação manual de tray/arraste e monitores continua pendente. Sem ocultação automática por perda de foco.
+O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 17 testes Rust (incluindo os testes sintéticos CR-17), 53 testes frontend, typecheck/lint/build Vite e build Tauri sem bundle passaram. Testes unitários não simulam eventos nativos; interação manual de tray/arraste e monitores continua pendente. Sem ocultação automática por perda de foco.
 
 ## Estado anterior
 
 - PR #16 (F2A.1 / CR-15): integrada em `origin/develop` no merge commit `e307e69`; validação visual manual do mantenedor aprovou a lâmpada e confirmou a correção final da Fita LED.
-- F2A continua exclusivamente com mocks; a integração real do backend continua reservada à F2C.
+- A interface navegável F2A continua em MOCK no navegador. F2C.1 adiciona transporte fixture e caminho REAL protegido por opt-in no aplicativo Tauri, sem testes físicos.
+
+## Checkpoint F2C.1 — implementação em revisão
+
+- **Branch/base:** feature/tauri-python-bridge, baseada no merge PR #17 893e1ca. O worktree original e suas alterações locais foram preservados; a cópia isolada de implementação está em .worktrees/f2c1-tauri-python-bridge/.
+- **Arquitetura:** Rust possui o supervisor de subprocesso e comandos Tauri tipados. A WebView não fornece executável, argumentos, caminho de TOML, variáveis de ambiente ou comandos JSONL arbitrários. O controller converte o DTO público allowlisted para o modelo visual e mantém valores ausentes em qualidade desconhecida.
+- **Modos:** navegador e Tauri padrão usam MOCK. FIXTURE executa smart_home_tray.fixture, sem TinyTuya/rede. REAL usa o CLI existente e exige SMART_HOME_TRAY_BACKEND_MODE=real, SMART_HOME_TRAY_ALLOW_REAL=1 e caminho TOML absoluto em SMART_HOME_TRAY_CONFIG; nenhum teste real foi executado. Falha explícita não troca para mock.
+- **Protocolo:** JSON Lines existente, envelope sem campo ok, correlação requestId, respostas fora de ordem, limite 65.536 bytes, stdout de protocolo e stderr drenado sem eco. O processo fica vivo quando a janela é ocultada e encerra no evento real de saída do app.
+- **Backlog:** CR-20, refinamento do posicionamento multi-monitor; fita LED flexível parcialmente enrolada com difusor COB contínuo. Ambos estão registrados sem implementação nesta etapa.
+- **Validação executada:** typecheck, lint, build Vite e 66 testes frontend aprovados; cargo fmt, cargo check --locked e cargo test --locked aprovados (21 testes); build Tauri Windows --no-bundle aprovado; pytest backend/tests com Python 3.14.3 (180 testes) e compileall aprovados. O Cargo avisou colisão de nome PDB bin/lib, mas o build concluiu.
+- **Validação manual pendente:** eventos nativos e fluxo visual ainda precisam de confirmação do mantenedor no Windows. O fixture comprova o fluxo subprocesso/protocolo, sem dispositivos reais.
+- **Próximo checkpoint:** revisão arquitetural antes de habilitar REAL com equipamentos.
+
+## Revisao F2C.1 CR-21 / CR-22 / CR-23
+
+- **Base revisada:** PR #19, head revisado 3d794107; correcoes locais na branch feature/tauri-python-bridge. Este clone usa um origin local, portanto a PR foi identificada pelo head informado e consultada no GitHub sem alterar a PR.
+- **CR-21:** em modo REAL opt-in, a hidratacao obtem devices.list e faz device.status por dispositivo; uma falha nao bloqueia os demais. Campos nulos/incompletos continuam unknown, e a interface desabilita os controles que exigiriam estado confirmado. MOCK e FIXTURE nao fazem esse readback inicial. Sem polling.
+- **CR-22:** respostas de comando nao substituem um readback mais recente; a base confirmada so avanca com estado completo e confirmado. Intencoes HSV completas pendentes preservam a composicao dos canais entre respostas fora de ordem ou cancelamento. Falhas nao alteram a ultima base confirmada e o estado e isolado por dispositivo.
+- **CR-23:** failed e pending agora sao protegidos por um unico estado sincronizado; registro concorrente apos falha retorna erro terminal. SMART_HOME_TRAY_BACKEND_MODE ausente continua MOCK e valor desconhecido e rejeitado. Opt-ins de REAL permanecem obrigatorios.
+- **Validacao local:** frontend typecheck/lint, 74 testes, build Vite; Rust fmt/check/test (23 testes); build Tauri Windows --no-bundle; backend pytest (180 testes) e compileall passaram. Os testes IPC usam somente fixture e dados fake; nenhum hardware/LAN foi acessado.
+- **Limitacao:** falta validacao manual de UI no modo REAL opt-in; nao foi feita ativacao com dispositivos. A posicao multi-monitor CR-20 e o redesign flexivel COB continuam backlog.
