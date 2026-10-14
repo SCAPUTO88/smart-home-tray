@@ -2,7 +2,7 @@
 
 ## Escopo
 
-Backend local-first executável como processo independente. A operação em runtime usa a rede local e não requer API cloud, assinatura ou servidor remoto. React/TypeScript, Tauri 2, o intermediário Rust e o empacotamento Python são fases futuras.
+Backend local-first executável como processo independente. A operação em runtime usa a rede local e não requer API cloud, assinatura ou servidor remoto. O prototipo React/TypeScript com Vite e Tauri 2 da Etapa F2A esta implementado em desktop/; o adapter nativo e a integracao com o backend continuam planejados para etapas seguintes.
 
 ## Componentes
 
@@ -80,3 +80,16 @@ Copy-Item backend\config.example.toml backend\config.toml
 ```
 
 Defina as variáveis de ambiente declaradas em `local_key_env` antes de iniciar o backend. O exemplo não contém credenciais. CLI/sidecar, comandos, framing e lifecycle estão detalhados em [contracts.md](contracts.md). Para executar, use `backend\.venv\Scripts\smart-home-tray.exe --config backend\config.toml list` ou `backend\.venv\Scripts\python.exe -m smart_home_tray.cli --config backend\config.toml serve`.
+
+
+## Fase 2, Etapa F2A — protótipo visual
+
+`desktop/` contém a interface React/TypeScript servida e compilada por Vite. A configuração Tauri 2 aponta para o mesmo `dev` e `dist`, com janela compacta; o frontend não importa APIs nativas, portanto também executa no navegador. Tailwind v4 é ligado pelo plugin oficial do Vite; Motion cobre transições de layout e CSS cuida de sliders, iluminação e estados simples.
+
+A UI depende dos modelos normalizados em `desktop/src/features/devices/types.ts` e da interface `DeviceController`. Nesta etapa, somente `MockDeviceController` fornece o catálogo: `mock-desk-lamp` e `mock-led-strip`. Os modelos expõem identidade, capabilities, conexão, estado, qualidade e HSV normalizado. Capacidades de branco/temperatura existem só na Luz Mesa. Nenhum ID, capability ou valor de mock prova compatibilidade física.
+
+`useLightingSession` mantém por dispositivo o patch solicitado, a prévia imediata, operações pendentes, estado confirmado e resultado/erro. A precedência é rastreada por campo, incluindo cada canal HSV, para que uma resposta atrasada só atualize campos cuja intenção ainda seja aquela operação; o readback completo é mesclado nesse subconjunto, sem restaurar valores antigos de campos independentes. A prévia é composta do último estado confirmado com as intenções ainda pendentes. Cancelamento e erro descartam a prévia otimista dos campos afetados; offline também invalida operações em andamento e preserva os valores conhecidos com qualidade offline. Qualidade `unknown` nunca vira `confirmed` somente pelo aceite do comando. Os componentes visuais não importam detalhes de mock. A futura implementação Tauri será um adapter da interface de controle para os comandos JSON Lines da Etapa D, sem mover scheduler/coalescing para o frontend.
+
+O seletor visual Branco/RGB é uma abstração de apresentação. O protocolo JSON Lines não expõe uma operação pública isolada de troca de modo; o adapter futuro deverá traduzir essa seleção junto com uma operação de iluminação suportada, sem criar um comando IPC inexistente.
+
+Testes automáticos usam Vitest, jsdom e React Testing Library. O workflow `.github/workflows/desktop-tests.yml` valida frontend isoladamente em Windows/Node 24. Nesta etapa a configuração Rust foi gerada, mas a compilação Tauri depende de Rust/Cargo e C++ Build Tools; nenhum equipamento físico, backend Python, LAN ou serviço cloud foi acessado.

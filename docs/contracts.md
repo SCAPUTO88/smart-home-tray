@@ -113,3 +113,21 @@ Cada dispositivo tem uma FIFO própria. Apenas controles contínuos do mesmo tip
 Power sempre é enfileirado sem coalescing ou espera de janela própria. Na chegada, libera imediatamente as intenções contínuas anteriores ainda aguardando, que seguem antes de power pela FIFO; comandos que chegam depois permanecem depois de power. Uma operação já iniciada nunca é cancelada nem alterada.
 
 `stop(timeout_seconds=10.0) -> bool` fecha novas submissões, cancela Futures de comandos ainda na fila, permite comandos iniciados terminarem e aguarda os workers até o limite. `True` indica que todos os workers encerraram; `False` indica que pelo menos um ainda está ativo. Se chamado dentro de callback de Future, não tenta executar `join()` da própria thread e retorna `False` enquanto ela não tiver encerrado; uma chamada posterior de outra thread pode completar a espera. Callbacks de Future executam sincronamente na thread publicadora, podendo atrasar o worker e o shutdown. O scheduler é de ciclo único e não reinicia após stop. Workers são explicitamente não daemon; a aplicação deve chamar `stop()` no encerramento. A duração efetiva de shutdown depende dos timeouts de rede, da operação síncrona em andamento e de callbacks.
+
+
+## Consumidor frontend mock (F2A)
+
+`desktop/src/features/devices/types.ts` define um subconjunto visual normalizado alinhado conceitualmente ao status público da Etapa D:
+
+- `deviceId` e `name` identificam a entrada pública; `kind` e a apresentação tipada existem para a UI.
+- `capabilities` informa `power`, `rgb`, `white` e `temperature`. O mock de Fita LED declara branco e temperatura como indisponíveis.
+- `connection` usa `online` / `offline`. `state` mantém `enabled`, `mode`, HSV com H 0–360 e S/V 0–100%, brilhos brancos normalizados de 0–100 e `quality`.
+- `DeviceController` é a fronteira consumida pela sessão. `MockDeviceController` implementa catálogo e comandos de demonstração; não chama `fetch`, sockets, backend Python, TinyTuya, LAN ou cloud.
+
+`DeviceViewState` separa patch `requested`, `preview`, `pendingOperations`, `confirmed` e `error/status`. `LightingPatch.hsv` pode conter canais parciais para que uma atualização de matiz não carregue saturação ou Value antigos. A precedência por dispositivo e por campo (incluindo canais HSV) determina quais valores de uma resposta ainda podem atualizar `confirmed`; os outros campos do estado retornado são ignorados. A prévia aplica sobre o último confirmado somente as intenções ainda pendentes. Sucesso usa o readback retornado sem promover qualidade `unknown`; cancelamento e erro removem a prévia otimista dos campos afetados e mantêm o último confirmado. Offline invalida operações pendentes, mantém os valores conhecidos e marca conexão/qualidade offline. Respostas atrasadas de erro não substituem feedback de uma intenção mais recente. Os modos de mock success/delay/canceled/error/offline só descrevem a simulação.
+
+O seletor visual Branco/RGB não corresponde a um comando público próprio. O adapter futuro deverá traduzir a seleção em conjunto com uma operação de iluminação suportada (como brilho branco ou HSV) e usar apenas envelopes JSON Lines existentes; não deve inventar um comando IPC de troca de modo.
+
+Como a interface visual pode enviar um patch de um canal HSV, o adapter futuro deverá compor os três canais necessários pelo comando público `device.hsv` usando o estado normalizado mais recente e as intenções ainda pendentes, sem reintroduzir canais obsoletos.
+
+Os tipos não incluem `DeviceConfig`, configuração TOML, DPS, endereço LAN, Local Keys ou autenticação. Não são uma serialização nova do backend: o adapter Tauri futuro terá de mapear explicitamente os envelopes JSON Lines públicos e manter a allowlist da Etapa D.
