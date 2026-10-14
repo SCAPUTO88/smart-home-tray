@@ -151,27 +151,26 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Cor e intensidade vêm apenas de `DeviceState` da prévia: HSV controla RGB, Value/brilho controla emissão e power off zera a emissão. Temperatura visual interpola âmbar, neutro e azulado. A direção do controle de temperatura Tuya continua sem validação física.
 - Glow usa camadas de gradientes radiais e transições de cor/opacidade; não há filtros blur animados. `prefers-reduced-motion` reduz transições CSS e animações existentes via MotionConfig. O acento do cartão segue a cor e intensidade da prévia.
 - Verificações: typecheck, lint, 44 testes frontend, build Vite e `git diff --check` passaram. Nenhum dispositivo, backend runtime, LAN ou cloud foi acessado.
-- Limitação do checkpoint visual original: não havia janela de navegador para screenshots automatizadas. Depois, o mantenedor revisou manualmente a gravação, aprovou a lâmpada e identificou CR-15 na fita; a correção local ainda aguarda inspeção visual manual.
+- Limitação do checkpoint visual original: não havia janela de navegador para screenshots automatizadas. Depois, o mantenedor revisou manualmente a gravação, aprovou a lâmpada e confirmou visualmente a correção CR-15 da fita antes da integração da PR #16 em e307e69.
 # Smart Home Tray — Project Status
 
-## Checkpoint F2B — CR-18/CR-19 locais para revisão da PR #17
+## Checkpoint F2B — PR #17: CR-16/18/19 publicadas, CR-17 concluída localmente
 
-- **Branch:** `feature/windows-system-tray`, criada a partir de `origin/develop`.
-- **Base verificada:** `origin/develop` contém o merge da PR #16 no commit `e307e69`.
-- **Fase anterior:** F2A.1 / CR-15 está publicada na PR #16, integrada em develop e validada visualmente pelo mantenedor; o problema de emissão residual foi corrigido antes da integração.
-- **Fase atual:** F2B — tray Windows, janela popup e ciclo de vida Tauri.
-- **Integração de tamanho:** o cálculo usa a preferência de 420 × 720 pixels lógicos e reaplica dimensões adequadas ao monitor ao reabrir, cobrindo o requisito de restauração após monitores menores descrito junto ao CR-16.
-- **Implementado localmente:** startup oculto, tray com alternância no clique esquerdo, menu Abrir/Sair, ocultação no close, foco/restauração, single instance, botão acessível, arraste no cabeçalho fora de elementos interativos, posicionamento taskbar-aware e tamanho preferencial restaurável.
-- **Segurança:** interface usa exclusivamente `MockDeviceController`; nenhum backend Python, JSON Lines, LAN, cloud ou dispositivo físico foi conectado.
-- **Validação disponível:** typecheck, lint, 53 testes frontend e build Vite aprovados. Windows/MSVC: cargo fmt --check, cargo check --locked, cargo test --locked (12 testes) e build Tauri --no-bundle aprovados. Build emite aviso não bloqueante de colisão do PDB bin/lib.
-- **Validação manual já realizada:** o mantenedor abriu npm run tauri:dev no Windows e confirmou janela nativa e dispositivos simulados. Arraste, lados da taskbar, escalas e monitores secundários ainda não foram confirmados manualmente.
-- **Critério de conclusão:** revisão manual de interações do tray/janela em Windows ainda pendente; CI do job Rust/Tauri também aguarda execução após push manual.
+- **Branch:** feature/windows-system-tray, base origin/develop com a PR #16 integrada em e307e69. A PR #17 está aberta e aponta para develop.
+- **Correção já publicada:** CR-16 e CR-18/CR-19 estão no head publicado 70ce1e4 da PR #17. Não são alterações locais pendentes.
+- **CR-17 local:** o Windows traduz a sequência de duplo clique em Click/Up, DoubleClick, Click/Up depois do primeiro Click/Up. A política mantém o toggle no release do clique simples e suprime somente o release final após DoubleClick esquerdo. Não há debounce temporal; MouseDown, botão direito e duplo clique direito não alternam. Menu Abrir/Sair segue em callbacks independentes.
+- **Testes sintéticos:** três regressões cobrem cliques simples independentes, sequência de duplo clique e eventos de botão direito/Down. Esses testes exercitam a política Rust; não simulam o tray nativo do Windows.
+- **Validação local desta revisão:** cargo fmt --check, cargo check --locked, cargo test --locked (15 testes Rust), typecheck, lint, 53 testes frontend, build Vite e build Tauri sem bundle passaram.
+- **CI da PR #17 no head publicado 70ce1e4:** workflow Desktop frontend/Windows shell run #8 passou nos jobs Node 24 e Windows MSVC; workflow Backend tests run #24 passou em Python 3.12 e 3.14. Esses resultados antecedem CR-17; o commit local de CR-17 precisará de CI após publicação manual.
+- **Validação manual:** o mantenedor já confirmou abertura nativa e renderização mock. A sequência real de clique duplo, arraste, posições de taskbar, DPI e monitores ainda precisa de confirmação no Windows.
+- **Escopo:** MockDeviceController preservado; nenhum backend, JSON Lines, rede ou dispositivo físico foi acessado. Não iniciar F2C.
+- **Git local:** as alterações de CR-17 permanecem no worktree sem commit. O sandbox recusou git add por negar escrita em .git/index.lock; não houve push ou merge.
 
 ## Próximas ações
 
-1. Completar o checklist CR-18/CR-19 em `desktop/README.md` (arraste, bordas da taskbar, DPI, reabertura e restauração do tamanho).
-2. Revisar o job Windows/MSVC no GitHub Actions após push manual autorizado pelo mantenedor.
-3. Fazer revisão arquitetural antes de iniciar F2C.
+1. Validar no Windows os cliques simples, duplo, botão direito, menu e posição/arraste já implementados.
+2. Publicar manualmente o commit local de CR-17 e conferir novamente os jobs da PR #17.
+3. Fazer a revisão arquitetural final antes de iniciar F2C.
 
 ## Resumo técnico F2B
 
@@ -183,10 +182,3 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 
 - PR #16 (F2A.1 / CR-15): integrada em `origin/develop` no merge commit `e307e69`; validação visual manual do mantenedor aprovou a lâmpada e confirmou a correção final da Fita LED.
 - F2A continua exclusivamente com mocks; a integração real do backend continua reservada à F2C.
-
-## Registro de checkpoint para retomada — 2026-10-14
-
-- CR-18 e CR-19 estão implementadas localmente na branch feature/windows-system-tray; os commits mais recentes são 6608306 (ancoragem pela borda da taskbar), c79781c (arraste pelo cabeçalho) e 77559da (documentação da revisão). A branch está limpa e quatro commits à frente da referência remota; não houve push ou merge.
-- Validações registradas: typecheck, lint, 53 testes frontend, build Vite, cargo fmt --check, cargo check --locked, 12 testes Rust, build Tauri --no-bundle e git diff --check passaram. O build Tauri emite somente o aviso não bloqueante de colisão do arquivo PDB entre binário e biblioteca.
-- O mantenedor já confirmou que npm run tauri:dev abre a janela nativa e mostra os dispositivos simulados. O arraste, as quatro bordas da taskbar, monitores secundários e escalas DPI ainda precisam de validação manual. As exigências específicas de CR-17 não foram fornecidas no contexto recuperado; não foram inferidas.
-- Próximo passo: concluir o checklist manual de desktop/README.md, revisar o job Windows/MSVC após publicação manual e obter revisão arquitetural antes de F2C. Nenhum backend, IPC, rede ou dispositivo físico foi acessado.
