@@ -140,3 +140,12 @@ O produto ainda depende de um Python externo; sidecar Python empacotado, instala
 
 - CR-20: ajustar a proximidade do popup ao tray em certas configurações multi-monitor; o mantenedor relatou distância excessiva durante validação F2B.
 - Revisão futura da ilustração da Fita LED como fita COB flexível, parcialmente enrolada, com difusor contínuo.
+
+
+### Atualização manual do estado
+
+Use **Atualizar** no cartão de controles para consultar novamente somente o dispositivo selecionado. MOCK retorna o snapshot local; FIXTURE consulta apenas o processo fixture; REAL, quando habilitado explicitamente, consulta apenas o ID selecionado. A ação não cria polling, retry automático ou varredura. Durante uma escrita pendente o botão fica desabilitado para evitar que um readback concorrente substitua a intenção ainda em andamento. Em falha, a última observação é mantida como stale e a UI mostra o erro sem promover valores antigos a estado atual.
+
+Os campos com conhecimento unknown/stale exibem “—” e só bloqueiam os controles que dependem daquele campo. Power, HSV, brilho branco, temperatura, work mode, colorValue e cena têm conhecimento independente. MOCK e FIXTURE continuam totalmente simulados e não abrem conexão LAN.
+
+REAL permanece opt-in e depende de Python e configuração externos; a aplicação valida a existência do TOML e a resposta inicial do catálogo, mas os erros detalhados permanecem no processo local e não são enviados à WebView. A F2C.2 não incluiu validação de hardware nem empacotamento do runtime Python.

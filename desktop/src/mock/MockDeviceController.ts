@@ -20,7 +20,7 @@ const initialDevices: LightingDevice[] = [
     kind: 'bulb',
     capabilities: { power: true, rgb: true, white: true, temperature: true },
     connection: 'online',
-    state: { enabled: true, mode: 'rgb', hsv: { hue: 194, saturation: 77, value: 82 }, whiteBrightness: 64, whiteTemperature: 48, quality: 'confirmed' },
+    state: { enabled: true, mode: 'rgb', hsv: { hue: 194, saturation: 77, value: 82 }, whiteBrightness: 64, whiteTemperature: 48, quality: 'confirmed', knowledge: { power: 'observed', workMode: 'observed', whiteBrightness: 'observed', colorTemperature: 'observed', hsv: 'observed', colorValue: 'observed', scene: 'unknown' } },
   },
   {
     deviceId: 'mock-led-strip',
@@ -28,7 +28,7 @@ const initialDevices: LightingDevice[] = [
     kind: 'led-strip',
     capabilities: { power: true, rgb: true, white: false, temperature: false },
     connection: 'online',
-    state: { enabled: true, mode: 'rgb', hsv: { hue: 268, saturation: 88, value: 70 }, whiteBrightness: 0, whiteTemperature: 0, quality: 'confirmed' },
+    state: { enabled: true, mode: 'rgb', hsv: { hue: 268, saturation: 88, value: 70 }, whiteBrightness: 0, whiteTemperature: 0, quality: 'confirmed', knowledge: { power: 'observed', workMode: 'observed', whiteBrightness: 'observed', colorTemperature: 'observed', hsv: 'observed', colorValue: 'observed', scene: 'unknown' } },
   },
 ]
 
@@ -92,6 +92,11 @@ export function createMockDeviceController(options: MockControllerOptions = {}):
     mode: 'mock' as const,
     async list() {
       return [...devices.values()].map(copyDevice)
+    },
+    async refresh(deviceId: DeviceId) {
+      const device = devices.get(deviceId)
+      if (!device) throw new OperationError('DEVICE_ERROR')
+      return copyDevice(device)
     },
     async command(deviceId: DeviceId, patch: LightingPatch, scenario: OperationScenario = 'success') {
       const current = devices.get(deviceId)

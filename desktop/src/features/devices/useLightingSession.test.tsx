@@ -16,6 +16,7 @@ function createControlledController(devices = createMockDevices()) {
   const pending: DeferredCommand[] = []
   const controller: DeviceController = {
     list: async () => devices.map(copyDevice),
+    refresh: async (deviceId) => copyDevice(devices.find((item) => item.deviceId === deviceId)!),
     command: (deviceId, patch, _scenario?: OperationScenario) => new Promise((resolve, reject) => {
       pending.push({ deviceId, patch, resolve, reject })
     }),
@@ -114,6 +115,24 @@ describe('lighting session field reconciliation', () => {
     expect(result.current.selectedView?.confirmed.hsv.hue).toBe(300)
   })
 })
+
+
+  it('refreshes a single device without resetting the other device view', async () => {
+    const { result } = await startSession()
+    act(() => result.current.selectDevice('mock-led-strip'))
+    await act(async () => { await result.current.refreshDevice('mock-led-strip') })
+    expect(result.current.selectedView?.confirmed.hsv).toEqual({ hue: 268, saturation: 88, value: 70 })
+    act(() => result.current.selectDevice('mock-desk-lamp'))
+    expect(result.current.selectedView?.confirmed.hsv).toEqual({ hue: 194, saturation: 77, value: 82 })
+  })
+
+  it('does not start refresh while a write is pending', async () => {
+    const { result, pending } = await startSession()
+    issue(result, 'mock-desk-lamp', { hsv: { hue: 210 } })
+    await act(async () => { await result.current.refreshDevice('mock-desk-lamp') })
+    expect(result.current.refreshing['mock-desk-lamp']).toBeUndefined()
+    expect(pending).toHaveLength(1)
+  })
 
 describe('lighting session failure policy', () => {
   it.each([

@@ -123,3 +123,11 @@
 - **Motivo:** manter a fronteira DeviceController, preservar o contrato JSON Lines existente e impedir que a WebView selecione processos, caminhos ou credenciais.
 - **Trade-offs:** há um processo Python externo por sessão Tauri e o modo REAL depende de runtime/configuração instalados. O processo fixture duplica respostas públicas simples para validação sem dispositivos. JSONL continua em stdout; stderr é drenado sem eco. Falhas são normalizadas sem detalhes brutos.
 - **Confirmação:** respostas result só são lidas como readback; valores ausentes mantêm qualidade unknown. A composição HSV consulta estado público e intenções pendentes. CommandScheduler continua sendo o único scheduler. REAL permanece sem validação física nesta etapa.
+
+
+### D-016 — Conhecimento de estado por campo e refresh manual (F2C.2)
+
+- **Estado:** aprovada para F2C.2.
+- **Decisão:** anexar ao snapshot LightState um mapa tipado de conhecimento por campo (observed/stale/unknown), derivado exclusivamente da leitura validada de DPS. Valores nullable e quality global permanecem; knowledge não representa confirmação de escrita. Leitura parcial pode atualizar um campo enquanto preserva os demais como stale.
+- **Refresh:** uma ação explícita consulta somente device.status do dispositivo selecionado; não há polling ou retry automático. Refresh é bloqueado durante escrita pendente para manter a ordem do readback, e respostas obsoletas/desmontadas não alteram a sessão.
+- **Trade-off:** campos stale continuam visíveis como última observação, mas seus controles ficam bloqueados até novo readback válido. A UI não usa defaults de apresentação como observação física.
