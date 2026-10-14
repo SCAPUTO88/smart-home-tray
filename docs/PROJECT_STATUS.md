@@ -4,7 +4,7 @@
 
 - **Fase:** 2 - Etapa F2A (prototipo visual interativo; checkpoint em andamento).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** Etapa D integrada em develop pela PR #11. O prototipo F2A esta implementado em feature/desktop-ui-prototype; 19 testes frontend e 177 testes backend passaram. Nenhuma validacao fisica foi realizada.
+- **Progresso:** Etapa D integrada em develop pela PR #11. O prototipo F2A esta publicado na PR #13, direcionada a develop. Esta revisao local cobre CR-13/CR-14; 32 testes frontend e 177 testes backend passaram localmente apos as correcoes. Nenhuma validacao fisica foi realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -103,24 +103,34 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 
 ## Git
 
-- Estado: branch limpa no inicio do trabalho; alteracoes F2A locais, sem push ou merge.
+- Estado: feature/desktop-ui-prototype estava limpa e igual a origin/feature/desktop-ui-prototype antes de CR-13/CR-14; correcoes desta revisao estao locais e ainda sem commit/push/merge.
 - Base: origin/develop em fb9081f, que ja inclui a Etapa D/PR #11.
 - Branch de trabalho: feature/desktop-ui-prototype, criada diretamente da base remota.
-- Commits F2A serao listados quando o checkpoint de validacao estiver completo.
+- PR #13 publicada para develop; nao direcionar a main. A branch local e a remota estavam iguais em 2e6add7 no inicio desta revisao.
+- Commits incrementais CR-13/CR-14 serao listados ao concluir este checkpoint local.
 ## Proximos passos
 
 1. Revisao manual das telas pelo mantenedor, pois nao havia navegador automatizavel disponivel neste ambiente.
 2. Validar compilacao Tauri depois de instalar Rust/Cargo e Microsoft C++ Build Tools.
-3. Revisar os commits locais e publicar manualmente uma PR direcionada a develop.
+3. Concluir a revisao arquitetural de CR-13/CR-14 e, depois da aprovacao do mantenedor, publicar os commits locais na branch da PR #13 direcionada a develop.
 
 ## Checkpoint F2A - prototipo visual interativo
 
 - Estado: interface React/TypeScript demonstravel no navegador, camada Tauri 2 preparada e todos os dispositivos exclusivamente simulados.
 - Base Git: branch feature/desktop-ui-prototype derivada de origin/develop fb9081f (Etapa D ja integrada).
 - Dependencias: Node 24.14.1, npm 11.11.0, Vite 8.3.4, React 19, Tailwind v4, Motion, Lucide, Vitest e Testing Library; npm ci instalou 132 pacotes e reportou zero vulnerabilidades.
-- Verificacoes frontend: typecheck, Oxlint, 19 testes em 3 arquivos e build Vite passaram.
+- Verificacoes frontend: typecheck, Oxlint, 32 testes em 4 arquivos e build Vite passaram nesta revisao.
 - Verificacao backend: backend/tests -q passou com 177 testes; nenhum arquivo Python do backend foi alterado.
 - Tauri: scaffold/configuracao Tauri 2 presente. Rust/Cargo nao estao instalados; a compilacao nativa nao foi executada. O workflow CI frontend nao compila Rust.
 - Inspecao visual: npm run dev serviu o app, mas CUA nao encontrou navegador e a sessao nao tinha js_repl/Playwright; nao foi possivel gerar screenshots. Revisao visual manual ainda recomendada.
 - Hardware, backend runtime, LAN, cloud e credenciais: nenhum foi acessado.
 - Fase 2 continua aberta; este checkpoint nao marca a fase como concluida.
+
+## Code review F2A — CR-13/CR-14
+
+- Estado: correcoes locais na branch feature/desktop-ui-prototype; PR #13 publicada e com destino develop. Sem push ou merge nesta revisao.
+- CR-13: removido o sequenciamento global por dispositivo. O mock reconcilia cada campo (e canal HSV) com a intencao mais recente daquele campo; a sessao faz merge seletivo do readback e compoe preview a partir do estado confirmado com pedidos ainda pendentes. Hue+power, hue+saturacao, HSV+intensidade, modo+brilho branco e operacoes pendentes em dois dispositivos cobertos por regressao.
+- CR-14: pending mostra preview solicitado. Sucesso usa readback retornado para os campos aceitos; cancelamento/DEVICE_ERROR volta aos valores confirmados e mostra feedback terminal; DEVICE_OFFLINE preserva valores conhecidos, marca estado offline e invalida respostas em voo. Estado `unknown` nao se torna `confirmed` artificialmente. Resposta antiga nao substitui intencao ou feedback mais recente.
+- Contrato futuro: Branco/RGB continua sendo abstracao visual; JSON Lines nao tem comando autonomo de modo. Adapter futuro precisa traduzir a selecao em operacao de iluminacao suportada, sem inventar comando IPC. Nenhum adapter Tauri/JSON Lines ou scheduler frontend foi implementado.
+- Testes adicionados em `desktop/src/features/devices/useLightingSession.test.tsx`, `desktop/src/mock/MockDeviceController.test.ts` e `desktop/src/app/App.test.tsx`. Typecheck, Oxlint, 32 testes frontend, build Vite e `rtk py -m pytest backend/tests -q` (177 passed) passaram.
+- A validacao continua exclusivamente simulada; nenhuma lampada, runtime backend de controle, LAN ou cloud foi acessada. Revisao visual manual e compilacao nativa Tauri permanecem pendentes.

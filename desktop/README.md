@@ -37,13 +37,13 @@ npm run build
 
 `MockDeviceController` fornece Luz Mesa e Fita LED com IDs ficticios. A lampada declara energia, RGB, brilho branco e temperatura; a fita declara apenas energia e RGB. O painel “Cenario de teste” permite simular sucesso, atraso, cancelamento, erro e dispositivo offline. A demora e deterministica; os testes podem configura-la sem espera aleatoria.
 
-`useLightingSession` mantem por dispositivo a ultima intencao, a previa que a interface mostra imediatamente, o ID da operacao pendente, o ultimo estado confirmado pelo mock e o erro/resultado. Respostas antigas nao substituem a previa de uma intencao mais recente. Os componentes de UI consomem os tipos normalizados de `src/features/devices/types.ts` e nao conhecem a implementacao do mock.
+`useLightingSession` mantem por dispositivo o patch solicitado, a previa que a interface mostra imediatamente, as operacoes pendentes, o ultimo estado confirmado pelo controlador e o erro/resultado. A precedencia e controlada por campo e por canal HSV. Cada resposta atualiza somente os campos que ainda pertencem a sua intencao, fazendo merge do readback sem desfazer alteracoes independentes. Durante pending a previa combina valores confirmados e pedidos ativos; apos cancelamento/erro ela retorna aos ultimos valores confirmados. Offline preserva esses valores e marca qualidade/conexao como offline. Qualidade `unknown` nao e promovida artificialmente.
 
 ## Relacao com o backend
 
 Os tipos cobrem identidade (`deviceId`, `name`), capabilities, conexao, estado, qualidade e HSV normalizado compativeis conceitualmente com os contratos publicos da Etapa D. O contrato do backend usa allowlist para nao expor configuracao privada; este frontend nao copia `DeviceConfig`, TOML, DPS ou credenciais.
 
-A proxima etapa de integracao substituira o controlador simulado por um adapter Tauri para comandos JSON Lines. Nao ha IPC real nem sidecar nesta branch. O scheduler de comandos continua pertencendo ao backend; o frontend nao implementa outro scheduler.
+A integracao futura substituira o controlador simulado por um adapter Tauri para comandos JSON Lines. Nao ha IPC real nem sidecar nesta branch. O scheduler de comandos continua pertencendo ao backend; o frontend nao implementa outro scheduler. Branco/RGB e um seletor visual, nao um comando IPC existente: o adapter devera associar a selecao a uma operacao de iluminacao suportada, sem inventar um comando de troca de modo.
 
 ## Limites
 

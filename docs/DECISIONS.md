@@ -88,3 +88,10 @@
 - **Decisão:** criar `desktop/` como frontend React/TypeScript independente, servível por Vite no navegador e preparado para Tauri 2. UI e sessão dependem da interface normalizada `DeviceController`; nesta etapa sua única implementação é `MockDeviceController`. O adapter Tauri/JSON Lines, scheduler de comandos, persistência e acesso físico ficam para fases seguintes.
 - **Motivo:** demonstrar interação, animação e feedback antes de introduzir o processo nativo e a comunicação com dispositivos; manter credenciais e estruturas privadas fora do frontend.
 - **Trade-offs:** o subconjunto tipado é mantido no frontend e precisará ser mapeado explicitamente ao contrato público JSON Lines. Os cenários assíncronos e estados confirmados são simulados, não são evidência de hardware. O protótipo ainda depende das ferramentas Rust/C++ para compilar como desktop.
+
+### D-013 — Reconciliação visual por campo e rollback de prévia
+
+- **Estado:** aplicada no code review F2A (CR-13/CR-14), mantendo D-012 e o contrato backend inalterados.
+- **Decisão:** o mock e a sessão acompanham a precedência de intenção por dispositivo e por campo; HSV é reconciliado por canal. Respostas assíncronas só mesclam valores dos campos ainda pertencentes àquela operação. A prévia aplica patches pendentes sobre o último estado confirmado. Cancelamento/erro restaura a prévia dos campos afetados; offline invalida operações pendentes e mantém os valores conhecidos com qualidade offline. Estado desconhecido não é promovido a confirmado sem readback que o confirme.
+- **Motivo:** preservar comandos independentes e evitar que um resultado atrasado ou uma falha pareça uma atualização confirmada.
+- **Trade-offs:** o modelo visual acompanha intenções por campo sem ordenar ou agendar comandos no frontend. A integração JSON Lines futura deve usar respostas de readback do backend e continuar delegando ordenação/coalescing ao `CommandScheduler` Python. O seletor visual Branco/RGB precisará ser traduzido para uma operação de iluminação suportada; o protocolo não possui comando autônomo de modo.
