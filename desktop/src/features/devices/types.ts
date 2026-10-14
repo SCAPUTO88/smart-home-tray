@@ -35,7 +35,9 @@ export interface LightingDevice {
   state: DeviceState
 }
 
-export type LightingPatch = Partial<Pick<DeviceState, 'enabled' | 'mode' | 'hsv' | 'whiteBrightness' | 'whiteTemperature'>>
+export type LightingPatch = Partial<Omit<Pick<DeviceState, 'enabled' | 'mode' | 'hsv' | 'whiteBrightness' | 'whiteTemperature'>, 'hsv'>> & {
+  hsv?: Partial<HsvColor>
+}
 
 export type OperationScenario = 'success' | 'delay' | 'canceled' | 'error' | 'offline'
 export type OperationStatus = 'idle' | 'pending' | 'confirmed' | 'canceled' | 'offline' | 'error'
@@ -48,7 +50,7 @@ export interface DeviceController {
 export interface DeviceViewState {
   requested: LightingPatch | null
   preview: DeviceState
-  pendingOperationId: number | null
+  pendingOperations: Array<{ operationId: number; patch: LightingPatch }>
   confirmed: DeviceState
   error: string | null
   status: OperationStatus

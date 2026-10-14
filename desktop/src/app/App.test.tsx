@@ -138,6 +138,8 @@ describe('Smart Home Tray app', () => {
     fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '195' } })
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Não foi possível atualizar'))
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toHaveValue('194')
+    expect(screen.getByRole('img', { name: /Ilustração Luz Mesa/ })).toHaveAttribute('data-hue', '194')
   })
 
   it('shows canceled and offline results without claiming confirmation', async () => {
@@ -147,7 +149,8 @@ describe('Smart Home Tray app', () => {
 
     await user.selectOptions(scenario, 'canceled')
     fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '195' } })
-    expect(await screen.findByText('Operação cancelada')).toBeVisible()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Operação cancelada')
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toHaveValue('194')
 
     await user.selectOptions(scenario, 'offline')
     fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '196' } })

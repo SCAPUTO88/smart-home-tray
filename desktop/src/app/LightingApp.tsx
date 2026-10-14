@@ -137,9 +137,9 @@ export default function LightingApp({ controller: suppliedController }: Lighting
             >
               {state.mode === 'rgb' && device.capabilities.rgb ? (
                 <>
-                  <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { ...state.hsv, hue } })} />
-                  <RangeControl label="Saturação" value={state.hsv.saturation} onChange={(saturation) => issueValue({ hsv: { ...state.hsv, saturation } })} />
-                  <RangeControl label="Intensidade RGB" value={state.hsv.value} onChange={(value) => issueValue({ hsv: { ...state.hsv, value } })} />
+                  <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { hue } })} />
+                  <RangeControl label="Saturação" value={state.hsv.saturation} onChange={(saturation) => issueValue({ hsv: { saturation } })} />
+                  <RangeControl label="Intensidade RGB" value={state.hsv.value} onChange={(value) => issueValue({ hsv: { value } })} />
                 </>
               ) : device.capabilities.white ? (
                 <>
@@ -147,7 +147,7 @@ export default function LightingApp({ controller: suppliedController }: Lighting
                   <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />
                 </>
               ) : (
-                <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { ...state.hsv, hue } })} />
+                <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { hue } })} />
               )}
             </motion.div>
           </div>

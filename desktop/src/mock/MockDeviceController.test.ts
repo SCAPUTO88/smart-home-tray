@@ -23,6 +23,32 @@ describe('mock lighting commands', () => {
     await expect(pending).resolves.toMatchObject({ state: { hsv: { hue: 180, saturation: 75, value: 60 } } })
   })
 
+  it('keeps a delayed color update when a later independent power command confirms first', async () => {
+    const controller = createMockDeviceController({ delayMs: 0, delayScenarioMs: 30 })
+    const color = controller.command('mock-desk-lamp', { hsv: { hue: 205 } }, 'delay')
+    const power = controller.command('mock-desk-lamp', { enabled: false })
+
+    await expect(power).resolves.toMatchObject({ state: { enabled: false } })
+    await expect(color).resolves.toMatchObject({ state: { enabled: false, hsv: { hue: 205 } } })
+    await expect(controller.list()).resolves.toContainEqual(expect.objectContaining({
+      deviceId: 'mock-desk-lamp',
+      state: expect.objectContaining({ enabled: false, hsv: expect.objectContaining({ hue: 205 }) }),
+    }))
+  })
+
+  it('merges overlapping HSV updates by channel so a new hue preserves recent saturation', async () => {
+    const controller = createMockDeviceController({ delayMs: 0, delayScenarioMs: 30 })
+    const hue = controller.command('mock-desk-lamp', { hsv: { hue: 205 } }, 'delay')
+    const saturation = controller.command('mock-desk-lamp', { hsv: { saturation: 42 } })
+
+    await Promise.all([hue, saturation])
+
+    await expect(controller.list()).resolves.toContainEqual(expect.objectContaining({
+      deviceId: 'mock-desk-lamp',
+      state: expect.objectContaining({ hsv: expect.objectContaining({ hue: 205, saturation: 42 }) }),
+    }))
+  })
+
   it('supports deterministic cancellation, offline and error scenarios', async () => {
     const controller = createMockDeviceController({ delayMs: 0 })
 
