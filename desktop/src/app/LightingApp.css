@@ -3,19 +3,24 @@
 @property --accent-intensity { syntax: "<number>"; inherits: true; initial-value: 0; }
 
 #root {
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
 }
 
 .app-shell {
   --accent-intensity: 0;
   --accent-color: #70d9ff;
   width: min(100%, 460px);
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
   margin: 0 auto;
   padding: 23px 22px 18px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background:
     radial-gradient(ellipse at 51% 28%, color-mix(in srgb, var(--accent-color) calc(var(--accent-intensity) * 8%), transparent), transparent 46%),
     linear-gradient(160deg, #0b111b 0%, #080d15 50%, #0b1019 100%);
@@ -23,7 +28,7 @@
 }
 
 .app-shell--loading { display: flex; flex-direction: column; }
-.topbar { display: flex; align-items: center; justify-content: space-between; min-height: 27px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; min-height: 27px; gap: 8px; }
 .brand-lockup { display: flex; align-items: center; gap: 9px; }
 .brand-mark { display: grid; place-items: center; width: 25px; height: 25px; color: #90dfff; border: 1px solid #28445a; border-radius: 8px; background: linear-gradient(145deg, #18364b, #101c2a); box-shadow: inset 0 1px #ffffff0b; }
 .brand-lockup h1 { margin: 0; color: #e9f1f9; font-size: 12px; font-weight: 650; letter-spacing: .015em; }
@@ -131,3 +136,19 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.window-hide-button { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; color: #8697aa; border: 1px solid #283444; border-radius: 8px; background: #111a25; cursor: pointer; transition: color .18s ease, background .18s ease, border-color .18s ease; }
+.window-hide-button:hover { color: #e9f4ff; border-color: #506d86; background: #1b2938; }
+.window-hide-button:focus-visible { outline: 2px solid #86d6ff; outline-offset: 2px; }
+
+@media (max-height: 650px) {
+  .app-shell { padding-top: 14px; padding-bottom: 12px; }
+  .device-heading { margin-top: 16px; }
+  .device-stage { height: 190px; }
+  .range-list { gap: 10px; margin-top: 12px; }
+  .scenario-panel { margin-top: 11px; }
+}
+.topbar { cursor: grab; }
+.topbar:active { cursor: grabbing; }
+.topbar button { cursor: pointer; }

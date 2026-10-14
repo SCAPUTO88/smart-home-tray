@@ -1,4 +1,4 @@
-name: Desktop frontend
+name: Desktop frontend and Windows shell
 
 on:
   pull_request:
@@ -26,3 +26,33 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  tauri-windows:
+    name: Tauri and Rust (Windows MSVC)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+      - run: cargo fmt --all -- --check
+      - run: cargo check --locked
+      - run: cargo test --locked
+      - name: Build native application without bundling
+        working-directory: desktop
+        run: npm run tauri:build -- --no-bundle
