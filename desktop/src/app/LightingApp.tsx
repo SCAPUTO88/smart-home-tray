@@ -9,6 +9,7 @@ import { PowerButton } from '../components/controls/PowerButton'
 import { RangeControl } from '../components/controls/RangeControl'
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { Activity, Check, ChevronDown, Lightbulb, Palette, SlidersHorizontal, WifiOff } from 'lucide-react'
+import WindowControls from '../platform/WindowControls'
 import './LightingApp.css'
 
 interface LightingAppProps {
@@ -54,9 +55,12 @@ export default function LightingApp({ controller: suppliedController }: Lighting
       <main className="app-shell" style={{ '--accent-color': accent, '--accent-intensity': ambientIntensity } as CSSProperties}>
         <header className="topbar">
           <Brand />
-          <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>
-            {device.connection === 'offline' ? <WifiOff size={12} /> : <i aria-hidden="true" />}
-            {device.connection === 'offline' ? 'Offline' : 'Conectado · simulação'}
+          <div className="topbar-actions">
+            <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>
+              {device.connection === 'offline' ? <WifiOff size={12} /> : <i aria-hidden="true" />}
+              {device.connection === 'offline' ? 'Offline' : 'Conectado · simulação'}
+            </div>
+            <WindowControls />
           </div>
         </header>
 

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  smart_home_tray::run();
+    smart_home_tray::run();
 }
