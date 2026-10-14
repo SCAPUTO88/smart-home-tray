@@ -95,3 +95,11 @@
 - **Decisão:** o mock e a sessão acompanham a precedência de intenção por dispositivo e por campo; HSV é reconciliado por canal. Respostas assíncronas só mesclam valores dos campos ainda pertencentes àquela operação. A prévia aplica patches pendentes sobre o último estado confirmado. Cancelamento/erro restaura a prévia dos campos afetados; offline invalida operações pendentes e mantém os valores conhecidos com qualidade offline. Estado desconhecido não é promovido a confirmado sem readback que o confirme.
 - **Motivo:** preservar comandos independentes e evitar que um resultado atrasado ou uma falha pareça uma atualização confirmada.
 - **Trade-offs:** o modelo visual acompanha intenções por campo sem ordenar ou agendar comandos no frontend. A integração JSON Lines futura deve usar respostas de readback do backend e continuar delegando ordenação/coalescing ao `CommandScheduler` Python. O seletor visual Branco/RGB precisará ser traduzido para uma operação de iluminação suportada; o protocolo não possui comando autônomo de modo.
+
+
+### D-014 — Renderização de iluminação material na F2A.1
+
+- **Estado:** aprovada para F2A.1.
+- **Decisão:** representar lâmpada e fita com SVG/CSS em camadas. A lâmpada usa gradientes de vidro/metal, reflexos especulares estáticos e emissor interno; a fita usa emissores discretos sob difusor translúcido. Halo e ambiente usam gradientes radiais cuja cor e opacidade derivam exclusivamente do estado normalizado de prévia. Temperatura visual usa três âncoras: âmbar, neutra e azulada; power off zera todas as camadas emissivas.
+- **Motivo:** aumentar materialidade e leitura de luz sem adicionar runtime 3D ou alterar arquitetura de controle.
+- **Trade-offs:** SVG e gradientes mantêm o custo baixo e permitem emissão colorida; gradientes ainda repintam quando a cor muda. Para preservar fluidez, blur não é animado, não há loop contínuo, e `prefers-reduced-motion` reduz transições. A escala visual de temperatura não confirma a orientação física Tuya e exige validação no equipamento.

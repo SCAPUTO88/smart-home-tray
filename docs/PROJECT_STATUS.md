@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 - Etapa F2A (prototipo visual interativo; checkpoint em andamento).
+- **Fase:** 2 - F2A.1 (polimento visual realista; CR-15 em correção local).
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** Etapa D integrada em develop pela PR #11. O prototipo F2A esta publicado na PR #13, direcionada a develop. Esta revisao local cobre CR-13/CR-14; 32 testes frontend e 177 testes backend passaram localmente apos as correcoes. Nenhuma validacao fisica foi realizada.
+- **Progresso:** PR #14 integrada em develop no commit 972f9cc; PR #16 F2A.1 publicada e revista visualmente pelo mantenedor, que aprovou a lâmpada e encontrou a regressão CR-15 na Fita LED. A correção CR-15 está na branch local; typecheck, lint, 46 testes frontend e build passaram. Nova inspeção visual da correção ainda necessária. Nenhuma validação física foi realizada.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -114,6 +114,14 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 2. Validar compilacao Tauri depois de instalar Rust/Cargo e Microsoft C++ Build Tools.
 3. Concluir a revisao arquitetural de CR-13/CR-14 e, depois da aprovacao do mantenedor, publicar os commits locais na branch da PR #13 direcionada a develop.
 
+## Revisão de código F2A.1 — CR-15
+
+- PR #16 foi publicada na branch feature/realistic-lighting-visuals; o mantenedor realizou revisão visual manual da gravação, aprovou o refinamento da lâmpada e identificou emissão residual branca na fita LED após Power OFF.
+- Causa visual: cápsulas quase brancas e ponto interno com opacidade mínima de 16% continuavam visíveis como emissores mesmo com intensidade normalizada zero.
+- Correção local CR-15: cápsulas de LEDs agora usam acabamento escuro metálico; ponto emissor usa a cor RGB já normalizada por HSV/Value e desaparece com opacidade zero quando desligado. Reflexos do difusor, specular, trilha e circuito seguem materiais visíveis sem emissão ativa. A legenda passa a dizer “Desligada” sem zerar o valor mantido no slider.
+- Testes frontend adicionados para desligamento e preservação do corpo físico, cor HSV em intensidade total e legenda sem alterar o percentual configurado. Os testes DOM/CSS validam estado e estrutura, mas não substituem nova inspeção visual da gravação após CR-15.
+- Verificações após CR-15: typecheck e lint aprovados; 46 testes frontend passaram; build Vite e git diff --check aprovados. Sem alterações no backend, nos contratos, no scheduler ou na reconciliação. Hardware e LAN não foram acessados.
+
 ## Checkpoint F2A - prototipo visual interativo
 
 - Estado: interface React/TypeScript demonstravel no navegador, camada Tauri 2 preparada e todos os dispositivos exclusivamente simulados.
@@ -134,3 +142,13 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 - Contrato futuro: Branco/RGB continua sendo abstracao visual; JSON Lines nao tem comando autonomo de modo. Adapter futuro precisa traduzir a selecao em operacao de iluminacao suportada, sem inventar comando IPC. Nenhum adapter Tauri/JSON Lines ou scheduler frontend foi implementado.
 - Testes adicionados em `desktop/src/features/devices/useLightingSession.test.tsx`, `desktop/src/mock/MockDeviceController.test.ts` e `desktop/src/app/App.test.tsx`. Typecheck, Oxlint, 32 testes frontend, build Vite e `rtk py -m pytest backend/tests -q` (177 passed) passaram.
 - A validacao continua exclusivamente simulada; nenhuma lampada, runtime backend de controle, LAN ou cloud foi acessada. Revisao visual manual e compilacao nativa Tauri permanecem pendentes.
+
+
+## F2A.1 — polimento visual realista
+
+- Estado: F2A.1 publicada pelo mantenedor como PR #16. A correção CR-15 está local na branch feature/realistic-lighting-visuals, sem push/merge.
+- `DeviceArtwork` desenha lâmpada com envelope de vidro em gradientes SVG, emissor, reflexos especulares recortados, base metálica e IDs SVG isolados por instância. A fita usa trilha dimensional, emissores individuais sob difusor translúcido e reflexão ambiente.
+- Cor e intensidade vêm apenas de `DeviceState` da prévia: HSV controla RGB, Value/brilho controla emissão e power off zera a emissão. Temperatura visual interpola âmbar, neutro e azulado. A direção do controle de temperatura Tuya continua sem validação física.
+- Glow usa camadas de gradientes radiais e transições de cor/opacidade; não há filtros blur animados. `prefers-reduced-motion` reduz transições CSS e animações existentes via MotionConfig. O acento do cartão segue a cor e intensidade da prévia.
+- Verificações: typecheck, lint, 44 testes frontend, build Vite e `git diff --check` passaram. Nenhum dispositivo, backend runtime, LAN ou cloud foi acessado.
+- Limitação do checkpoint visual original: não havia janela de navegador para screenshots automatizadas. Depois, o mantenedor revisou manualmente a gravação, aprovou a lâmpada e identificou CR-15 na fita; a correção local ainda aguarda inspeção visual manual.
