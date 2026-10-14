@@ -1,6 +1,6 @@
 # Smart Home Tray — desktop
 
-A aplicação usa React/Vite para a interface, Tauri 2/Rust para a janela e o system tray, e exclusivamente `MockDeviceController` para os controles. Não inicia o backend Python, não abre JSON Lines, não acessa LAN/cloud e não controla dispositivos físicos.
+A interface usa React/Vite e continua isolada atrás de DeviceController. Navegador e Tauri padrão usam MockDeviceController. Em desenvolvimento, o Tauri pode iniciar o processo fixture ou o backend Python real explicitamente habilitado. A fixture não acessa rede nem dispositivos físicos.
 
 ## Pré-requisitos no Windows
 
@@ -87,3 +87,56 @@ O popup não fecha ao perder foco para evitar conflitos com menus/seleção. Cad
 
 
 O mantenedor confirmou no Windows que `npm run tauri:dev` abre a janela nativa e renderiza os dispositivos simulados. A interação do arraste e o novo ancoramento ainda precisam de confirmação manual. Nesta revisão: cargo fmt/check passaram, 12 testes Rust, 53 testes frontend, typecheck/lint/build Vite e `npm run tauri:build -- --no-bundle` passaram. O build mostra aviso não bloqueante de colisão PDB entre bin/lib. CI remoto aguarda execução.
+
+## Modos de execução F2C.1
+
+### Navegador (sempre mock)
+
+```powershell
+npm run dev
+```
+
+O navegador sempre usa MockDeviceController e ignora as variáveis de modo nativo. O painel de cenários continua disponível.
+
+### Tauri padrão (mock)
+
+```powershell
+npm run tauri:dev
+```
+
+Sem configuração adicional, o Tauri também inicia no modo MOCK e mantém o comportamento existente.
+
+### Tauri com processo fixture
+
+No PowerShell, em desktop/, escolha FIXTURE no processo Rust antes de iniciar:
+
+```powershell
+$env:SMART_HOME_TRAY_BACKEND_MODE = "fixture"
+npm run tauri:dev
+```
+
+A fixture implementa os envelopes JSON Lines existentes com dados artificiais, sem TinyTuya, configuração TOML ou acesso à rede. O rodapé identifica os dados como fixture e o painel Cenário de teste não aparece. Para retornar ao padrão, remova a variável da sessão:
+
+```powershell
+Remove-Item Env:SMART_HOME_TRAY_BACKEND_MODE
+```
+
+### REAL de desenvolvimento — opt-in não executado nesta etapa
+
+O caminho REAL é preparado, mas não foi executado com equipamento. Requer Python compatível e dependências do backend instaladas, arquivo TOML externo válido com IDs/capacidades/DPS corretos e variáveis Local Key referenciadas por esse arquivo já presentes no ambiente do processo. O arquivo TOML deve ser absoluto. Nunca coloque valores de chave no TOML, no código ou no frontend.
+
+```powershell
+$env:SMART_HOME_TRAY_BACKEND_MODE = "real"
+$env:SMART_HOME_TRAY_ALLOW_REAL = "1"
+$env:SMART_HOME_TRAY_CONFIG = "C:\caminho\absoluto\config.toml"
+npm run tauri:dev
+```
+
+Remova as três variáveis ao terminar. O app usa o comando fixo python -m smart_home_tray.cli --config <arquivo> serve. Somente Rust lê as variáveis; a WebView não pode solicitar outro executável, args ou caminho. Se REAL foi escolhido e o bridge falhar, a UI mostra erro e não muda silenciosamente para simulação. Faça a revisão arquitetural antes de testar hardware.
+
+O produto ainda depende de um Python externo; sidecar Python empacotado, instalador, assinatura e atualização automática ficam para etapas posteriores.
+
+## Backlog não incluído
+
+- CR-20: ajustar a proximidade do popup ao tray em certas configurações multi-monitor; o mantenedor relatou distância excessiva durante validação F2B.
+- Revisão futura da ilustração da Fita LED como fita COB flexível, parcialmente enrolada, com difusor contínuo.

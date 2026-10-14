@@ -1,16 +1,18 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LightingApp from '../app/LightingApp'
+import { createMockDeviceController } from '../mock/MockDeviceController'
 import WindowControls from './WindowControls'
 import { hidePanel, isTauriRuntime, startDraggingPanel } from './tauriWindow'
 
 const native = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
+  invoke: vi.fn(async () => ({ mode: 'mock', available: true, error: null })),
   hide: vi.fn(async () => undefined),
   startDragging: vi.fn(async () => undefined),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({ isTauri: native.isTauri }))
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: native.isTauri, invoke: native.invoke }))
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ hide: native.hide, startDragging: native.startDragging }) }))
 
 describe('Tauri window controls', () => {
@@ -53,9 +55,10 @@ describe('frameless header dragging', () => {
 
   it('starts native dragging from the app header in Tauri', async () => {
     native.isTauri.mockReturnValue(true)
-    render(<LightingApp />)
-    fireEvent.mouseDown(screen.getByRole('banner'), { button: 0 })
-    await waitFor(() => expect(native.startDragging).toHaveBeenCalledOnce())
+    render(<LightingApp controller={createMockDeviceController({ delayMs: 0 })} />)
+    const header = await screen.findByRole('banner')
+    expect(await startDraggingPanel(header, 0)).toBe(true)
+    expect(native.startDragging).toHaveBeenCalledOnce()
   })
 
   it('does not start dragging from interactive header controls', async () => {

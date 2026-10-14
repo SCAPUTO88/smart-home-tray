@@ -1,7 +1,7 @@
 export type DeviceId = string
 export type DeviceKind = 'bulb' | 'led-strip'
 export type DeviceMode = 'rgb' | 'white'
-export type ConnectionState = 'online' | 'offline'
+export type ConnectionState = 'online' | 'offline' | 'unknown'
 export type StateQuality = 'confirmed' | 'pending' | 'offline' | 'unknown'
 
 export interface HsvColor {
@@ -43,6 +43,7 @@ export type OperationScenario = 'success' | 'delay' | 'canceled' | 'error' | 'of
 export type OperationStatus = 'idle' | 'pending' | 'confirmed' | 'canceled' | 'offline' | 'error'
 
 export interface DeviceController {
+  readonly mode?: 'mock' | 'fixture' | 'real'
   list(): Promise<LightingDevice[]>
   command(deviceId: DeviceId, patch: LightingPatch, scenario?: OperationScenario): Promise<LightingDevice>
 }
@@ -57,7 +58,7 @@ export interface DeviceViewState {
 }
 
 export class OperationError extends Error {
-  readonly code: 'COMMAND_CANCELED' | 'DEVICE_OFFLINE' | 'DEVICE_ERROR' | 'UNSUPPORTED_CAPABILITY'
+  readonly code: 'COMMAND_CANCELED' | 'DEVICE_OFFLINE' | 'DEVICE_ERROR' | 'UNSUPPORTED_CAPABILITY' | 'TIMEOUT' | 'AUTH_FAILED' | 'INVALID_INPUT'
 
   constructor(code: OperationError['code']) {
     super(code)

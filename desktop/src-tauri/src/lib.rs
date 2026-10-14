@@ -1,3 +1,4 @@
+mod bridge;
 mod positioning;
 
 use std::sync::{
@@ -164,7 +165,17 @@ fn remember_tray_rect(event: &TrayIconEvent) -> Option<positioning::Rect> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .manage(bridge::BridgeState::new())
+        .invoke_handler(tauri::generate_handler![
+            bridge::bridge_info,
+            bridge::bridge_list,
+            bridge::bridge_status,
+            bridge::bridge_power,
+            bridge::bridge_white_brightness,
+            bridge::bridge_color_temperature,
+            bridge::bridge_hsv
+        ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let anchor = app
@@ -265,8 +276,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while building tauri application");
+    app.run(|handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            handle.state::<bridge::BridgeState>().shutdown();
+        }
+    });
 }
 
 #[cfg(test)]

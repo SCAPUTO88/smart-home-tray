@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DeviceController, LightingDevice } from '../features/devices/types'
 import { createMockDeviceController, createMockDevices } from '../mock/MockDeviceController'
 import App from './LightingApp'
@@ -12,6 +12,12 @@ function renderApp() {
 }
 
 describe('Smart Home Tray app', () => {
+  it('surfaces an initial catalog failure instead of remaining on an endless loading screen', async () => {
+    const controller: DeviceController = { mode: 'real', async list() { throw new Error('fixture startup failed') }, async command() { throw new Error('not used') } }
+    render(<App controller={controller} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Não foi possível carregar os dispositivos')
+  })
+
   it('shows the product and the two simulated devices', async () => {
     renderApp()
 
@@ -197,4 +203,20 @@ describe('Smart Home Tray app', () => {
     await screen.findByRole('button', { name: 'Ligar Luz Mesa' })
     expect(shell.style.getPropertyValue('--accent-intensity')).toBe('0')
   })
+
+  it("does not present or control null REAL state as an off zero value", async () => {
+    const [lamp] = createMockDevices()
+    const unknownLamp: LightingDevice = { ...lamp, connection: "unknown", state: { ...lamp.state, enabled: false, quality: "unknown" } }
+    const command = vi.fn(async () => lamp)
+    const controller: DeviceController = { mode: "real", list: async () => [unknownLamp], command }
+    render(<App controller={controller} />)
+    await screen.findByRole("heading", { name: "Luz Mesa" })
+    const stage = screen.getByRole("region", { name: "Visualização Luz Mesa" })
+    expect(stage.querySelector(".stage-value")).toHaveTextContent("Estado desconhecido")
+    expect(screen.getByRole("button", { name: "Estado de energia desconhecido para Luz Mesa" })).toBeDisabled()
+    expect(screen.getByRole("slider", { name: "Matiz" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "RGB" })).toBeDisabled()
+    expect(command).not.toHaveBeenCalled()
+  })
+
 })

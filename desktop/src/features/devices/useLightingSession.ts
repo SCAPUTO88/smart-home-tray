@@ -98,6 +98,7 @@ function mergeReadback(confirmed: DeviceViewState['confirmed'], response: Lighti
 
 export function useLightingSession(controller: DeviceController) {
   const [devices, setDevices] = useState<LightingDevice[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [views, setViews] = useState<Record<DeviceId, DeviceViewState>>({})
   const [selectedDeviceId, setSelectedDeviceId] = useState<DeviceId | null>(null)
   const sequenceByDevice = useRef<Record<DeviceId, number>>({})
@@ -109,10 +110,11 @@ export function useLightingSession(controller: DeviceController) {
     let active = true
     void controller.list().then((catalog) => {
       if (!active) return
+      setLoadError(null)
       setDevices(catalog)
       setViews(Object.fromEntries(catalog.map((device) => [device.deviceId, initialView(device)])))
       setSelectedDeviceId((current) => current ?? catalog[0]?.deviceId ?? null)
-    })
+    }).catch(() => { if (active) setLoadError("Não foi possível carregar os dispositivos") })
     return () => { active = false }
   }, [controller])
 
@@ -226,5 +228,5 @@ export function useLightingSession(controller: DeviceController) {
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null
   const selectedView = selectedDeviceId ? views[selectedDeviceId] ?? null : null
 
-  return { devices, selectedDevice, selectedView, selectedDeviceId, selectDevice: setSelectedDeviceId, issue }
+  return { devices, selectedDevice, selectedView, selectedDeviceId, selectDevice: setSelectedDeviceId, issue, loadError }
 }
