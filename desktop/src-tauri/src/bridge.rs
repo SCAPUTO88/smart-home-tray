@@ -88,19 +88,35 @@ enum ProcessConfig {
 }
 impl ProcessConfig {
     fn from_environment() -> Result<Option<Self>, BridgeError> {
-        match std::env::var("SMART_HOME_TRAY_BACKEND_MODE").as_deref() {
-            Ok("fixture") => Ok(Some(Self::Fixture)),
-            Ok("real") => {
-                if std::env::var("SMART_HOME_TRAY_ALLOW_REAL").as_deref() != Ok("1") {
+        let mode = match std::env::var("SMART_HOME_TRAY_BACKEND_MODE") {
+            Ok(mode) => Some(mode),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(BridgeError::new(BridgeErrorCode::InvalidInput));
+            }
+        };
+        let allow_real = std::env::var("SMART_HOME_TRAY_ALLOW_REAL").ok();
+        let config = std::env::var_os("SMART_HOME_TRAY_CONFIG").map(PathBuf::from);
+        Self::from_values(mode.as_deref(), allow_real.as_deref(), config)
+    }
+    fn from_values(
+        mode: Option<&str>,
+        allow_real: Option<&str>,
+        config: Option<PathBuf>,
+    ) -> Result<Option<Self>, BridgeError> {
+        match mode {
+            None | Some("mock") => Ok(None),
+            Some("fixture") => Ok(Some(Self::Fixture)),
+            Some("real") => {
+                if allow_real != Some("1") {
                     return Err(BridgeError::new(BridgeErrorCode::InvalidInput));
                 }
-                let path = std::env::var_os("SMART_HOME_TRAY_CONFIG")
-                    .map(PathBuf::from)
-                    .filter(|p| p.is_absolute())
+                let path = config
+                    .filter(|path| path.is_absolute())
                     .ok_or_else(|| BridgeError::new(BridgeErrorCode::InvalidInput))?;
                 Ok(Some(Self::Real(path)))
             }
-            _ => Ok(None),
+            Some(_) => Err(BridgeError::new(BridgeErrorCode::InvalidInput)),
         }
     }
     fn mode(&self) -> BackendMode {
@@ -138,9 +154,12 @@ impl ProcessConfig {
     }
 }
 
+struct RequestState {
+    pending: HashMap<String, Sender<Result<Value, BridgeError>>>,
+    failed: Option<BridgeError>,
+}
 struct Shared {
-    pending: Mutex<HashMap<String, Sender<Result<Value, BridgeError>>>>,
-    failed: Mutex<Option<BridgeError>>,
+    requests: Mutex<RequestState>,
     next_id: AtomicU64,
 }
 #[derive(Clone)]
@@ -170,8 +189,10 @@ impl BridgeClient {
             .take()
             .ok_or_else(|| io::Error::other("stderr pipe missing"))?;
         let shared = Arc::new(Shared {
-            pending: Mutex::new(HashMap::new()),
-            failed: Mutex::new(None),
+            requests: Mutex::new(RequestState {
+                pending: HashMap::new(),
+                failed: None,
+            }),
             next_id: AtomicU64::new(1),
         });
         let reader_shared = shared.clone();
@@ -191,26 +212,18 @@ impl BridgeClient {
         })
     }
     pub fn request(&self, command: &'static str, payload: Value) -> Result<Value, BridgeError> {
-        if let Some(error) = self.shared.failed.lock().ok().and_then(|v| v.clone()) {
-            return Err(error);
-        }
         let id = format!(
             "req-{}",
             self.shared.next_id.fetch_add(1, Ordering::Relaxed)
         );
         let (sender, receiver) = mpsc::channel();
-        self.shared
-            .pending
-            .lock()
-            .map_err(|_| BridgeError::protocol())?
-            .insert(id.clone(), sender);
         let bytes =
             serde_json::to_vec(&json!({"requestId":id,"command":command,"payload":payload}))
                 .map_err(|_| BridgeError::protocol())?;
         if bytes.len() > MAX_MESSAGE_BYTES {
-            self.remove_pending(&id);
             return Err(BridgeError::new(BridgeErrorCode::InvalidInput));
         }
+        register_pending(&self.shared, id.clone(), sender)?;
         let write_result = self.stdin.lock().ok().and_then(|mut guard| {
             guard.as_mut().map(|stdin| {
                 stdin
@@ -237,19 +250,12 @@ impl BridgeClient {
         }
     }
     fn remove_pending(&self, id: &str) {
-        if let Ok(mut pending) = self.shared.pending.lock() {
-            pending.remove(id);
+        if let Ok(mut requests) = self.shared.requests.lock() {
+            requests.pending.remove(id);
         }
     }
     fn fail_all(&self, error: BridgeError) {
-        if let Ok(mut failed) = self.shared.failed.lock() {
-            *failed = Some(error.clone());
-        }
-        if let Ok(mut pending) = self.shared.pending.lock() {
-            for (_, sender) in pending.drain() {
-                let _ = sender.send(Err(error.clone()));
-            }
-        }
+        fail_shared(&self.shared, error);
     }
     pub fn shutdown(&self) {
         if let Ok(mut stdin) = self.stdin.lock() {
@@ -305,10 +311,13 @@ fn read_responses<R: BufRead>(mut reader: R, shared: Arc<Shared>) {
         match read_bounded_line(&mut reader) {
             Ok(Some(line)) => match parse_response(&line) {
                 Ok((id, result)) => {
-                    if let Ok(mut pending) = shared.pending.lock() {
-                        if let Some(sender) = pending.remove(&id) {
-                            let _ = sender.send(result);
-                        }
+                    let sender = shared
+                        .requests
+                        .lock()
+                        .ok()
+                        .and_then(|mut requests| requests.pending.remove(&id));
+                    if let Some(sender) = sender {
+                        let _ = sender.send(result);
                     }
                 }
                 Err(_) => {
@@ -328,14 +337,36 @@ fn read_responses<R: BufRead>(mut reader: R, shared: Arc<Shared>) {
     }
 }
 fn fail_shared(shared: &Shared, error: BridgeError) {
-    if let Ok(mut failed) = shared.failed.lock() {
-        *failed = Some(error.clone());
-    }
-    if let Ok(mut pending) = shared.pending.lock() {
-        for (_, sender) in pending.drain() {
-            let _ = sender.send(Err(error.clone()));
+    let pending = if let Ok(mut requests) = shared.requests.lock() {
+        if requests.failed.is_none() {
+            requests.failed = Some(error.clone());
         }
+        requests
+            .pending
+            .drain()
+            .map(|(_, sender)| sender)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    for sender in pending {
+        let _ = sender.send(Err(error.clone()));
     }
+}
+fn register_pending(
+    shared: &Shared,
+    id: String,
+    sender: Sender<Result<Value, BridgeError>>,
+) -> Result<(), BridgeError> {
+    let mut requests = shared
+        .requests
+        .lock()
+        .map_err(|_| BridgeError::protocol())?;
+    if let Some(error) = &requests.failed {
+        return Err(error.clone());
+    }
+    requests.pending.insert(id, sender);
+    Ok(())
 }
 fn read_bounded_line<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
     let mut output = Vec::new();
@@ -725,5 +756,73 @@ mod tests {
         ] {
             assert_eq!(BridgeError::from_backend(wire).code, expected);
         }
+    }
+    fn shared_for_test() -> Arc<Shared> {
+        Arc::new(Shared {
+            requests: Mutex::new(RequestState {
+                pending: HashMap::new(),
+                failed: None,
+            }),
+            next_id: AtomicU64::new(1),
+        })
+    }
+
+    #[test]
+    fn concurrent_failure_and_registration_always_finish_terminally() {
+        for index in 0..32 {
+            let shared = shared_for_test();
+            let barrier = Arc::new(std::sync::Barrier::new(3));
+            let (sender, receiver) = mpsc::channel();
+            let registering_shared = shared.clone();
+            let registering_barrier = barrier.clone();
+            let registration = thread::spawn(move || {
+                registering_barrier.wait();
+                register_pending(&registering_shared, format!("race-{index}"), sender)
+            });
+            let failing_shared = shared.clone();
+            let failing_barrier = barrier.clone();
+            let failure = thread::spawn(move || {
+                failing_barrier.wait();
+                fail_shared(&failing_shared, BridgeError::protocol());
+            });
+            barrier.wait();
+            let registered = registration.join().unwrap();
+            failure.join().unwrap();
+            match registered {
+                Ok(()) => assert_eq!(
+                    receiver
+                        .recv_timeout(Duration::from_secs(1))
+                        .unwrap()
+                        .unwrap_err()
+                        .code,
+                    BridgeErrorCode::DeviceError
+                ),
+                Err(error) => assert_eq!(error.code, BridgeErrorCode::DeviceError),
+            }
+            assert!(shared.requests.lock().unwrap().pending.is_empty());
+        }
+    }
+
+    #[test]
+    fn backend_mode_is_mock_only_when_missing_or_explicitly_mock() {
+        assert!(matches!(
+            ProcessConfig::from_values(None, None, None),
+            Ok(None)
+        ));
+        assert!(matches!(
+            ProcessConfig::from_values(Some("mock"), None, None),
+            Ok(None)
+        ));
+        assert!(matches!(
+            ProcessConfig::from_values(Some("fixture"), None, None),
+            Ok(Some(ProcessConfig::Fixture))
+        ));
+        assert!(ProcessConfig::from_values(Some("mystery"), None, None).is_err());
+        assert!(ProcessConfig::from_values(Some("real"), None, None).is_err());
+        assert!(ProcessConfig::from_values(Some("real"), Some("1"), None).is_err());
+        let path = std::env::temp_dir().join("smart-home-tray-test.toml");
+        assert!(
+            matches!(ProcessConfig::from_values(Some("real"), Some("1"), Some(path.clone())), Ok(Some(ProcessConfig::Real(value))) if value == path)
+        );
     }
 }

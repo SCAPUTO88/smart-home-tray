@@ -12,6 +12,9 @@ const bridgeApi: BridgeApi = {
     if (!result || !Array.isArray(result.devices)) throw { code: 'DEVICE_ERROR' }
     return result.devices
   },
+  status(deviceId) {
+    return invoke<PublicDeviceStatus>('bridge_status', { deviceId })
+  },
   async command(request) {
     const payload = request.payload
     switch (request.command) {
@@ -31,4 +34,3 @@ export async function resolveDeviceController(): Promise<DeviceController> {
   if (!info.available) throw info.error ?? { code: 'DEVICE_ERROR' }
   return new TauriDeviceController(bridgeApi, info.mode)
 }
-

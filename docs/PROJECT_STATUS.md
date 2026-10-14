@@ -182,3 +182,12 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 - **Validação executada:** typecheck, lint, build Vite e 66 testes frontend aprovados; cargo fmt, cargo check --locked e cargo test --locked aprovados (21 testes); build Tauri Windows --no-bundle aprovado; pytest backend/tests com Python 3.14.3 (180 testes) e compileall aprovados. O Cargo avisou colisão de nome PDB bin/lib, mas o build concluiu.
 - **Validação manual pendente:** eventos nativos e fluxo visual ainda precisam de confirmação do mantenedor no Windows. O fixture comprova o fluxo subprocesso/protocolo, sem dispositivos reais.
 - **Próximo checkpoint:** revisão arquitetural antes de habilitar REAL com equipamentos.
+
+## Revisao F2C.1 CR-21 / CR-22 / CR-23
+
+- **Base revisada:** PR #19, head revisado 3d794107; correcoes locais na branch feature/tauri-python-bridge. Este clone usa um origin local, portanto a PR foi identificada pelo head informado e consultada no GitHub sem alterar a PR.
+- **CR-21:** em modo REAL opt-in, a hidratacao obtem devices.list e faz device.status por dispositivo; uma falha nao bloqueia os demais. Campos nulos/incompletos continuam unknown, e a interface desabilita os controles que exigiriam estado confirmado. MOCK e FIXTURE nao fazem esse readback inicial. Sem polling.
+- **CR-22:** respostas de comando nao substituem um readback mais recente; a base confirmada so avanca com estado completo e confirmado. Intencoes HSV completas pendentes preservam a composicao dos canais entre respostas fora de ordem ou cancelamento. Falhas nao alteram a ultima base confirmada e o estado e isolado por dispositivo.
+- **CR-23:** failed e pending agora sao protegidos por um unico estado sincronizado; registro concorrente apos falha retorna erro terminal. SMART_HOME_TRAY_BACKEND_MODE ausente continua MOCK e valor desconhecido e rejeitado. Opt-ins de REAL permanecem obrigatorios.
+- **Validacao local:** frontend typecheck/lint, 74 testes, build Vite; Rust fmt/check/test (23 testes); build Tauri Windows --no-bundle; backend pytest (180 testes) e compileall passaram. Os testes IPC usam somente fixture e dados fake; nenhum hardware/LAN foi acessado.
+- **Limitacao:** falta validacao manual de UI no modo REAL opt-in; nao foi feita ativacao com dispositivos. A posicao multi-monitor CR-20 e o redesign flexivel COB continuam backlog.

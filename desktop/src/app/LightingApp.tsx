@@ -67,6 +67,7 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
   }
 
   const state = view.preview
+  const stateUnavailable = state.quality === 'unknown' || state.quality === 'offline'
   const accent = selectedLightingColor(state)
   const ambientIntensity = lightingIntensity(state)
   const issueValue = (patch: LightingPatch) => issue(device.deviceId, patch, scenario)
@@ -95,7 +96,7 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
             <span className="eyebrow">CONTROLE DE ILUMINAÇÃO</span>
             <h2>{device.name}</h2>
           </div>
-          <PowerButton deviceName={device.name} enabled={state.enabled} disabled={!device.capabilities.power} onToggle={() => issueValue({ enabled: !state.enabled })} />
+          <PowerButton deviceName={device.name} enabled={state.enabled} disabled={!device.capabilities.power || stateUnavailable} unknown={stateUnavailable} onToggle={() => issueValue({ enabled: !state.enabled })} />
         </div>
 
         <nav className="device-switcher" aria-label="Selecionar dispositivo">
@@ -126,8 +127,8 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
           >
             <DeviceArtwork device={device} state={state} />
             <div className="stage-caption">
-              <span className="stage-mode"><Palette size={13} /> {state.mode === 'rgb' ? 'Espectro RGB' : 'Luz branca'}</span>
-              <span className="stage-value">{state.enabled ? Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness) + '% intensidade' : 'Desligada'}</span>
+              <span className="stage-mode"><Palette size={13} /> {stateUnavailable ? (state.quality === 'offline' ? 'Offline' : 'Estado desconhecido') : state.mode === 'rgb' ? 'Espectro RGB' : 'Luz branca'}</span>
+              <span className="stage-value">{stateUnavailable ? (state.quality === 'offline' ? 'Offline' : 'Estado desconhecido') : state.enabled ? Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness) + '% intensidade' : 'Desligada'}</span>
             </div>
           </motion.section>
         </AnimatePresence>
@@ -150,8 +151,8 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
 
           {device.capabilities.white && (
             <div className="mode-switch" role="group" aria-label="Modo de iluminação">
-              <button type="button" className={state.mode === 'white' ? 'is-active' : ''} aria-pressed={state.mode === 'white'} onClick={() => issueValue({ mode: 'white' })}>Branco</button>
-              <button type="button" className={state.mode === 'rgb' ? 'is-active' : ''} aria-pressed={state.mode === 'rgb'} onClick={() => issueValue({ mode: 'rgb' })}>RGB</button>
+              <button type="button" className={!stateUnavailable && state.mode === 'white' ? 'is-active' : ''} aria-pressed={stateUnavailable ? undefined : state.mode === 'white'} disabled={stateUnavailable} onClick={() => issueValue({ mode: 'white' })}>Branco</button>
+              <button type="button" className={!stateUnavailable && state.mode === 'rgb' ? 'is-active' : ''} aria-pressed={stateUnavailable ? undefined : state.mode === 'rgb'} disabled={stateUnavailable} onClick={() => issueValue({ mode: 'rgb' })}>RGB</button>
             </div>
           )}
 
@@ -167,17 +168,17 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
             >
               {state.mode === 'rgb' && device.capabilities.rgb ? (
                 <>
-                  <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { hue } })} />
-                  <RangeControl label="Saturação" value={state.hsv.saturation} onChange={(saturation) => issueValue({ hsv: { saturation } })} />
-                  <RangeControl label="Intensidade RGB" value={state.hsv.value} onChange={(value) => issueValue({ hsv: { value } })} />
+                  <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(hue) => issueValue({ hsv: { hue } })} />
+                  <RangeControl label="Saturação" value={state.hsv.saturation} disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(saturation) => issueValue({ hsv: { saturation } })} />
+                  <RangeControl label="Intensidade RGB" value={state.hsv.value} disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(value) => issueValue({ hsv: { value } })} />
                 </>
               ) : device.capabilities.white ? (
                 <>
-                  {device.capabilities.white && <RangeControl label="Brilho branco" value={state.whiteBrightness} onChange={(whiteBrightness) => issueValue({ whiteBrightness })} />}
-                  {device.capabilities.temperature && <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />}
+                  {device.capabilities.white && <RangeControl label="Brilho branco" value={state.whiteBrightness} disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(whiteBrightness) => issueValue({ whiteBrightness })} />}
+                  {device.capabilities.temperature && <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />}
                 </>
               ) : (
-                <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" onChange={(hue) => issueValue({ hsv: { hue } })} />
+                <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(hue) => issueValue({ hsv: { hue } })} />
               )}
             </motion.div>
           </div>
