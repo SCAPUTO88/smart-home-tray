@@ -1,10 +1,10 @@
-import { OperationError as OperationErrorClass, type DeviceKind, type LightingDevice, type StateQuality } from './types'
+import { OperationError as OperationErrorClass, type DeviceKind, type LightingDevice, type StateQuality, type DeviceKnowledge } from './types'
 
 export interface PublicDeviceStatus {
   deviceId: string; name: string; address: string; protocolVersion: number;
   capabilities: { power: boolean; whiteBrightness: boolean; colorValue: boolean; colorTemperature: boolean; scenes: boolean };
   connection: 'online' | 'offline' | 'unknown';
-  state: { power: boolean | null; workMode: string | null; whiteBrightnessPercent: number | null; colorValuePercent: number | null; colorTemperaturePercent: number | null; hsv: { hue: number; saturation: number; value: number } | null; scene: string | null; quality: StateQuality };
+  state: { power: boolean | null; workMode: string | null; whiteBrightnessPercent: number | null; colorValuePercent: number | null; colorTemperaturePercent: number | null; hsv: { hue: number; saturation: number; value: number } | null; scene: string | null; quality: StateQuality; knowledge: DeviceKnowledge };
 }
 
 export function mapPublicDevice(status: PublicDeviceStatus): LightingDevice {
@@ -13,9 +13,7 @@ export function mapPublicDevice(status: PublicDeviceStatus): LightingDevice {
   const kind: DeviceKind = caps.whiteBrightness || caps.colorTemperature ? 'bulb' : 'led-strip'
   const hsv = state.hsv
   const white = caps.whiteBrightness || caps.colorTemperature
-  const modeKnown = state.workMode === 'white' || state.workMode === 'colour' || state.workMode === 'color' || (caps.colorValue && !white) || (white && !caps.colorValue)
-  const complete = modeKnown && (!caps.power || state.power !== null) && (!caps.colorValue || hsv !== null) && (!caps.whiteBrightness || state.whiteBrightnessPercent !== null) && (!caps.colorTemperature || state.colorTemperaturePercent !== null)
-  const quality: StateQuality = status.connection === 'offline' ? 'offline' : status.connection !== 'online' || !complete ? 'unknown' : state.quality
+  const quality: StateQuality = status.connection === 'offline' ? 'offline' : status.connection !== 'online' ? 'unknown' : state.quality
   const mode = state.workMode === 'white' || (white && !caps.colorValue) ? 'white' : 'rgb'
   return {
     deviceId: status.deviceId, name: status.name, kind,
@@ -25,6 +23,7 @@ export function mapPublicDevice(status: PublicDeviceStatus): LightingDevice {
       enabled: state.power ?? false, mode,
       hsv: { hue: hsv?.hue ?? 0, saturation: hsv?.saturation ?? 0, value: hsv?.value ?? state.colorValuePercent ?? 0 },
       whiteBrightness: state.whiteBrightnessPercent ?? 0, whiteTemperature: state.colorTemperaturePercent ?? 0, quality,
+      knowledge: state.knowledge,
     },
   }
 }

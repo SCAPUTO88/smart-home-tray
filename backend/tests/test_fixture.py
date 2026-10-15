@@ -23,6 +23,8 @@ def test_fixture_lists_public_devices_without_private_or_physical_fields():
         assert result["requestId"] == "list-1"
         devices = result["result"]["devices"]
         assert {item["deviceId"] for item in devices} == {"fixture-desk-lamp", "fixture-led-strip"}
+        assert devices[0]["state"]["knowledge"]["hsv"] == "observed"
+        assert devices[0]["state"]["knowledge"]["colorValue"] == devices[0]["state"]["knowledge"]["hsv"]
         assert all("localKey" not in item and "dps" not in item for item in devices)
     finally:
         process.stdin.close()

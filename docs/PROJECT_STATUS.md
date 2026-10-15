@@ -2,7 +2,7 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2C.1 (ponte Tauri ↔ Python com modo MOCK padrão e fixture isolado; revisão arquitetural desta etapa pendente).
+- **Fase:** 2 — F2C.2 CR-28/29/30 corrigidas e validadas localmente na branch feature/real-mode-readiness; PR #21 aguarda revisão do delta. Modo REAL não validado com equipamentos.
 - **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
 - **Progresso:** PR #17 (F2B, CR-16–19) integrada em origin/develop no merge 893e1ca. F2C.1 implementa a ponte tipada Tauri ↔ Python com MOCK por padrão, FIXTURE JSONL sem rede e REAL somente por opt-in controlado pelo processo Rust. A validação automatizada desta entrega foi concluída; nenhuma lâmpada física foi acessada. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
@@ -172,7 +172,7 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 - PR #16 (F2A.1 / CR-15): integrada em `origin/develop` no merge commit `e307e69`; validação visual manual do mantenedor aprovou a lâmpada e confirmou a correção final da Fita LED.
 - A interface navegável F2A continua em MOCK no navegador. F2C.1 adiciona transporte fixture e caminho REAL protegido por opt-in no aplicativo Tauri, sem testes físicos.
 
-## Checkpoint F2C.1 — implementação em revisão
+## Checkpoint F2C.1 — concluída e integrada
 
 - **Branch/base:** feature/tauri-python-bridge, baseada no merge PR #17 893e1ca. O worktree original e suas alterações locais foram preservados; a cópia isolada de implementação está em .worktrees/f2c1-tauri-python-bridge/.
 - **Arquitetura:** Rust possui o supervisor de subprocesso e comandos Tauri tipados. A WebView não fornece executável, argumentos, caminho de TOML, variáveis de ambiente ou comandos JSONL arbitrários. O controller converte o DTO público allowlisted para o modelo visual e mantém valores ausentes em qualidade desconhecida.
@@ -180,14 +180,43 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 - **Protocolo:** JSON Lines existente, envelope sem campo ok, correlação requestId, respostas fora de ordem, limite 65.536 bytes, stdout de protocolo e stderr drenado sem eco. O processo fica vivo quando a janela é ocultada e encerra no evento real de saída do app.
 - **Backlog:** CR-20, refinamento do posicionamento multi-monitor; fita LED flexível parcialmente enrolada com difusor COB contínuo. Ambos estão registrados sem implementação nesta etapa.
 - **Validação executada:** typecheck, lint, build Vite e 66 testes frontend aprovados; cargo fmt, cargo check --locked e cargo test --locked aprovados (21 testes); build Tauri Windows --no-bundle aprovado; pytest backend/tests com Python 3.14.3 (180 testes) e compileall aprovados. O Cargo avisou colisão de nome PDB bin/lib, mas o build concluiu.
-- **Validação manual pendente:** eventos nativos e fluxo visual ainda precisam de confirmação do mantenedor no Windows. O fixture comprova o fluxo subprocesso/protocolo, sem dispositivos reais.
-- **Próximo checkpoint:** revisão arquitetural antes de habilitar REAL com equipamentos.
+- **Validação manual:** o mantenedor aprovou a revisão arquitetural e validou manualmente o fluxo Tauri/FIXTURE no Windows. O fixture comprova subprocesso/protocolo, sem dispositivos reais.
+- **Integração:** PR #19 foi mergeada em develop e PR #20 levou a mesma entrega à main. REAL continuou sem ativação física; revisão arquitetural obrigatória antes do primeiro teste com equipamentos.
 
-## Revisao F2C.1 CR-21 / CR-22 / CR-23
+## Revisão F2C.1 CR-21 / CR-22 / CR-23 — integrada nas PRs #19/#20
 
 - **Base revisada:** PR #19, head revisado 3d794107; correcoes locais na branch feature/tauri-python-bridge. Este clone usa um origin local, portanto a PR foi identificada pelo head informado e consultada no GitHub sem alterar a PR.
 - **CR-21:** em modo REAL opt-in, a hidratacao obtem devices.list e faz device.status por dispositivo; uma falha nao bloqueia os demais. Campos nulos/incompletos continuam unknown, e a interface desabilita os controles que exigiriam estado confirmado. MOCK e FIXTURE nao fazem esse readback inicial. Sem polling.
 - **CR-22:** respostas de comando nao substituem um readback mais recente; a base confirmada so avanca com estado completo e confirmado. Intencoes HSV completas pendentes preservam a composicao dos canais entre respostas fora de ordem ou cancelamento. Falhas nao alteram a ultima base confirmada e o estado e isolado por dispositivo.
 - **CR-23:** failed e pending agora sao protegidos por um unico estado sincronizado; registro concorrente apos falha retorna erro terminal. SMART_HOME_TRAY_BACKEND_MODE ausente continua MOCK e valor desconhecido e rejeitado. Opt-ins de REAL permanecem obrigatorios.
-- **Validacao local:** frontend typecheck/lint, 74 testes, build Vite; Rust fmt/check/test (23 testes); build Tauri Windows --no-bundle; backend pytest (180 testes) e compileall passaram. Os testes IPC usam somente fixture e dados fake; nenhum hardware/LAN foi acessado.
+- **Validacao local:** frontend typecheck/lint, 74 testes, build Vite; Rust fmt/check/test (24 testes); build Tauri Windows --no-bundle; backend pytest (180 testes) e compileall passaram. Os testes IPC usam somente fixture e dados fake; nenhum hardware/LAN foi acessado. A revisão e correções foram incluídas nas PRs #19/#20, integradas em develop/main.
 - **Limitacao:** falta validacao manual de UI no modo REAL opt-in; nao foi feita ativacao com dispositivos. A posicao multi-monitor CR-20 e o redesign flexivel COB continuam backlog.
+
+
+## Checkpoint F2C.2 — Real Mode Readiness
+
+- Branch/worktree: feature/real-mode-readiness em .worktrees/real-mode-readiness, baseada na develop que contém o merge F2C.1 #19/#20.
+- Adicionado knowledge aditivo por campo ao snapshot público no backend: observed/stale/unknown para power, workMode, whiteBrightness, colorTemperature, hsv, colorValue e scene. O metadado é calculado com DPS validado, sem alterar quality global ou confirmação de escrita.
+- Mapper/controlador frontend agora carregam knowledge e compõem HSV somente com base observada; controles passaram a habilitar por campo/operação. A UI ganhou refresh manual, sem polling; refresh durante escrita é bloqueado e respostas obsoletas são descartadas.
+- Bridge Rust verifica o caminho TOML REAL como arquivo existente e valida funcionalidade do subprocesso por devices.list antes de marcar o bridge disponível. A saída continua normalizada.
+- Validação executada no worktree: frontend typecheck, lint, build Vite e 82 testes; backend pytest 182 testes e compileall; Rust fmt, check e 24 testes; build Tauri Windows sem bundle. O detalhamento final consta no handoff desta branch.
+- Nenhum hardware ou modo REAL foi acionado. O subprocesso REAL só valida configuração via arquivo absoluto existente e handshake devices.list, que não consulta LAN.
+
+## Revisão F2C.2 CR-28 / CR-29 / CR-30 — correções locais para PR #21
+
+- **CR-28:** merge de readback agora atualiza knowledge somente para os campos aceitos pela precedência por campo. HSV e colorValue avançam juntos; refresh bem-sucedido recupera knowledge stale/unknown. Testes cobrem stale/observed, coerência HSV e isolamento de knowledge de operações independentes.
+- **CR-29:** sessão e controller descartam efeitos de erros de refresh/comando quando já houve uma operação ou snapshot mais recente aplicável. A precedência usa revisões por dispositivo; falhas atuais continuam marcando offline, sem afetar outros dispositivos.
+- **CR-30:** controller separa sequência emitida, conjunto de operações pendentes e sequência/revisão do último snapshot aplicado. Um readback válido de A ainda pode ser aplicado quando B falhou; intenções sem confirmação são removidas e não viram base HSV.
+- **Regressões:** 9 testes novos entre `TauriDeviceController.test.ts` e `useLightingSession.test.tsx`; os casos RED foram observados antes das correções. Suíte frontend completa: 91 testes aprovados.
+- **Validação:** frontend typecheck, lint, 91 testes e build Vite aprovados; Rust fmt/check/test (24 testes) aprovados; build Tauri Windows `--no-bundle` aprovado; backend pytest (182 testes) e compileall aprovados; `git diff --check` aprovado.
+- **Ajuste do harness:** Vitest usou config temporário sem o plugin Tailwind, config loader nativo e pool de threads porque o carregamento padrão tentou subprocessos bloqueados pelo shell (`spawn EPERM`). O build Vite/Tauri foi concluído com `--configLoader native`; o build Tauri usou override local do `beforeBuildCommand`, sem alterar configuração versionada.
+- **Estado de integração:** correções locais ainda não publicadas nem mergeadas; PR #21 precisa receber o delta e passar nova revisão. Nenhum modo REAL, hardware, LAN doméstica ou cloud foi acessado; testes usam bridge fake, controladores deferred, MOCK/FIXTURE e subprocessos artificiais.
+
+## Revisão F2C.2 CR-31 — precedência de readbacks
+
+- **Causa:** o controller exigia que a revisão global do snapshot permanecesse igual desde a emissão para aplicar um comando. Quando A confirmava antes de B, A incrementava essa revisão e fazia B ser descartado mesmo sendo a operação emitida mais recentemente.
+- **Correção:** respostas de comandos são ordenadas por sequência emitida versus última sequência de comando aplicada. A revisão do snapshot continua avançando para proteger refreshes, mas não invalida um comando B posterior enquanto aguarda readback. B emitido por último substitui A se ambos confirmarem; A ainda pode confirmar após falha de B.
+- **Estado redundante:** removido `terminalResult`, que só armazenava resultado já entregue pela Promise e não participava das decisões de precedência. O conjunto de comandos pendentes e a base confirmada mantêm suas responsabilidades próprias.
+- **Regressão RED/GREEN:** teste deferred A(hue=210) e B(saturation=25), com A resolvendo antes de B, falhava porque C enviava saturation=70. Após a correção, C envia `{ hue: 210, saturation: 25, value: 30 }`.
+- **Validação CR-31:** typecheck, lint, 92 testes frontend e build Vite aprovados; `git diff --check` aprovado. Vitest e build usaram o config loader nativo; nenhum arquivo Rust/backend mudou neste delta.
+- **Integração:** correção local na branch `feature/real-mode-readiness`, após revisão de CR-28/29/30 no commit `14f11c4`; sem push/merge. Modo REAL e acesso físico permanecem desativados.

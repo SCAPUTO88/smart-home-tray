@@ -29,11 +29,14 @@ function whiteTemperatureColor(temperature: number): RgbColor {
 }
 
 export function selectedLightingColor(state: DeviceState): string {
+  if (state.knowledge.workMode !== 'observed' || (state.mode === 'rgb' && state.knowledge.hsv !== 'observed') || (state.mode === 'white' && state.knowledge.colorTemperature !== 'observed')) return 'rgb(125, 135, 150)'
   return rgbCss(state.mode === 'rgb' ? hsvToRgb(state.hsv) : whiteTemperatureColor(state.whiteTemperature))
 }
 
 export function lightingIntensity(state: DeviceState): number {
-  if (!state.enabled) return 0
+  if (!state.enabled || state.knowledge.power !== 'observed' || state.knowledge.workMode !== 'observed') return 0
+  if (state.mode === 'rgb' && state.knowledge.colorValue !== 'observed') return 0
+  if (state.mode === 'white' && state.knowledge.whiteBrightness !== 'observed') return 0
   const brightness = state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness
   return clampPercent(brightness) / 100
 }

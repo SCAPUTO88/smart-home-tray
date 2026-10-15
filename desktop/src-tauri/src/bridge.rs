@@ -112,7 +112,7 @@ impl ProcessConfig {
                     return Err(BridgeError::new(BridgeErrorCode::InvalidInput));
                 }
                 let path = config
-                    .filter(|path| path.is_absolute())
+                    .filter(|path| path.is_absolute() && path.is_file())
                     .ok_or_else(|| BridgeError::new(BridgeErrorCode::InvalidInput))?;
                 Ok(Some(Self::Real(path)))
             }
@@ -460,14 +460,29 @@ impl BridgeState {
             Ok(Some(config)) => {
                 let mode = config.mode();
                 match BridgeClient::spawn_config(&config) {
-                    Ok(client) => Self {
-                        info: BridgeInfo {
-                            mode,
-                            available: true,
-                            error: None,
-                        },
-                        client: Some(client),
-                    },
+                    Ok(client) => {
+                        let ready = verify_backend_ready(&client).is_ok();
+                        if ready {
+                            Self {
+                                info: BridgeInfo {
+                                    mode,
+                                    available: true,
+                                    error: None,
+                                },
+                                client: Some(client),
+                            }
+                        } else {
+                            client.shutdown();
+                            Self {
+                                info: BridgeInfo {
+                                    mode,
+                                    available: false,
+                                    error: Some(BridgeError::protocol()),
+                                },
+                                client: None,
+                            }
+                        }
+                    }
                     Err(_) => Self {
                         info: BridgeInfo {
                             mode,
@@ -500,6 +515,15 @@ impl BridgeState {
         }
     }
 }
+fn verify_backend_ready(client: &BridgeClient) -> Result<(), BridgeError> {
+    let result = client.request("devices.list", json!({}))?;
+    if result.get("devices").and_then(Value::as_array).is_some() {
+        Ok(())
+    } else {
+        Err(BridgeError::protocol())
+    }
+}
+
 impl Default for BridgeState {
     fn default() -> Self {
         Self::new()
@@ -667,6 +691,31 @@ mod tests {
             .expect("Python is required for local IPC fixture tests")
     }
     #[test]
+    fn readiness_probe_requires_a_valid_catalog_response() {
+        let valid = BridgeClient::spawn_command(python_process(
+            r#"import sys; sys.stdin.readline(); print('{"requestId":"req-1","result":{"devices":[]}}', flush=True)"#,
+        )).unwrap();
+        assert!(verify_backend_ready(&valid).is_ok());
+        valid.shutdown();
+
+        let exited = BridgeClient::spawn_command(python_process("pass")).unwrap();
+        assert_eq!(
+            verify_backend_ready(&exited).unwrap_err().code,
+            BridgeErrorCode::DeviceError
+        );
+        exited.shutdown();
+
+        let invalid = BridgeClient::spawn_command(python_process(
+            r#"import sys; sys.stdin.readline(); print('{"requestId":"req-1","result":{}}', flush=True)"#,
+        )).unwrap();
+        assert_eq!(
+            verify_backend_ready(&invalid).unwrap_err().code,
+            BridgeErrorCode::DeviceError
+        );
+        invalid.shutdown();
+    }
+
+    #[test]
     fn fixture_process_starts_lists_and_shuts_down_without_orphan() {
         let client = BridgeClient::spawn_config(&ProcessConfig::Fixture).expect("fixture starts");
         let result = client.request("devices.list", json!({})).unwrap();
@@ -820,9 +869,13 @@ mod tests {
         assert!(ProcessConfig::from_values(Some("mystery"), None, None).is_err());
         assert!(ProcessConfig::from_values(Some("real"), None, None).is_err());
         assert!(ProcessConfig::from_values(Some("real"), Some("1"), None).is_err());
-        let path = std::env::temp_dir().join("smart-home-tray-test.toml");
+        let path =
+            std::env::temp_dir().join(format!("smart-home-tray-test-{}.toml", std::process::id()));
+        std::fs::write(&path, b"fixture = true").unwrap();
         assert!(
             matches!(ProcessConfig::from_values(Some("real"), Some("1"), Some(path.clone())), Ok(Some(ProcessConfig::Real(value))) if value == path)
         );
+        let _ = std::fs::remove_file(&path);
+        assert!(ProcessConfig::from_values(Some("real"), Some("1"), Some(path)).is_err());
     }
 }

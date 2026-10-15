@@ -16,6 +16,7 @@ function createControlledController(devices = createMockDevices()) {
   const pending: DeferredCommand[] = []
   const controller: DeviceController = {
     list: async () => devices.map(copyDevice),
+    refresh: async (deviceId) => copyDevice(devices.find((item) => item.deviceId === deviceId)!),
     command: (deviceId, patch, _scenario?: OperationScenario) => new Promise((resolve, reject) => {
       pending.push({ deviceId, patch, resolve, reject })
     }),
@@ -99,6 +100,37 @@ describe('lighting session field reconciliation', () => {
     expect(result.current.selectedView?.confirmed).toMatchObject({ mode: 'white', whiteBrightness: 21 })
   })
 
+  it('reconciles HSV knowledge with accepted readbacks and refreshes stale knowledge', async () => {
+    const { result, pending, devices } = await startSession()
+    issue(result, 'mock-desk-lamp', { hsv: { hue: 205 } })
+    const staleReadback = readback(devices, 'mock-desk-lamp', { hsv: { hue: 205 } })
+    staleReadback.state.knowledge = { ...staleReadback.state.knowledge, hsv: 'stale', colorValue: 'stale' }
+
+    await act(async () => { pending[0].resolve(staleReadback) })
+
+    expect(result.current.selectedView?.confirmed).toMatchObject({ hsv: { hue: 205 }, knowledge: { hsv: 'stale', colorValue: 'stale' } })
+
+    devices[0].state.knowledge = { ...devices[0].state.knowledge, hsv: 'observed', colorValue: 'observed' }
+    await act(async () => { await result.current.refreshDevice('mock-desk-lamp') })
+
+    expect(result.current.selectedView?.confirmed).toMatchObject({ knowledge: { hsv: 'observed', colorValue: 'observed' } })
+  })
+
+  it('does not let an older HSV readback replace knowledge after a newer independent field result', async () => {
+    const { result, pending, devices } = await startSession()
+    issue(result, 'mock-desk-lamp', { hsv: { hue: 205 } })
+    issue(result, 'mock-desk-lamp', { enabled: false })
+    const powerReadback = readback(devices, 'mock-desk-lamp', { enabled: false })
+    powerReadback.state.knowledge = { ...powerReadback.state.knowledge, power: 'stale', hsv: 'stale', colorValue: 'stale' }
+    await act(async () => { pending[1].resolve(powerReadback) })
+
+    const hueReadback = readback(devices, 'mock-desk-lamp', { hsv: { hue: 205 } })
+    hueReadback.state.knowledge = { ...hueReadback.state.knowledge, hsv: 'observed', colorValue: 'observed' }
+    await act(async () => { pending[0].resolve(hueReadback) })
+
+    expect(result.current.selectedView?.confirmed).toMatchObject({ enabled: false, hsv: { hue: 205 }, knowledge: { power: 'stale', hsv: 'observed', colorValue: 'observed' } })
+  })
+
   it('keeps pending state and responses isolated while switching devices', async () => {
     const { result, pending, devices } = await startSession()
     issue(result, 'mock-desk-lamp', { hsv: { hue: 205 } })
@@ -114,6 +146,41 @@ describe('lighting session field reconciliation', () => {
     expect(result.current.selectedView?.confirmed.hsv.hue).toBe(300)
   })
 })
+
+
+  it('refreshes a single device without resetting the other device view', async () => {
+    const { result } = await startSession()
+    act(() => result.current.selectDevice('mock-led-strip'))
+    await act(async () => { await result.current.refreshDevice('mock-led-strip') })
+    expect(result.current.selectedView?.confirmed.hsv).toEqual({ hue: 268, saturation: 88, value: 70 })
+    act(() => result.current.selectDevice('mock-desk-lamp'))
+    expect(result.current.selectedView?.confirmed.hsv).toEqual({ hue: 194, saturation: 77, value: 82 })
+  })
+
+  it('does not start refresh while a write is pending', async () => {
+    const { result, pending } = await startSession()
+    issue(result, 'mock-desk-lamp', { hsv: { hue: 210 } })
+    await act(async () => { await result.current.refreshDevice('mock-desk-lamp') })
+    expect(result.current.refreshing['mock-desk-lamp']).toBeUndefined()
+    expect(pending).toHaveLength(1)
+  })
+
+  it('ignores a refresh failure after a newer command readback has succeeded', async () => {
+    const setup = createControlledController()
+    let rejectRefresh!: (error: OperationError) => void
+    setup.controller.refresh = () => new Promise((_resolve, reject) => { rejectRefresh = reject })
+    const session = renderHook(() => useLightingSession(setup.controller))
+    await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
+    let refreshTask!: Promise<void>
+    act(() => { refreshTask = session.result.current.refreshDevice('mock-desk-lamp') })
+    issue(session.result, 'mock-desk-lamp', { enabled: false })
+    await act(async () => { confirm(setup.pending, 0, setup.devices) })
+    await act(async () => { rejectRefresh(new OperationError('TIMEOUT')); await refreshTask })
+
+    expect(session.result.current.selectedDevice?.connection).toBe('online')
+    expect(session.result.current.selectedView?.confirmed).toMatchObject({ enabled: false, knowledge: { power: 'observed' } })
+    expect(session.result.current.refreshError).toBeNull()
+  })
 
 describe('lighting session failure policy', () => {
   it.each([

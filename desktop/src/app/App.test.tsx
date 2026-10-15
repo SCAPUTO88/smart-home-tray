@@ -59,7 +59,7 @@ describe('Smart Home Tray app', () => {
   it('reaches the native hue slider with keyboard tab navigation', async () => {
     const user = renderApp()
     const hue = await screen.findByRole('slider', { name: 'Matiz' })
-    for (let index = 0; index < 6; index += 1) await user.tab()
+    for (let index = 0; index < 7; index += 1) await user.tab()
 
     expect(hue).toHaveFocus()
     expect(hue).toHaveAttribute('type', 'range')
@@ -217,6 +217,21 @@ describe('Smart Home Tray app', () => {
     expect(screen.getByRole("slider", { name: "Matiz" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "RGB" })).toBeDisabled()
     expect(command).not.toHaveBeenCalled()
+  })
+
+
+  it('keeps power usable when HSV is unknown and does not enable RGB sliders', async () => {
+    const [lamp] = createMockDevices()
+    const partial: LightingDevice = { ...lamp, state: { ...lamp.state, knowledge: { ...lamp.state.knowledge, hsv: 'unknown', colorValue: 'unknown' } } }
+    const command = vi.fn(async () => partial)
+    const controller: DeviceController = { mode: 'real', list: async () => [partial], command }
+    render(<App controller={controller} />)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    expect(screen.getByRole('button', { name: 'Desligar Luz Mesa' })).toBeEnabled()
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Branco' })).toBeEnabled()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Desligar Luz Mesa' }))
+    await waitFor(() => expect(command).toHaveBeenCalledWith('mock-desk-lamp', { enabled: false }, 'success'))
   })
 
 })

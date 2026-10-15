@@ -131,3 +131,7 @@ O seletor visual Branco/RGB não corresponde a um comando público próprio. O a
 Como a interface visual pode enviar um patch de um canal HSV, o adapter futuro deverá compor os três canais necessários pelo comando público `device.hsv` usando o estado normalizado mais recente e as intenções ainda pendentes, sem reintroduzir canais obsoletos.
 
 Os tipos não incluem `DeviceConfig`, configuração TOML, DPS, endereço LAN, Local Keys ou autenticação. Não são uma serialização nova do backend: o adapter Tauri futuro terá de mapear explicitamente os envelopes JSON Lines públicos e manter a allowlist da Etapa D.
+
+## Field knowledge metadata
+
+Every public device state includes an additive knowledge object with power, workMode, whiteBrightness, colorTemperature, hsv, colorValue, and scene. Each value is observed, stale, or unknown. The backend derives it from validated DPS readbacks and stores it in the immutable state snapshot. Nullable state values and global quality retain their existing meanings; field knowledge does not confirm pending writes. A successful partial read marks returned valid fields observed and absent or invalid previously observed fields stale. Failed reads preserve the last values and mark observed fields stale. colorValue follows the HSV DPS observation.

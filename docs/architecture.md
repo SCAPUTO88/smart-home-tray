@@ -132,3 +132,10 @@ No adapter, um HSV parcial é completado com canais conhecidos e intenções mai
 - CR-20: refinar âncora do popup em monitores com resoluções e escalas diferentes; a validação manual da F2B relatou distância excessiva do tray em configuração multi-monitor.
 - Fita LED: substituir futuramente a forma rígida por uma fita flexível parcialmente enrolada, com difusor contínuo inspirado em COB.
 - Ambos ficam fora da F2C.1 e não foram alterados.
+
+
+## F2C.2 — Conhecimento e refresh por campo
+
+O estado público mantém valores nullable e quality global, e acrescenta knowledge imutável por campo. O backend atribui observed apenas quando lê DPS válido; ausência/invalidade marca stale se havia observação anterior e unknown nos demais casos. Falha de leitura preserva valores e degrada observed para stale. colorValue acompanha o DPS HSV. A escrita pendente continua separada da leitura: knowledge observado não confirma a operação.
+
+O frontend habilita controles por capacidade, conexão e conhecimento específico exigido. Atualização manual chama apenas device.status do dispositivo alvo. É bloqueada enquanto houver uma escrita pendente; respostas ultrapassadas, de outro dispositivo ou após desmontagem são ignoradas. Não existe polling automático.

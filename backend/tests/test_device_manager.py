@@ -14,6 +14,7 @@ from smart_home_tray.models import (
     DeviceStateQuality,
     DPSMap,
     ErrorCode,
+    FieldKnowledge,
     HSVColor,
     ValueRange,
 )
@@ -295,6 +296,7 @@ def test_inconclusive_null_ack_retains_observed_power_and_pending_intent():
     status = manager.get_device("device-a")
     assert status.state.power is False
     assert status.state.quality is DeviceStateQuality.PENDING
+    assert status.state.knowledge.power is FieldKnowledge.STALE
 
 
 def test_power_intent_recovers_after_confirmation_timeout():
@@ -957,3 +959,47 @@ def _capture(errors, operation, device_id):
         operation(device_id)
     except BaseException as error:
         errors.append(error)
+
+
+def test_field_knowledge_tracks_partial_invalid_failure_and_recovery():
+    device = make_color_device("knowledge", "192.0.2.30")
+    adapter = FakeAdapter(statuses=[
+        {"20": True, "21": "colour", "22": 505, "23": 500, "24": "007803e801f4", "25": "scene"},
+        {"20": False, "22": "invalid", "24": "bad"},
+        BackendError(ErrorCode.DEVICE_OFFLINE, "fixture unreachable"),
+        {"20": True, "21": "white", "22": 400, "23": 700, "24": "00b4032000fa", "25": "scene"},
+    ])
+    manager, _ = make_manager([device], {"knowledge": adapter})
+    from smart_home_tray.models import FieldKnowledge as K
+
+    first = manager.read_state("knowledge").state.knowledge
+    assert first.power is K.OBSERVED and first.hsv is K.OBSERVED
+    assert first.color_value is K.OBSERVED and first.scene is K.OBSERVED
+    partial = manager.read_state("knowledge").state
+    assert partial.power is False and partial.knowledge.power is K.OBSERVED
+    assert partial.white_brightness_percent is not None
+    assert partial.knowledge.white_brightness is K.STALE
+    assert partial.knowledge.hsv is K.STALE and partial.knowledge.color_value is K.STALE
+    with pytest.raises(BackendError):
+        manager.read_state("knowledge")
+    failed = manager.get_device("knowledge")
+    assert failed.connection is ConnectionStatus.OFFLINE
+    assert failed.state.knowledge.power is K.STALE
+    assert failed.state.knowledge.hsv is K.STALE
+    recovered = manager.read_state("knowledge")
+    assert recovered.connection is ConnectionStatus.ONLINE
+    assert recovered.state.knowledge.power is K.OBSERVED
+    assert recovered.state.knowledge.hsv is K.OBSERVED
+    assert recovered.state.knowledge.color_value is K.OBSERVED
+
+
+def test_unknown_fields_become_observed_only_after_valid_readback():
+    device = make_device("unknown-first", "192.0.2.31")
+    adapter = FakeAdapter(statuses=[{"20": "not-a-bool"}, {"20": True}])
+    manager, _ = make_manager([device], {"unknown-first": adapter})
+    from smart_home_tray.models import FieldKnowledge as K
+
+    invalid = manager.read_state("unknown-first").state
+    assert invalid.power is None and invalid.knowledge.power is K.UNKNOWN
+    valid = manager.read_state("unknown-first").state
+    assert valid.power is True and valid.knowledge.power is K.OBSERVED

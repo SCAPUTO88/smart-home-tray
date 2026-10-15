@@ -31,6 +31,23 @@ class DeviceStateQuality(StrEnum):
     UNKNOWN = "unknown"
 
 
+class FieldKnowledge(StrEnum):
+    OBSERVED = "observed"
+    STALE = "stale"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class DeviceKnowledge:
+    power: FieldKnowledge = FieldKnowledge.UNKNOWN
+    work_mode: FieldKnowledge = FieldKnowledge.UNKNOWN
+    white_brightness: FieldKnowledge = FieldKnowledge.UNKNOWN
+    color_temperature: FieldKnowledge = FieldKnowledge.UNKNOWN
+    hsv: FieldKnowledge = FieldKnowledge.UNKNOWN
+    color_value: FieldKnowledge = FieldKnowledge.UNKNOWN
+    scene: FieldKnowledge = FieldKnowledge.UNKNOWN
+
+
 class BackendError(Exception):
     """Safe, structured error that can be serialized for CLI/IPC consumers."""
 
@@ -183,6 +200,7 @@ class LightState:
     color_temperature_percent: float | None = None
     hsv: HSVColor | None = None
     scene: str | None = None
+    knowledge: DeviceKnowledge = field(default_factory=DeviceKnowledge)
     quality: DeviceStateQuality = DeviceStateQuality.UNKNOWN
 
 
@@ -230,5 +248,6 @@ def device_status_to_public_dict(status: DeviceStatus) -> dict[str, object]:
             "hsv": hsv,
             "scene": state.scene,
             "quality": state.quality.value,
+            "knowledge": {"power": state.knowledge.power.value, "workMode": state.knowledge.work_mode.value, "whiteBrightness": state.knowledge.white_brightness.value, "colorTemperature": state.knowledge.color_temperature.value, "hsv": state.knowledge.hsv.value, "colorValue": state.knowledge.color_value.value, "scene": state.knowledge.scene.value},
         },
     }

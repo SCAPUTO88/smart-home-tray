@@ -3,6 +3,8 @@ export type DeviceKind = 'bulb' | 'led-strip'
 export type DeviceMode = 'rgb' | 'white'
 export type ConnectionState = 'online' | 'offline' | 'unknown'
 export type StateQuality = 'confirmed' | 'pending' | 'offline' | 'unknown'
+export type FieldKnowledge = 'observed' | 'stale' | 'unknown'
+export interface DeviceKnowledge { power: FieldKnowledge; workMode: FieldKnowledge; whiteBrightness: FieldKnowledge; colorTemperature: FieldKnowledge; hsv: FieldKnowledge; colorValue: FieldKnowledge; scene: FieldKnowledge }
 
 export interface HsvColor {
   hue: number
@@ -24,6 +26,7 @@ export interface DeviceState {
   whiteBrightness: number
   whiteTemperature: number
   quality: StateQuality
+  knowledge: DeviceKnowledge
 }
 
 export interface LightingDevice {
@@ -46,6 +49,7 @@ export interface DeviceController {
   readonly mode?: 'mock' | 'fixture' | 'real'
   list(): Promise<LightingDevice[]>
   command(deviceId: DeviceId, patch: LightingPatch, scenario?: OperationScenario): Promise<LightingDevice>
+  refresh?(deviceId: DeviceId): Promise<LightingDevice>
 }
 
 export interface DeviceViewState {

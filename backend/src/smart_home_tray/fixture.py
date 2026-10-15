@@ -9,8 +9,8 @@ import time
 LIMIT = 65_536
 LOCK = threading.RLock()
 DEVICES = {
-    "fixture-desk-lamp": {"deviceId":"fixture-desk-lamp","name":"Luz Mesa (fixture)","address":"","protocolVersion":0,"capabilities":{"power":True,"whiteBrightness":True,"colorValue":True,"colorTemperature":True,"scenes":False},"connection":"online","state":{"power":True,"workMode":"colour","whiteBrightnessPercent":55,"colorValuePercent":70,"colorTemperaturePercent":48,"hsv":{"hue":194,"saturation":77,"value":70},"scene":None,"quality":"confirmed"}},
-    "fixture-led-strip": {"deviceId":"fixture-led-strip","name":"Fita LED (fixture)","address":"","protocolVersion":0,"capabilities":{"power":True,"whiteBrightness":False,"colorValue":True,"colorTemperature":False,"scenes":False},"connection":"online","state":{"power":True,"workMode":"colour","whiteBrightnessPercent":None,"colorValuePercent":65,"colorTemperaturePercent":None,"hsv":{"hue":268,"saturation":88,"value":65},"scene":None,"quality":"confirmed"}},
+    "fixture-desk-lamp": {"deviceId":"fixture-desk-lamp","name":"Luz Mesa (fixture)","address":"","protocolVersion":0,"capabilities":{"power":True,"whiteBrightness":True,"colorValue":True,"colorTemperature":True,"scenes":False},"connection":"online","state":{"power":True,"workMode":"colour","whiteBrightnessPercent":55,"colorValuePercent":70,"colorTemperaturePercent":48,"hsv":{"hue":194,"saturation":77,"value":70},"scene":None,"quality":"confirmed","knowledge":{"power":"observed","workMode":"observed","whiteBrightness":"observed","colorTemperature":"observed","hsv":"observed","colorValue":"observed","scene":"unknown"}}},
+    "fixture-led-strip": {"deviceId":"fixture-led-strip","name":"Fita LED (fixture)","address":"","protocolVersion":0,"capabilities":{"power":True,"whiteBrightness":False,"colorValue":True,"colorTemperature":False,"scenes":False},"connection":"online","state":{"power":True,"workMode":"colour","whiteBrightnessPercent":None,"colorValuePercent":65,"colorTemperaturePercent":None,"hsv":{"hue":268,"saturation":88,"value":65},"scene":None,"quality":"confirmed","knowledge":{"power":"observed","workMode":"observed","whiteBrightness":"unknown","colorTemperature":"unknown","hsv":"observed","colorValue":"observed","scene":"unknown"}}},
 }
 ALLOWED = {"devices.list", "device.get", "device.status", "device.power", "device.whiteBrightness", "device.colorTemperature", "device.hsv", "device.colorBrightness"}
 FIELDS = {"devices.list": set(), "device.get": {"deviceId"}, "device.status": {"deviceId"}, "device.power": {"deviceId", "enabled"}, "device.whiteBrightness": {"deviceId", "percent"}, "device.colorTemperature": {"deviceId", "percent"}, "device.colorBrightness": {"deviceId", "percent"}, "device.hsv": {"deviceId", "hue", "saturation", "value"}}
@@ -47,6 +47,11 @@ def handle(request: object) -> None:
             else: state["colorValuePercent"] = payload["percent"]; state["hsv"]["value"] = payload["percent"]
             state["workMode"] = "colour"
         state["quality"] = "confirmed"
+        state["knowledge"]["power"] = "observed"
+        state["knowledge"]["workMode"] = "observed"
+        if "percent" in payload and command == "device.whiteBrightness": state["knowledge"]["whiteBrightness"] = "observed"
+        if "percent" in payload and command == "device.colorTemperature": state["knowledge"]["colorTemperature"] = "observed"
+        if command in {"device.hsv", "device.colorBrightness"}: state["knowledge"]["hsv"] = state["knowledge"]["colorValue"] = "observed"
         result = json.loads(json.dumps(device))
     respond({"requestId":request_id,"result":result})
 

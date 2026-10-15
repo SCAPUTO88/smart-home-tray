@@ -123,3 +123,18 @@
 - **Motivo:** manter a fronteira DeviceController, preservar o contrato JSON Lines existente e impedir que a WebView selecione processos, caminhos ou credenciais.
 - **Trade-offs:** há um processo Python externo por sessão Tauri e o modo REAL depende de runtime/configuração instalados. O processo fixture duplica respostas públicas simples para validação sem dispositivos. JSONL continua em stdout; stderr é drenado sem eco. Falhas são normalizadas sem detalhes brutos.
 - **Confirmação:** respostas result só são lidas como readback; valores ausentes mantêm qualidade unknown. A composição HSV consulta estado público e intenções pendentes. CommandScheduler continua sendo o único scheduler. REAL permanece sem validação física nesta etapa.
+
+
+### D-016 — Conhecimento de estado por campo e refresh manual (F2C.2)
+
+- **Estado:** aprovada para F2C.2.
+- **Decisão:** anexar ao snapshot LightState um mapa tipado de conhecimento por campo (observed/stale/unknown), derivado exclusivamente da leitura validada de DPS. Valores nullable e quality global permanecem; knowledge não representa confirmação de escrita. Leitura parcial pode atualizar um campo enquanto preserva os demais como stale.
+- **Refresh:** uma ação explícita consulta somente device.status do dispositivo selecionado; não há polling ou retry automático. Refresh é bloqueado durante escrita pendente para manter a ordem do readback, e respostas obsoletas/desmontadas não alteram a sessão.
+- **Trade-off:** campos stale continuam visíveis como última observação, mas seus controles ficam bloqueados até novo readback válido. A UI não usa defaults de apresentação como observação física.
+
+### D-017 — Precedência de comandos e snapshots na F2C.2
+
+- **Estado:** adotada para as correções CR-28/CR-29/CR-30/CR-31 da PR #21; revisão do delta pendente.
+- **Decisão:** manter por dispositivo sequência de comandos emitidos e última sequência aplicada, IDs pendentes, revisão de snapshot confirmado, revisões de refresh e revisão de estado alterado por erro. Readbacks de comando são ordenados pela sequência emitida/aplicada; revisão de snapshot não invalida outro readback de comando mais recente. Erros de transporte só mudam conexão se nenhuma atualização posterior já mudou o estado. Refresh obsoleto não altera valores nem conexão. Readbacks válidos de operações anteriores ainda podem ser usados se operações posteriores falharem. Não armazenar resultado terminal redundante: cada Promise já entrega o resultado ao solicitante.
+- **Motivo:** emissão não equivale a confirmação. Um comando mais novo pode falhar depois que um anterior confirmou valores diferentes da intenção; o snapshot confirmado deve prevalecer, sem preservar intenção terminal como se ainda estivesse pendente.
+- **Trade-offs:** o controller mantém contadores distintos para ordem de comando, snapshots, refresh e mutações de estado por dispositivo, alinhados à precedência da sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.
