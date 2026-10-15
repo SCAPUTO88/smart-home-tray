@@ -77,13 +77,12 @@ Timeout total, quantidade máxima de candidatos, concorrência global e faixa de
 
 ## Proposta de F2E.B
 
-1. Revisar e resolver formalmente o bloqueio de identidade antes de qualquer código que possa aceitar um endereço descoberto. Registrar decisão/trade-offs em `DECISIONS.md` somente após aprovação do mantenedor.
-2. Fechar a matriz de versões TinyTuya e a forma de descoberta que não lê `devices.json`, retorna candidatos sem colapsar duplicatas e obedece cancelamento/orçamento. Se a biblioteca não oferecer isso, implementar adaptação isolada após revisão, sem depender da CLI interativa.
-3. Implementar apenas provider, validador e resultado interno com fake e testes determinísticos; testar ID divergente, IPv4 inválido/especial, candidato duplicado, zero/um/vários resultados, timeout, falha do provider, orçamento global, corrida com `update_address()`, endereço inalterado em toda falha, preservação de capacidades/pendência/chave privada e readback posterior.
-4. Manter os testes no modo fake, sem TinyTuya scanner, socket, cloud ou dispositivo. Não incorporar integração CLI/JSONL, Rust/Tauri ou frontend nesta etapa de descoberta.
-5. Tratar comandos/UX, gatilho manual, modo REAL e qualquer recuperação automática em entregas posteriores e decisões próprias. Nenhum retry, polling ou alteração automática em produção pertence a F2E.B sem nova aprovação.
+1. Criar contratos internos e processador puro de anúncios com candidato explicitamente não verificado. Isso pode avançar sem resolver identidade porque não acessa nem altera `DeviceManager`.
+2. Injetar provider pela interface tipada e exercitá-lo apenas com fake determinístico; preservar candidatos distintos, normalizar falha/timeout e provar ausência de socket, status ou escrita.
+3. Não implementar nesta etapa o scanner TinyTuya REAL, validação de identidade ou aceitação/atualização de endereço. Não integrar CLI/JSONL, Rust/Tauri ou frontend.
+4. Resolver o modelo de confiança por protocolo somente antes de qualquer camada futura que valide ou adote IP. Registrar decisões em `DECISIONS.md` apenas após aprovação explícita do mantenedor.
 
-## Testes conceituais F2E.B (não implementados nesta etapa)
+## Estratégia de testes proposta para F2E.B
 
 - Provider fake: retorna zero, um ou múltiplos candidatos; verificar resultado exato sem depender de ordem.
 - Candidate: rejeitar Device ID diferente, IPv6 e IPv4 malformado/especial conforme política aprovada; confirmar que nenhum caminho de rejeição chama `update_address()`.
@@ -91,9 +90,9 @@ Timeout total, quantidade máxima de candidatos, concorrência global e faixa de
 - Concorrência: manter descoberta em progresso enquanto comando/readback do mesmo ID tenta obter lock; provar ausência de troca tardia e independência para outro ID.
 - Limites: budget expirado, limite de candidatos atingido e limite global ocupado resultam em falha segura, sem mudar endereço/configuração.
 - Atualização: somente `found` validado chama `update_address()` uma vez; confirmar reconstrução do adapter e invalidação/retensão de estado conforme testes existentes.
-- Garantia de isolamento: fakes não importam scanner TinyTuya nem criam socket; dados usam apenas identificadores fictícios e endereços reservados.
+- Garantia de isolamento: fakes não importam scanner TinyTuya nem criam socket; dados usam apenas identificadores fictícios e endereços reservados. Nenhum teste chama `update_address()`, `set_value()` ou `status()`.
 
-## Critérios de aceite e bloqueios
+## Critérios e bloqueios registrados ao encerrar F2E.A
 
 - **Investigado:** versão instalada, assinaturas e caminhos de código descritos com fonte local; diferenças relevantes entre 3.3 e 3.4/3.5; riscos de broadcast, interfaces, timeout e arquivo default registrados.
 - **Implementado:** somente documentação F2E.A. Nenhum contrato executável, provider, integração ou alteração de endereço foi implementado.
@@ -119,4 +118,44 @@ Fontes upstream fixadas:
 
 ## Resumo para revisão arquitetural
 
-F2E.A confirmou TinyTuya 1.20.0 e mapeou que `find_device()` é um scan síncrono com broadcast UDP, prazo padrão de 18 s sem override, resultado único e possível leitura incidental de `devices.json`. O anúncio `gwId` não autentica identidade; status 3.4/3.5 autentica posse da Local Key, mas a fonte não prova vínculo criptográfico com o Device ID, e 3.3 tem proteção inferior sem HMAC no frame tradicional. Nenhum código de descoberta ou aceitação de IP foi implementado. Recomendação: bloquear F2E.B até resolver o modelo de identidade e a API sem acesso ao arquivo default; manter endereço intocado em todo resultado não comprovado.
+F2E.A confirmou TinyTuya 1.20.0 e mapeou que `find_device()` é um scan síncrono com broadcast UDP, prazo padrão de 18 s sem override, resultado único e possível leitura incidental de `devices.json`. O anúncio `gwId` não autentica identidade; status 3.4/3.5 autentica posse da Local Key, mas a fonte não prova vínculo criptográfico com o Device ID, e 3.3 não usa HMAC no frame tradicional. A identidade bloqueia adoção automática ainda não aprovada, mas não bloqueia um provider isolado que só retorne candidatos.
+
+## Revisão arquitetural F2E.A e checkpoint F2E.B
+
+### Separação de responsabilidades
+
+Descoberta de candidatos, validação de identidade e aceitação de endereço são camadas independentes. O provider e o processador F2E.B podem coletar/normalizar anúncios sem validar quem controla o IP. Um `DiscoveryCandidate` é uma pista não confiável; nenhum resultado desta camada significa `verified` ou `recovered`. A política de confiança bloqueia a adoção automática insegura, mas não impede um provider isolado que não conhece nem altera `DeviceManager`.
+
+### Proposta de modelo de confiança por protocolo — não aprovada
+
+As seguintes premissas e opções ficam para revisão do mantenedor; não são decisões arquiteturais aprovadas:
+
+- Avaliar um threat model de LAN doméstica confiável, dispositivos previamente cadastrados e Local Keys individuais, não compartilhadas entre cadastros.
+- Para Tuya 3.5, avaliar correspondência exata do Device ID anunciado combinada com negociação autenticada usando a Local Key configurada e readback válido. Isso indicaria posse da chave sob essas premissas, mas **não prova vínculo criptográfico independente entre a chave e o Device ID**.
+- Para Tuya 3.3, manter política mais restritiva: confirmação manual de adoção ou nenhuma recuperação automática até haver evidência suficiente.
+- Em qualquer versão, falha, timeout, anúncio conflitante, múltiplos IPs ou identidade insuficiente nunca aplicam endereço automaticamente. Uma confirmação manual também não deve ser descrita como prova criptográfica.
+
+### Contratos e comportamento F2E.B implementados
+
+`backend/src/smart_home_tray/discovery.py` contém:
+
+- `DiscoveryAnnouncement`: allowlist imutável de Device ID, endereço textual e versão anunciada; sem MAC ou payload UDP bruto.
+- `DiscoveryCandidate`: Device ID, IPv4 normalizado e conjunto ordenado de versões anunciadas para esse IP. Não contém credenciais ou campo de verificação.
+- `DiscoveryProvider`: `Protocol` injetável que recebe o Device ID esperado e timeout explícito; nenhum provider TinyTuya REAL acompanha esta PR.
+- `DiscoveryResult` com `NOT_FOUND`, `CANDIDATES`, `AMBIGUOUS` e `FAILED`, e falhas tipadas sem texto de exceção.
+- `process_announcements()` e `discover_candidates()` fazem processamento puro e uma chamada ao provider, respectivamente. Nenhum deles recebe `DeviceManager` ou `TuyaAdapter`.
+
+IDs divergentes são ignorados antes de examinar seu endereço. Anúncio malformado correspondente ao ID pedido faz o lote falhar sem resultado parcial. IPs IPv4 unspecified, loopback, multicast e limited broadcast são rejeitados; IPv6 e texto inválido também falham. A política não usa `is_private`/`is_global` e não declara que o IP está na sub-rede local. Duplicatas idênticas são colapsadas; IPs distintos permanecem todos no resultado `AMBIGUOUS`, ordenados numericamente, sem escolha pelo primeiro anúncio. Versões diferentes anunciadas para o mesmo IP são preservadas como metadados conflitantes e nunca autenticam identidade nem substituem a versão configurada.
+
+O provider fake existe somente nos testes. Não há chamadas TinyTuya, sockets, status, `update_address()`, `set_value()`, retries, polling ou integração de produção. A suíte focada de descoberta passou com 27 testes determinísticos, sem depender do TinyTuya instalado ou da rede.
+
+### Fora do escopo e condições de entrada da F2E.C
+
+Esta PR não abre sockets, implementa scanner real, autentica endpoint, consulta DPS, decide sub-rede, modifica endereço em memória/TOML, expõe operação pela CLI/JSONL/Tauri/frontend ou habilita qualquer comportamento no startup/REAL. Nenhuma política de adoção foi aprovada.
+
+Antes da F2E.C, revisar especificamente:
+
+1. Um caminho de scanner TinyTuya que não carregue `devices.json` nem outro arquivo privado, não colapse candidatos e não dependa de `find_device()`/`deviceScan()` como contrato insuficiente.
+2. Budget finito, cancelamento/encerramento, limite de candidatos e concorrência em Windows com múltiplas interfaces; valores devem ser justificados e aprovados, sem defaults arbitrários.
+3. Política de identidade/adoção por protocolo, incluindo as premissas propostas para 3.5 e a regra mais restritiva para 3.3. Sem decisão, F2E.C pode ser limitada à observação de candidatos e não pode atualizar IP.
+4. Testes padrão sempre fake; qualquer validação que possa tocar hardware permanece fora da suíte padrão e exige opt-in explícito do mantenedor.
