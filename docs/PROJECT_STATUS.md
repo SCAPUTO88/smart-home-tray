@@ -260,3 +260,11 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 ## Planejamento — redescoberta de IP LAN
 
 `docs/LAN_IP_REDISCOVERY_PLAN.md` propõe uma feature para reencontrar dispositivos cadastrados após mudança de IPv4 DHCP. É refinamento, não decisão aprovada nem implementação. O documento compara gatilhos, validação de identidade, concorrência, persistência e testes isolados.
+
+## Checkpoint F2E.A — investigação e contratos de descoberta LAN (2026-10-15)
+
+- **Investigado:** TinyTuya instalada 1.20.0 por leitura local do pacote, sem executar scanner/status/conexão. `find_device()` faz descoberta UDP síncrona, não aceita timeout, retorna um único resultado/sentinela e pode carregar incidentalmente `devices.json`; o scanner usa 18 s padrão, enumera broadcasts IPv4 disponíveis e pode perder dispositivos que não anunciam ou estejam atrás de interfaces/VLAN/firewall incompatíveis.
+- **Identidade:** anúncio `gwId` é pista não autenticada pela Local Key. Status com DPS válidos não prova identidade. TinyTuya 3.4/3.5 autentica sessão/frame com Local Key, porém o código não demonstra vínculo criptográfico da resposta ao Device ID esperado; 3.3 não usa HMAC no enquadramento tradicional. Aceitação automática de IP permanece bloqueada.
+- **Implementado:** documentação da investigação e contratos propostos em `docs/F2E_A_DISCOVERY_INVESTIGATION.md`. Nenhum tipo executável, provider, mudança de endereço ou integração foi implementado; arquitetura ainda depende de revisão do mantenedor.
+- **Testado:** nenhum teste Python executado, pois código Python não foi alterado. A investigação foi estática; sem leitura de configuração privada e sem uso de scanner, sockets, LAN, dispositivos ou cloud. Verificações documentais serão registradas após execução.
+- **Próximo passo:** revisão arquitetural para resolver evidência de identidade, acesso incidental ao arquivo default, faixa de versões TinyTuya, política IPv4 e orçamentos antes de planejar F2E.B.
