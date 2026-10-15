@@ -13,9 +13,11 @@ from smart_home_tray.models import (
     BackendError,
     ConnectionStatus,
     DeviceConfig,
+    DeviceKnowledge,
     DeviceStateQuality,
     DeviceStatus,
     ErrorCode,
+    FieldKnowledge,
     HSVColor,
     LightState,
 )
@@ -195,7 +197,7 @@ class DeviceManager:
             self._states[device_id] = self._make_status(
                 updated_config,
                 ConnectionStatus.UNKNOWN,
-                replace(current.state, quality=quality),
+                replace(current.state, quality=quality, knowledge=DeviceKnowledge()),
             )
             return self._states[device_id]
 
@@ -423,6 +425,7 @@ class DeviceManager:
             if isinstance(raw_power, bool):
                 power = raw_power
                 self._last_read_power[device_id] = raw_power
+                observed["power"] = raw_power
                 recognized_value = True
                 if pending_power is not None and raw_power is pending_power:
                     self._pending_power.pop(device_id, None)
@@ -490,12 +493,26 @@ class DeviceManager:
             if recognized_value
             else previous.quality
         )
+        old = previous.knowledge
+        def field_knowledge(name: str, value: object, old_value: FieldKnowledge) -> FieldKnowledge:
+            if name in observed:
+                return FieldKnowledge.OBSERVED
+            return FieldKnowledge.STALE if value is not None and old_value is not FieldKnowledge.UNKNOWN else FieldKnowledge.UNKNOWN
+        knowledge = DeviceKnowledge(
+            power=field_knowledge("power", power, old.power),
+            work_mode=field_knowledge("work_mode", work_mode, old.work_mode),
+            white_brightness=field_knowledge("white_brightness", white, old.white_brightness),
+            color_temperature=field_knowledge("white_temperature", temperature, old.color_temperature),
+            hsv=field_knowledge("hsv", hsv, old.hsv),
+            color_value=field_knowledge("hsv", color_value, old.color_value),
+            scene=field_knowledge("scene", scene, old.scene),
+        )
         state = replace(
             previous, power=power, work_mode=work_mode,
             white_brightness_percent=white,
             color_temperature_percent=temperature,
             color_value_percent=color_value, hsv=hsv, scene=scene,
-            quality=quality,
+            knowledge=knowledge, quality=quality,
         )
         self._states[device_id] = self._make_status(config, ConnectionStatus.ONLINE, state)
         return self._states[device_id]
@@ -540,7 +557,7 @@ class DeviceManager:
         self._states[device_id] = self._make_status(
             self._configs[device_id],
             ConnectionStatus.OFFLINE,
-            replace(current.state, quality=quality),
+            replace(current.state, quality=quality, knowledge=DeviceKnowledge(**{name: (FieldKnowledge.STALE if value is FieldKnowledge.OBSERVED else value) for name, value in current.state.knowledge.__dict__.items()})),
         )
 
     def _record_failure(
@@ -569,7 +586,8 @@ class DeviceManager:
         else:
             quality = current.state.quality
             self._quality_before_pending.pop(device_id, None)
-        state = replace(current.state, quality=quality)
+        knowledge = DeviceKnowledge(**{name: (FieldKnowledge.STALE if value is FieldKnowledge.OBSERVED else value) for name, value in current.state.knowledge.__dict__.items()}) if read_failure or connection is ConnectionStatus.OFFLINE else current.state.knowledge
+        state = replace(current.state, quality=quality, knowledge=knowledge)
         self._states[device_id] = self._make_status(self._configs[device_id], connection, state)
 
     def _validate_device_id(self, device_id: str) -> str:

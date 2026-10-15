@@ -152,3 +152,5 @@
 .topbar { cursor: grab; }
 .topbar:active { cursor: grabbing; }
 .topbar button { cursor: pointer; }
+
+.refresh-action{display:flex;align-items:center;gap:5px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.04);color:#cbd5e1;padding:6px 8px;font:inherit;font-size:11px;cursor:pointer}.refresh-action:disabled{opacity:.55;cursor:default}

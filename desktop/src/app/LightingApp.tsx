@@ -8,7 +8,7 @@ import { DeviceArtwork } from '../components/lighting/DeviceArtwork'
 import { PowerButton } from '../components/controls/PowerButton'
 import { RangeControl } from '../components/controls/RangeControl'
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
-import { Activity, Check, ChevronDown, Lightbulb, Palette, SlidersHorizontal, WifiOff } from 'lucide-react'
+import { Activity, Check, ChevronDown, Lightbulb, Palette, RefreshCw, SlidersHorizontal, WifiOff } from 'lucide-react'
 import WindowControls from '../platform/WindowControls'
 import { startDraggingPanel } from '../platform/tauriWindow'
 import './LightingApp.css'
@@ -50,7 +50,7 @@ export default function LightingApp({ controller: suppliedController }: Lighting
 function LightingPanel({ controller }: { controller: DeviceController }) {
   const session = useLightingSession(controller)
   const [scenario, setScenario] = useState<OperationScenario>('success')
-  const { devices, selectedDevice: device, selectedView: view, issue, loadError } = session
+  const { devices, selectedDevice: device, selectedView: view, issue, loadError, refreshDevice, refreshing, refreshError } = session
 
   if (loadError) return <main className="app-shell app-shell--loading"><Brand /><p role="alert">{loadError}</p></main>
   if (!device || !view) {
@@ -67,7 +67,10 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
   }
 
   const state = view.preview
-  const stateUnavailable = state.quality === 'unknown' || state.quality === 'offline'
+  const stateUnavailable = device.connection !== 'online'
+  const canWhiteMode = (device.capabilities.white && state.knowledge.whiteBrightness === 'observed') || (device.capabilities.temperature && state.knowledge.colorTemperature === 'observed')
+  const canRgbMode = device.capabilities.rgb && state.knowledge.hsv === 'observed'
+  const powerUnknown = state.knowledge.power !== 'observed'
   const accent = selectedLightingColor(state)
   const ambientIntensity = lightingIntensity(state)
   const issueValue = (patch: LightingPatch) => issue(device.deviceId, patch, scenario)
@@ -85,7 +88,7 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
           <div className="topbar-actions">
             <div className={`connection-badge${device.connection === 'offline' ? ' is-offline' : ''}`}>
               {device.connection === 'offline' ? <WifiOff size={12} /> : <i aria-hidden="true" />}
-              {device.connection === 'offline' ? 'Offline' : state.quality === 'unknown' ? 'Estado desconhecido' : state.quality === 'pending' ? 'Aguardando confirmação' : controller.mode === 'mock' ? 'Conectado · simulação' : controller.mode === 'fixture' ? 'Fixture · simulação' : 'Conectado'}
+              {device.connection === 'offline' ? 'Offline' : device.connection === 'unknown' ? 'Conexao desconhecida' : state.quality === 'pending' ? 'Aguardando confirmacao' : controller.mode === 'mock' ? ('Conectado \u00b7 simula\u00e7\u00e3o') : controller.mode === 'fixture' ? ('Fixture \u00b7 simula\u00e7\u00e3o') : 'Conectado'}
             </div>
             <WindowControls />
           </div>
@@ -96,7 +99,7 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
             <span className="eyebrow">CONTROLE DE ILUMINAÇÃO</span>
             <h2>{device.name}</h2>
           </div>
-          <PowerButton deviceName={device.name} enabled={state.enabled} disabled={!device.capabilities.power || stateUnavailable} unknown={stateUnavailable} onToggle={() => issueValue({ enabled: !state.enabled })} />
+          <PowerButton deviceName={device.name} enabled={state.enabled} disabled={!device.capabilities.power || stateUnavailable || powerUnknown} unknown={powerUnknown || device.connection !== 'online'} onToggle={() => issueValue({ enabled: !state.enabled })} />
         </div>
 
         <nav className="device-switcher" aria-label="Selecionar dispositivo">
@@ -127,8 +130,8 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
           >
             <DeviceArtwork device={device} state={state} />
             <div className="stage-caption">
-              <span className="stage-mode"><Palette size={13} /> {stateUnavailable ? (state.quality === 'offline' ? 'Offline' : 'Estado desconhecido') : state.mode === 'rgb' ? 'Espectro RGB' : 'Luz branca'}</span>
-              <span className="stage-value">{stateUnavailable ? (state.quality === 'offline' ? 'Offline' : 'Estado desconhecido') : state.enabled ? Math.round(state.mode === 'rgb' ? state.hsv.value : state.whiteBrightness) + '% intensidade' : 'Desligada'}</span>
+              <span className="stage-mode"><Palette size={13} /> {stateUnavailable ? (device.connection === 'offline' ? 'Offline' : 'Conexão desconhecida') : state.knowledge.workMode === 'stale' ? 'Último modo observado' : state.knowledge.workMode !== 'observed' ? 'Modo desconhecido' : state.mode === 'rgb' ? 'Espectro RGB' : 'Luz branca'}</span>
+              <span className="stage-value">{device.connection === 'offline' ? 'Offline' : device.connection === 'unknown' ? 'Estado desconhecido' : state.knowledge.power === 'stale' ? 'Último estado observado' : state.knowledge.power !== 'observed' ? 'Estado desconhecido' : !state.enabled ? 'Desligada' : state.mode === 'rgb' ? state.knowledge.colorValue === 'observed' ? Math.round(state.hsv.value) + '% intensidade' : 'Intensidade desconhecida' : state.knowledge.whiteBrightness === 'observed' ? Math.round(state.whiteBrightness) + '% intensidade' : 'Intensidade desconhecida'}</span>
             </div>
           </motion.section>
         </AnimatePresence>
@@ -142,7 +145,8 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
         >
           <div className="control-card-heading">
             <div className="control-heading-icon"><SlidersHorizontal size={15} /></div>
-            <div><h3>Controles</h3><p>Ajuste a luz ao seu ambiente</p></div>
+            <div><h3>Controles</h3><p>{Object.values(state.knowledge).includes('stale') ? 'Últimos valores observados; atualização recomendada' : 'Ajuste a luz ao seu ambiente'}</p></div>
+            {controller.refresh && <button className="refresh-action" type="button" aria-label="Atualizar estado do dispositivo" disabled={Boolean(refreshing[device.deviceId]) || view.pendingOperations.length > 0} onClick={() => void refreshDevice(device.deviceId)}>{refreshing[device.deviceId] ? "Atualizando..." : <><RefreshCw size={13} /> Atualizar</>}</button>}
             <div className={`operation-indicator is-${view.status}`} role="status" aria-live="polite">
               {view.status === 'pending' ? <span className="pending-dot" /> : view.status === 'confirmed' ? <Check size={13} /> : view.status === 'offline' ? <WifiOff size={13} /> : null}
               <span>{statusText}</span>
@@ -151,8 +155,8 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
 
           {device.capabilities.white && (
             <div className="mode-switch" role="group" aria-label="Modo de iluminação">
-              <button type="button" className={!stateUnavailable && state.mode === 'white' ? 'is-active' : ''} aria-pressed={stateUnavailable ? undefined : state.mode === 'white'} disabled={stateUnavailable} onClick={() => issueValue({ mode: 'white' })}>Branco</button>
-              <button type="button" className={!stateUnavailable && state.mode === 'rgb' ? 'is-active' : ''} aria-pressed={stateUnavailable ? undefined : state.mode === 'rgb'} disabled={stateUnavailable} onClick={() => issueValue({ mode: 'rgb' })}>RGB</button>
+              <button type="button" className={!stateUnavailable && state.mode === 'white' ? 'is-active' : ''} aria-pressed={stateUnavailable || state.knowledge.workMode !== 'observed' ? undefined : state.mode === 'white'} disabled={stateUnavailable || !canWhiteMode} onClick={() => issueValue({ mode: 'white' })}>Branco</button>
+              <button type="button" className={!stateUnavailable && state.mode === 'rgb' ? 'is-active' : ''} aria-pressed={stateUnavailable || state.knowledge.workMode !== 'observed' ? undefined : state.mode === 'rgb'} disabled={stateUnavailable || !canRgbMode} onClick={() => issueValue({ mode: 'rgb' })}>RGB</button>
             </div>
           )}
 
@@ -168,17 +172,17 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
             >
               {state.mode === 'rgb' && device.capabilities.rgb ? (
                 <>
-                  <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(hue) => issueValue({ hsv: { hue } })} />
-                  <RangeControl label="Saturação" value={state.hsv.saturation} disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(saturation) => issueValue({ hsv: { saturation } })} />
-                  <RangeControl label="Intensidade RGB" value={state.hsv.value} disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(value) => issueValue({ hsv: { value } })} />
+                  <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" disabled={stateUnavailable || state.knowledge.hsv !== 'observed'} valueLabel={stateUnavailable || state.knowledge.hsv !== 'observed' ? '\u2014' : undefined} onChange={(hue) => issueValue({ hsv: { hue } })} />
+                  <RangeControl label="Saturação" value={state.hsv.saturation} disabled={stateUnavailable || state.knowledge.hsv !== 'observed'} valueLabel={stateUnavailable || state.knowledge.hsv !== 'observed' ? '\u2014' : undefined} onChange={(saturation) => issueValue({ hsv: { saturation } })} />
+                  <RangeControl label="Intensidade RGB" value={state.hsv.value} disabled={stateUnavailable || state.knowledge.hsv !== 'observed'} valueLabel={stateUnavailable || state.knowledge.hsv !== 'observed' ? '\u2014' : undefined} onChange={(value) => issueValue({ hsv: { value } })} />
                 </>
               ) : device.capabilities.white ? (
                 <>
-                  {device.capabilities.white && <RangeControl label="Brilho branco" value={state.whiteBrightness} disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(whiteBrightness) => issueValue({ whiteBrightness })} />}
-                  {device.capabilities.temperature && <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />}
+                  {device.capabilities.white && <RangeControl label="Brilho branco" value={state.whiteBrightness} disabled={stateUnavailable || state.knowledge.whiteBrightness !== 'observed'} valueLabel={stateUnavailable || state.knowledge.whiteBrightness !== 'observed' ? '\u2014' : undefined} onChange={(whiteBrightness) => issueValue({ whiteBrightness })} />}
+                  {device.capabilities.temperature && <RangeControl label="Temperatura de branco" value={state.whiteTemperature} variant="temperature" disabled={stateUnavailable || state.knowledge.colorTemperature !== 'observed'} valueLabel={stateUnavailable || state.knowledge.colorTemperature !== 'observed' ? '\u2014' : undefined} onChange={(whiteTemperature) => issueValue({ whiteTemperature })} />}
                 </>
               ) : (
-                <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" disabled={stateUnavailable} valueLabel={stateUnavailable ? '\u2014' : undefined} onChange={(hue) => issueValue({ hsv: { hue } })} />
+                <RangeControl label="Matiz" value={state.hsv.hue} max={360} suffix="°" variant="hue" disabled={stateUnavailable || state.knowledge.hsv !== 'observed'} valueLabel={stateUnavailable || state.knowledge.hsv !== 'observed' ? '\u2014' : undefined} onChange={(hue) => issueValue({ hsv: { hue } })} />
               )}
             </motion.div>
           </div>
@@ -192,6 +196,7 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
             <p>Simulação local; nenhum dispositivo real é consultado.</p>
           </details>}
 
+          {refreshError && <p className="error-detail" role="alert">{refreshError}</p>}
           {view.error && <p className="error-detail" role="alert">{view.error}</p>}
         </motion.section>
 

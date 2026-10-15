@@ -85,6 +85,7 @@ function visiblePreview(confirmed: DeviceViewState['confirmed'], operations: Pen
 
 function mergeReadback(confirmed: DeviceViewState['confirmed'], response: LightingDevice, acceptedFields: LightingField[]) {
   let next = { ...confirmed, hsv: { ...confirmed.hsv } }
+  const knowledge = { ...confirmed.knowledge }
   for (const field of acceptedFields) next = applyPatch(next, setField({}, field, fieldValue({
     enabled: response.state.enabled,
     mode: response.state.mode,
@@ -92,8 +93,19 @@ function mergeReadback(confirmed: DeviceViewState['confirmed'], response: Lighti
     whiteTemperature: response.state.whiteTemperature,
     hsv: response.state.hsv,
   }, field)), response.state.quality)
+  for (const field of acceptedFields) {
+    switch (field) {
+      case 'enabled': knowledge.power = response.state.knowledge.power; break
+      case 'mode': knowledge.workMode = response.state.knowledge.workMode; break
+      case 'whiteBrightness': knowledge.whiteBrightness = response.state.knowledge.whiteBrightness; break
+      case 'whiteTemperature': knowledge.colorTemperature = response.state.knowledge.colorTemperature; break
+      default:
+        knowledge.hsv = response.state.knowledge.hsv
+        knowledge.colorValue = response.state.knowledge.colorValue
+    }
+  }
   // Keep quality from the readback verbatim; a successful command cannot invent a known device state.
-  return next
+  return { ...next, knowledge }
 }
 
 export function useLightingSession(controller: DeviceController) {
@@ -105,9 +117,15 @@ export function useLightingSession(controller: DeviceController) {
   const latestOperationByDevice = useRef<Record<DeviceId, number>>({})
   const latestByField = useRef<Record<DeviceId, LatestByField>>({})
   const latestOutcomeByDevice = useRef<Record<DeviceId, OperationOutcome>>({})
+  const refreshSequence = useRef<Record<DeviceId, number>>({})
+  const activeRefresh = useRef<Record<DeviceId, boolean>>({})
+  const mounted = useRef(true)
+  const [refreshing, setRefreshing] = useState<Record<DeviceId, boolean>>({})
+  const [refreshErrors, setRefreshErrors] = useState<Record<DeviceId, string | null>>({})
 
   useEffect(() => {
     let active = true
+    mounted.current = true
     void controller.list().then((catalog) => {
       if (!active) return
       setLoadError(null)
@@ -115,7 +133,7 @@ export function useLightingSession(controller: DeviceController) {
       setViews(Object.fromEntries(catalog.map((device) => [device.deviceId, initialView(device)])))
       setSelectedDeviceId((current) => current ?? catalog[0]?.deviceId ?? null)
     }).catch(() => { if (active) setLoadError("Não foi possível carregar os dispositivos") })
-    return () => { active = false }
+    return () => { active = false; mounted.current = false }
   }, [controller])
 
   const issue = useCallback((deviceId: DeviceId, patch: LightingPatch, scenario: OperationScenario) => {
@@ -225,8 +243,46 @@ export function useLightingSession(controller: DeviceController) {
     })
   }, [controller])
 
+  const refreshDevice = useCallback(async (deviceId: DeviceId) => {
+    if (!controller.refresh || activeRefresh.current[deviceId] || (views[deviceId]?.pendingOperations.length ?? 0) > 0) return
+    activeRefresh.current[deviceId] = true
+    const version = latestOperationByDevice.current[deviceId] ?? 0
+    const requestId = (refreshSequence.current[deviceId] ?? 0) + 1
+    refreshSequence.current[deviceId] = requestId
+    setRefreshing((current) => ({ ...current, [deviceId]: true }))
+    setRefreshErrors((current) => ({ ...current, [deviceId]: null }))
+    try {
+      const device = await controller.refresh(deviceId)
+      if (!mounted.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
+      setDevices((current) => current.map((item) => item.deviceId === deviceId ? device : item))
+      setViews((current) => {
+        const view = current[deviceId]
+        if (!view || view.pendingOperations.length) return current
+        const confirmed = { ...device.state, hsv: { ...device.state.hsv }, knowledge: { ...device.state.knowledge } }
+        return { ...current, [deviceId]: { ...view, confirmed, preview: confirmed, error: null, status: 'idle' } }
+      })
+    } catch (error) {
+      if (!mounted.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
+      if (error instanceof OperationError && error.code === 'COMMAND_CANCELED') return
+      const offline = error instanceof OperationError && (error.code === 'DEVICE_OFFLINE' || error.code === 'TIMEOUT' || error.code === 'AUTH_FAILED')
+      if (offline) setDevices((current) => current.map((item) => item.deviceId === deviceId ? { ...item, connection: 'offline', state: { ...item.state, quality: 'offline', knowledge: Object.fromEntries(Object.entries(item.state.knowledge).map(([key, value]) => [key, value === 'observed' ? 'stale' : value])) as typeof item.state.knowledge } } : item))
+      if (offline) setViews((current) => {
+        const view = current[deviceId]
+        if (!view) return current
+        const stale = (state: typeof view.confirmed) => ({ ...state, quality: 'offline' as const, knowledge: Object.fromEntries(Object.entries(state.knowledge).map(([key, value]) => [key, value === 'observed' ? 'stale' : value])) as typeof state.knowledge })
+        const confirmed = stale(view.confirmed)
+        const preview = stale(view.preview)
+        return { ...current, [deviceId]: { ...view, confirmed, preview } }
+      })
+      setRefreshErrors((current) => ({ ...current, [deviceId]: offline ? 'Device offline; previous reading preserved' : 'Unable to refresh device state' }))
+    } finally {
+      activeRefresh.current[deviceId] = false
+      if (mounted.current && refreshSequence.current[deviceId] === requestId) setRefreshing((current) => ({ ...current, [deviceId]: false }))
+    }
+  }, [controller, views])
+
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null
   const selectedView = selectedDeviceId ? views[selectedDeviceId] ?? null : null
 
-  return { devices, selectedDevice, selectedView, selectedDeviceId, selectDevice: setSelectedDeviceId, issue, loadError }
+  return { devices, selectedDevice, selectedView, selectedDeviceId, selectDevice: setSelectedDeviceId, issue, loadError, refreshDevice, refreshing, refreshError: selectedDeviceId ? refreshErrors[selectedDeviceId] ?? null : null }
 }

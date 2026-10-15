@@ -10,7 +10,7 @@ function state(overrides: Partial<DeviceState> = {}): DeviceState {
     hsv: { hue: 180, saturation: 100, value: 50 },
     whiteBrightness: 40,
     whiteTemperature: 0,
-    quality: 'confirmed',
+    quality: 'confirmed', knowledge: { power: 'observed', workMode: 'observed', whiteBrightness: 'observed', colorTemperature: 'observed', hsv: 'observed', colorValue: 'observed', scene: 'unknown' },
     ...overrides,
   }
 }
