@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2C.2 CR-28/29/30 corrigidas e validadas localmente na branch feature/real-mode-readiness; PR #21 aguarda revisão do delta. Modo REAL não validado com equipamentos.
-- **Objetivo:** Backend local-first para dispositivos LAN e prototipo frontend React/Tauri F2A com dispositivos exclusivamente simulados.
-- **Progresso:** PR #17 (F2B, CR-16–19) integrada em origin/develop no merge 893e1ca. F2C.1 implementa a ponte tipada Tauri ↔ Python com MOCK por padrão, FIXTURE JSONL sem rede e REAL somente por opt-in controlado pelo processo Rust. A validação automatizada desta entrega foi concluída; nenhuma lâmpada física foi acessada. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
+- **Fase:** 2 — F2D.1 (Luz Mesa) e F2D.2 (Fita LED) homologadas manualmente pelo mantenedor em modo REAL; F2D.3 (Luz Escritório) pendente de investigação ou substituição. PRs #19–22 integradas em `develop` e `main` (conforme handoff do mantenedor).
+- **Objetivo:** Backend local-first para dispositivos LAN e frontend React/Tauri com MOCK por padrão, FIXTURE sem rede e modo REAL local sob opt-in.
+- **Progresso:** PRs #19–22 integraram F2C.1/F2C.2, incluindo knowledge por campo, refresh manual e CR-28–31. A validação automatizada de CI e a homologação física manual são evidências distintas: Luz Mesa e Fita LED passaram pelos controles registrados abaixo; a Luz Escritório segue pendente. Uma mudança de DHCP durante a homologação motivou o refinamento proposto em `docs/LAN_IP_REDISCOVERY_PLAN.md`. Nenhuma credencial ou endereço doméstico é registrado aqui. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -28,7 +28,7 @@
 | Scheduler de comandos contínuos com coalescing, barreiras discretas e FIFO por dispositivo | TESTADO | `backend/src/smart_home_tray/command_scheduler.py`; 17 testes determinísticos em `backend/tests/test_command_scheduler.py` |
 | Lifecycle explícito e Futures sem confirmação no enqueue | TESTADO | `start()`/`stop()`; teste integrado com DeviceManager fake confirma que estado só muda após readback |
 | CR-09: stop() solicitado em callback evita join da própria thread e mantém retorno booleano correto | TESTADO | Regressão em `backend/tests/test_command_scheduler.py`; callback cancela fila, operação em andamento conclui e stop externo posterior aguarda término |
-| Validação física de controles C2A | PLANEJADO | Nenhum dispositivo real acessado |
+| Validação física de controles | TESTADO parcialmente | F2D.1 Luz Mesa e F2D.2 Fita LED homologadas manualmente em modo REAL pelo mantenedor; F2D.3 Luz Escritório pendente. Ver resultados detalhados no checkpoint F2D abaixo. |
 | Normalização de falhas de inicialização do TuyaAdapter | TESTADO | `backend/src/smart_home_tray/tuya_adapter.py`; testes com factory que lança timeout, OSError, exceção genérica e BackendError com causa sensível |
 | CI pytest/compileall em Windows para PRs em develop/main (Python 3.12/3.14) | TESTADO | PR #2: os dois jobs da matriz passaram |
 | CLI `argparse` para catálogo, status e controles explícitos | IMPLEMENTADO | `backend/src/smart_home_tray/cli.py`; entrypoint em `backend/pyproject.toml` |
@@ -220,3 +220,43 @@ O job Windows/MSVC fica separado do job Node. Nesta revisão, cargo fmt/check, 1
 - **Regressão RED/GREEN:** teste deferred A(hue=210) e B(saturation=25), com A resolvendo antes de B, falhava porque C enviava saturation=70. Após a correção, C envia `{ hue: 210, saturation: 25, value: 30 }`.
 - **Validação CR-31:** typecheck, lint, 92 testes frontend e build Vite aprovados; `git diff --check` aprovado. Vitest e build usaram o config loader nativo; nenhum arquivo Rust/backend mudou neste delta.
 - **Integração:** correção local na branch `feature/real-mode-readiness`, após revisão de CR-28/29/30 no commit `14f11c4`; sem push/merge. Modo REAL e acesso físico permanecem desativados.
+
+## Checkpoint F2D — homologação REAL manual (2026-10-15)
+
+Este checkpoint registra resultados físicos relatados e confirmados manualmente pelo mantenedor no Windows, com TOML externo e Local Keys obtidas do ambiente. Não confundir com os testes automatizados de CI das PRs #19–22, que usam mocks/fixtures e não acessam equipamentos. A homologação ocorreu após a integração F2C.1/F2C.2; os checkpoints anteriores permanecem como registro do que era conhecido e validado à época.
+
+### F2D.1 — Luz Mesa: homologada
+
+- Dispositivo físico Tuya 3.5. Leitura real via CLI e Tauri confirmou online, qualidade `confirmed` e `observed` nos campos suportados.
+- O mantenedor confirmou fisicamente liga/desliga, RGB, modo branco, brilho, temperatura e controles de cor.
+
+### F2D.2 — Fita LED: homologada
+
+- Dispositivo físico Tuya 3.5. Leitura LAN e controles reais de power, matiz, saturação e intensidade RGB foram validados.
+- Brilho branco e temperatura independentes permanecem ausentes/`unknown`, conforme as capacidades declaradas do dispositivo.
+- O mantenedor confirmou operação simultânea com a Luz Mesa, sem interferência observada nos controles, incluindo alternância da seleção e atualização de estado. Isto registra o comportamento observado nesta sessão, não uma garantia geral de ausência de concorrência.
+
+### F2D.3 — Luz Escritório: pendente
+
+- Dispositivo Tuya 3.3 identificado pela descoberta LAN. A leitura TinyTuya retornou `DEVICE_ERROR` associado ao erro 904 (`Unexpected Payload from Device`).
+- O equipamento também apresentou comportamento físico intermitente de desligar e religar. A homologação foi adiada até investigação ou substituição.
+- Causa não determinada: não há evidência suficiente para atribuir definitivamente o erro 904 à Local Key, ao protocolo, ao hardware ou para declarar defeito físico comprovado.
+
+### Ocorrências e resolução durante a homologação
+
+1. TinyTuya estava ausente do ambiente Python inicialmente usado; instalar as dependências do backend resolveu essa etapa.
+2. Um script PowerShell concatenava várias Local Keys por tratamento incorreto de array JSON. O script foi corrigido e as chaves conferidas individualmente sem imprimir seus valores.
+3. Os endereços dos equipamentos mudaram após queda de energia e renovação DHCP. O mantenedor descobriu os endereços atuais com TinyTuya e corrigiu manualmente o TOML externo.
+4. Uma instância MOCK continuava ativa devido ao single-instance do Tauri. Encerrá-la pelo tray e reiniciar o aplicativo em REAL resolveu.
+5. A Fita LED teve falhas `DEVICE_OFFLINE` intermitentes; leituras diretas funcionaram e uma leitura CLI teve sucesso após isolamento/encerramento de outros clientes. Concorrência de conexão é hipótese diagnóstica ainda não verificada, não causa comprovada.
+
+### Evidência e lacunas
+
+- **Automatizada:** CI das PRs integradas #19–22 cobriu os contratos com testes automatizados em mocks, fakes e fixtures. Essa evidência não valida rede doméstica, dispositivos físicos, recuperação de desconexões ou descoberta automática.
+- **Manual física:** resultados de Luz Mesa e Fita LED acima foram executados e confirmados pelo mantenedor; Luz Escritório não foi homologada.
+- **Hipóteses em aberto:** concorrência de clientes pode estar relacionada às falhas intermitentes da Fita LED, mas ainda não foi isolada como causa. A origem do erro 904 da Luz Escritório também permanece indeterminada.
+- **Lacunas:** não há validação de recuperação automática após desconexão/mudança de IP, nem garantia de reconexão sem ação manual. Descoberta LAN por IP está em refinamento; homologação REAL futura de qualquer alteração dependerá de autorização explícita do mantenedor.
+
+## Planejamento — redescoberta de IP LAN
+
+`docs/LAN_IP_REDISCOVERY_PLAN.md` propõe uma feature para reencontrar dispositivos cadastrados após mudança de IPv4 DHCP. É refinamento, não decisão aprovada nem implementação. O documento compara gatilhos, validação de identidade, concorrência, persistência e testes isolados.
