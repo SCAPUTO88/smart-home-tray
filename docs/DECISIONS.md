@@ -132,9 +132,9 @@
 - **Refresh:** uma ação explícita consulta somente device.status do dispositivo selecionado; não há polling ou retry automático. Refresh é bloqueado durante escrita pendente para manter a ordem do readback, e respostas obsoletas/desmontadas não alteram a sessão.
 - **Trade-off:** campos stale continuam visíveis como última observação, mas seus controles ficam bloqueados até novo readback válido. A UI não usa defaults de apresentação como observação física.
 
-### D-017 — Precedência por snapshot aplicado na F2C.2
+### D-017 — Precedência de comandos e snapshots na F2C.2
 
-- **Estado:** adotada para as correções CR-28/CR-29/CR-30 da PR #21; revisão do delta pendente.
-- **Decisão:** manter por dispositivo uma sequência de comandos emitidos, IDs pendentes, resultado terminal da sequência mais nova e versão do último snapshot aplicado. Sucesso só substitui a base quando seu readback ainda é aplicável; erros de transporte só mudam conexão se nenhuma atualização posterior já mudou o estado. Refresh obsoleto não altera valores nem conexão. Readbacks válidos de operações anteriores ainda podem ser usados se operações posteriores falharem.
+- **Estado:** adotada para as correções CR-28/CR-29/CR-30/CR-31 da PR #21; revisão do delta pendente.
+- **Decisão:** manter por dispositivo sequência de comandos emitidos e última sequência aplicada, IDs pendentes, revisão de snapshot confirmado, revisões de refresh e revisão de estado alterado por erro. Readbacks de comando são ordenados pela sequência emitida/aplicada; revisão de snapshot não invalida outro readback de comando mais recente. Erros de transporte só mudam conexão se nenhuma atualização posterior já mudou o estado. Refresh obsoleto não altera valores nem conexão. Readbacks válidos de operações anteriores ainda podem ser usados se operações posteriores falharem. Não armazenar resultado terminal redundante: cada Promise já entrega o resultado ao solicitante.
 - **Motivo:** emissão não equivale a confirmação. Um comando mais novo pode falhar depois que um anterior confirmou valores diferentes da intenção; o snapshot confirmado deve prevalecer, sem preservar intenção terminal como se ainda estivesse pendente.
-- **Trade-offs:** o controller guarda revisões e resultado terminal por dispositivo e mantém as regras de precedência alinhadas à sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.
+- **Trade-offs:** o controller mantém contadores distintos para ordem de comando, snapshots, refresh e mutações de estado por dispositivo, alinhados à precedência da sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.

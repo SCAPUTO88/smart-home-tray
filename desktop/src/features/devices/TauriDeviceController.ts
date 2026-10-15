@@ -35,7 +35,6 @@ export class TauriDeviceController implements DeviceController {
   private readonly snapshotRevision = new Map<DeviceId, number>()
   private readonly stateRevision = new Map<DeviceId, number>()
   private readonly pendingCommands = new Map<DeviceId, Set<number>>()
-  private readonly terminalResult = new Map<DeviceId, { commandId: number; outcome: 'succeeded' | 'failed' }>()
   private readonly pendingHsv = new Map<DeviceId, Map<number, HsvColor>>()
   private sequence = 0
   private readonly refreshSequence = new Map<DeviceId, number>()
@@ -70,7 +69,6 @@ export class TauriDeviceController implements DeviceController {
     this.snapshotRevision.clear()
     this.stateRevision.clear()
     this.pendingCommands.clear()
-    this.terminalResult.clear()
     this.pendingHsv.clear()
     this.refreshSequence.clear()
     this.latestAppliedRefresh.clear()
@@ -176,29 +174,25 @@ export class TauriDeviceController implements DeviceController {
     pending.add(id)
     this.pendingCommands.set(deviceId, pending)
     this.latestIssuedCommand.set(deviceId, id)
-    const snapshotVersion = this.snapshotRevision.get(deviceId) ?? 0
     const stateVersion = this.stateRevision.get(deviceId) ?? 0
     try {
       const status = await this.bridge.command(request)
       if (status.deviceId !== deviceId) throw new OperationError('DEVICE_ERROR')
       const response = mapPublicDevice(status)
-      this.recordTerminalResult(deviceId, id, 'succeeded')
       const isApplicable = id > (this.latestAppliedCommand.get(deviceId) ?? 0)
-        && (this.snapshotRevision.get(deviceId) ?? 0) === snapshotVersion
       if (isApplicable) {
         this.known.set(deviceId, response)
         this.knownPublic.set(deviceId, status)
         if (status.connection === 'online') this.confirmedBase.set(deviceId, status)
         else this.confirmedBase.delete(deviceId)
         this.latestAppliedCommand.set(deviceId, id)
-        this.snapshotRevision.set(deviceId, snapshotVersion + 1)
+        this.snapshotRevision.set(deviceId, (this.snapshotRevision.get(deviceId) ?? 0) + 1)
         this.stateRevision.set(deviceId, (this.stateRevision.get(deviceId) ?? 0) + 1)
       }
       this.settlePendingHsv(deviceId, id)
       return response
     } catch (error) {
       const normalized = parseBridgeError(error)
-      this.recordTerminalResult(deviceId, id, 'failed')
       if (normalized.code === 'DEVICE_OFFLINE' || normalized.code === 'TIMEOUT' || normalized.code === 'AUTH_FAILED') {
         const current = this.knownPublic.get(deviceId)
         const isCurrent = this.stateRevision.get(deviceId) === stateVersion
@@ -220,11 +214,5 @@ export class TauriDeviceController implements DeviceController {
     const operations = this.pendingHsv.get(deviceId)
     operations?.delete(commandId)
     if (operations?.size === 0) this.pendingHsv.delete(deviceId)
-  }
-
-  private recordTerminalResult(deviceId: DeviceId, commandId: number, outcome: 'succeeded' | 'failed'): void {
-    if (commandId >= (this.terminalResult.get(deviceId)?.commandId ?? 0)) {
-      this.terminalResult.set(deviceId, { commandId, outcome })
-    }
   }
 }

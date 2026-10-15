@@ -88,6 +88,24 @@ describe('TauriDeviceController', () => {
     await controller.command("lamp", { hsv: { value: 30 } })
     expect(bridge.command).toHaveBeenNthCalledWith(3, { command: "device.hsv", payload: { deviceId: "lamp", hue: 210, saturation: 25, value: 30 } })
   })
+
+  it('applies a newer command readback when the earlier command confirms first', async () => {
+    const first = deferred<PublicDeviceStatus>()
+    const second = deferred<PublicDeviceStatus>()
+    const bridge = api()
+    bridge.command = vi.fn().mockResolvedValue(device).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const controller = new TauriDeviceController(bridge); await controller.list()
+    const hue = controller.command('lamp', { hsv: { hue: 210 } })
+    const saturation = controller.command('lamp', { hsv: { saturation: 25 } })
+
+    first.resolve({ ...device, state: { ...device.state, hsv: { hue: 210, saturation: 70, value: 60 } } })
+    await hue
+    second.resolve({ ...device, state: { ...device.state, hsv: { hue: 210, saturation: 25, value: 60 } } })
+    await saturation
+
+    await controller.command('lamp', { hsv: { value: 30 } })
+    expect(bridge.command).toHaveBeenNthCalledWith(3, { command: 'device.hsv', payload: { deviceId: 'lamp', hue: 210, saturation: 25, value: 30 } })
+  })
   it("retains the last confirmed channels after a canceled older intent", async () => {
     let rejectHue!: (reason: unknown) => void
     let resolveSaturation!: (status: PublicDeviceStatus) => void
