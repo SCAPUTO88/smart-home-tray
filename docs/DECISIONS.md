@@ -134,7 +134,11 @@
 
 ### D-017 — Precedência de comandos e snapshots na F2C.2
 
-- **Estado:** adotada para as correções CR-28/CR-29/CR-30/CR-31 da PR #21; revisão do delta pendente.
+- **Estado:** aprovada e integrada nas PRs #21–22 (CR-28/CR-29/CR-30/CR-31).
 - **Decisão:** manter por dispositivo sequência de comandos emitidos e última sequência aplicada, IDs pendentes, revisão de snapshot confirmado, revisões de refresh e revisão de estado alterado por erro. Readbacks de comando são ordenados pela sequência emitida/aplicada; revisão de snapshot não invalida outro readback de comando mais recente. Erros de transporte só mudam conexão se nenhuma atualização posterior já mudou o estado. Refresh obsoleto não altera valores nem conexão. Readbacks válidos de operações anteriores ainda podem ser usados se operações posteriores falharem. Não armazenar resultado terminal redundante: cada Promise já entrega o resultado ao solicitante.
 - **Motivo:** emissão não equivale a confirmação. Um comando mais novo pode falhar depois que um anterior confirmou valores diferentes da intenção; o snapshot confirmado deve prevalecer, sem preservar intenção terminal como se ainda estivesse pendente.
 - **Trade-offs:** o controller mantém contadores distintos para ordem de comando, snapshots, refresh e mutações de estado por dispositivo, alinhados à precedência da sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.
+
+## Registro de homologação F2D
+
+Em 2026-10-15, o mantenedor confirmou manualmente a homologação REAL da Luz Mesa e da Fita LED, conforme evidência e limitações em `docs/PROJECT_STATUS.md`. A Luz Escritório permanece pendente após resposta 904 e comportamento físico intermitente; não foi determinada uma causa. Este registro é evidência de validação do produto, não uma decisão que altera a arquitetura aprovada. O plano de redescoberta em `docs/LAN_IP_REDISCOVERY_PLAN.md` continua proposta não aprovada.
