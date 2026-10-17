@@ -13,6 +13,7 @@ Backend local-first executável como processo independente. A operação em runt
 | `tuya_adapter.py` | Construir cliente TinyTuya, ler status LAN e escrever DPS. | TinyTuya, models |
 | `device_manager.py` | Identidade persistente por Device ID, endereço mutável, coordenação de estado, timeout, reconexão e falhas isoladas. | Adapter, config, models |
 | `command_scheduler.py` | Submissão assíncrona de operações normalizadas, coalescing de controles contínuos e ordenação discreta por dispositivo. | DeviceManager, biblioteca padrão (`threading`, `concurrent.futures`) |
+| `recovery.py` | Orquestrar, sob solicitação explícita, descoberta e classificação de candidatos não verificados para recuperação manual. | Catálogo público estreito, `discovery.py`, provider injetável e biblioteca padrão |
 | `color.py` | Conversão RGB/HSV e serialização/validação HSV16 dos valores de cor Tuya. | Biblioteca padrão, `colorsys` |
 | `protocol.py` | Ler requests e escrever responses JSON Lines com framing limitado, validação e correlação assíncrona. | DeviceManager, CommandScheduler, models, biblioteca padrão |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | config, DeviceManager, CommandScheduler, protocol |
@@ -20,6 +21,8 @@ Backend local-first executável como processo independente. A operação em runt
 | fixture.py | Processo JSONL determinístico para testes da integração, sem LAN/TinyTuya. | Biblioteca padrão |
 
 `DeviceManager` cria o catálogo por `Device ID`, mantém estado público sem configuração privada e instancia adapters sob demanda. Cada dispositivo tem seu próprio lock; polling é opt-in via `start_polling()` e encerra com `stop_polling()`. `poll_once()` permite uma sincronização explícita sem thread. O intervalo padrão é 15 segundos. `update_address()` atualiza o IP e descarta o adapter para reconstruí-lo na próxima operação; não há descoberta automática nesta etapa. `list_device_ids()` expõe uma tupla lock-free das identidades do catálogo, cuja associação de IDs é imutável após a construção; alterações de endereço não mudam essa associação.
+
+F2E.D.1 adiciona `RecoveryService.discover_for_recovery()`, usando uma leitura curta de elegibilidade por `DeviceManagerRecoveryCatalog` e, somente para protocolo 3.5, uma única chamada ao provider UDP limitada a 3 segundos. Um lock global não enfileirável impede scans de recuperação simultâneos. A normalização permanece em F2E.B; os resultados carregam apenas candidatos não verificados ou estados/falhas normalizados. A operação não abre TCP, consulta status, acessa Local Keys, cria proposta confirmável nem chama `update_address()`. Validação e adoção pertencem às etapas posteriores.
 
 O CLI e o protocolo usam o mesmo DeviceManager. O frontend não recebe credenciais nem acessa TinyTuya diretamente.
 

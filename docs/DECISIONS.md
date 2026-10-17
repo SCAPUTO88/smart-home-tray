@@ -139,6 +139,23 @@
 - **Motivo:** emissão não equivale a confirmação. Um comando mais novo pode falhar depois que um anterior confirmou valores diferentes da intenção; o snapshot confirmado deve prevalecer, sem preservar intenção terminal como se ainda estivesse pendente.
 - **Trade-offs:** o controller mantém contadores distintos para ordem de comando, snapshots, refresh e mutações de estado por dispositivo, alinhados à precedência da sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.
 
+## Decisões F2E — recuperação manual
+
+### D-018 — Recuperação manual de endereço com evidência read-only
+
+- **Estado:** aprovada pelo mantenedor; mantida como política vigente.
+- **Decisão:** somente Tuya 3.5 pode ter endereço atualizado por recuperação manual após leitura autenticada válida com a Local Key já cadastrada e confirmação explícita do usuário. Essa leitura indica posse da Local Key sob as premissas técnicas aplicáveis, mas não prova independentemente que a chave pertence exclusivamente ao Device ID anunciado. O risco residual é aceito somente nesse fluxo manual. Tuya 3.3 pode ser descoberto para diagnóstico, mas não pode adotar novo IP nesta fase. Anúncio UDP isolado nunca autoriza adoção; múltiplos candidatos ou ambiguidade impedem escolha automática. Recuperação automática segue proibida até nova decisão e endereço não é persistido no TOML.
+- **Motivo:** separar pista de rede, evidência de posse da chave e identidade criptograficamente comprovada; limitar a aceitação do risco residual a uma ação explícita do usuário.
+- **Trade-offs:** a leitura autenticada não vincula de forma independente a Local Key ao Device ID. A confirmação manual reduz adoção inadvertida, mas não elimina spoofing, compartilhamento ou vazamento da chave.
+
+### D-019 — Defaults operacionais para recuperação manual F2E.D
+
+- **Estado:** aprovada pelo mantenedor para orientar D.1–D.3; limites que dependem do comportamento efetivo do TinyTuya permanecem sujeitos a validação antes de serem tratados como garantias.
+- **Decisão:** a descoberta UDP tem teto de 3 segundos. Ambiguidade bloqueia a recuperação inteira. Propõem-se até 2,5 segundos por validação TCP read-only, uma validação no prepare e uma no confirm, sem retry automático; o timeout efetivo do TinyTuya deve ser comprovado. Haverá uma operação ativa de recuperação por processo; o intervalo de confirmação humana não ocupa esse slot. Podem existir até quatro propostas pendentes, uma por Device ID, com TTL de 60 segundos e tokens opacos de uso único. A confirmação revalida proposta, revisão da configuração e endpoint antes da adoção. `ADOPTED` permanece resultado distinto do readback normal, mesmo se ambos forem reportados na mesma resposta terminal. A coordenação futura usa barreira FIFO tipada por dispositivo, sem callbacks arbitrários ou deadlock. Permanecem proibidos recuperação automática, persistência no TOML e adoção para protocolo 3.3.
+- **Orçamento:** 9 segundos é meta de trabalho ativo distribuída entre prepare e confirm; exclui a espera humana e não é deadline rígido. Os sub-limites propostos podem somar 10,5 segundos antes de overhead. Não prometer prazo máximo até a implementação efetiva de timeout no TinyTuya ser verificada.
+- **Motivo:** manter buscas curtas e concorrência limitada sem manter bloqueios durante a confirmação humana; revalidar a proposta antes de qualquer mudança de endereço.
+- **Trade-offs:** uma proposta pode expirar durante a confirmação e exigir novo prepare. O limite TCP ainda não é garantia de tempo real enquanto o comportamento efetivo do TinyTuya não for demonstrado. Esses parâmetros não autorizam validação, token, barreira ou adoção na D.1.
+
 ## Registro de homologação F2D
 
-Em 2026-10-15, o mantenedor confirmou manualmente a homologação REAL da Luz Mesa e da Fita LED, conforme evidência e limitações em `docs/PROJECT_STATUS.md`. A Luz Escritório permanece pendente após resposta 904 e comportamento físico intermitente; não foi determinada uma causa. Este registro é evidência de validação do produto, não uma decisão que altera a arquitetura aprovada. O plano de redescoberta em `docs/LAN_IP_REDISCOVERY_PLAN.md` continua proposta não aprovada.
+Em 2026-10-15, o mantenedor confirmou manualmente a homologação REAL da Luz Mesa e da Fita LED, conforme evidência e limitações em `docs/PROJECT_STATUS.md`. A Luz Escritório permanece pendente após resposta 904 e comportamento físico intermitente; não foi determinada uma causa. Este registro é evidência de validação do produto, não uma decisão que altera a arquitetura aprovada.

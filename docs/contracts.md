@@ -135,3 +135,11 @@ Os tipos não incluem `DeviceConfig`, configuração TOML, DPS, endereço LAN, L
 ## Field knowledge metadata
 
 Every public device state includes an additive knowledge object with power, workMode, whiteBrightness, colorTemperature, hsv, colorValue, and scene. Each value is observed, stale, or unknown. The backend derives it from validated DPS readbacks and stores it in the immutable state snapshot. Nullable state values and global quality retain their existing meanings; field knowledge does not confirm pending writes. A successful partial read marks returned valid fields observed and absent or invalid previously observed fields stale. Failed reads preserve the last values and mark observed fields stale. colorValue follows the HSV DPS observation.
+
+## Recuperação manual — D.1 interno
+
+`RecoveryService.discover_for_recovery(device_id, *, timeout_seconds=3.0)` aceita somente um ID presente no catálogo e protocolo 3.5 para o fluxo de adoção futura. Protocolo inelegível e ID ausente são rejeitados antes do provider. Cada solicitação elegível chama o provider uma vez, com timeout limitado a 3 segundos, e preserva a normalização de `discover_candidates()`.
+
+`RecoveryResult` distingue `candidate_unverified`, `not_found`, `ambiguous`, `timeout`, `discovery_failed`, `catalog_failed`, `device_not_found`, `protocol_not_eligible`, `busy` e `invalid_request`. Seus candidatos expõem somente Device ID, IPv4 normalizado e versões anunciadas. Não há estado autenticado/verificado, proposalId, token, credencial, MAC, payload UDP ou exceção bruta. Falha ou timeout não transporta candidatos parciais. A concorrência usa um slot global não enfileirável; nenhum lock do DeviceManager permanece adquirido durante o scan.
+
+Este contrato é interno ao backend e não altera CLI, JSON Lines, Tauri ou frontend. Candidato único continua sendo apenas anúncio não autenticado. A D.1 não abre TCP, chama status/escrita, valida identidade, cria proposta confirmável ou atualiza endereço.
