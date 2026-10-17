@@ -199,6 +199,10 @@ class RecoveryService:
         if discovery.status is DiscoveryResultStatus.AMBIGUOUS:
             return RecoveryResult(RecoveryStatus.AMBIGUOUS, candidates)
         if discovery.status is DiscoveryResultStatus.CANDIDATES and len(candidates) == 1:
+            # UDP version claims are untrusted. Require one unambiguous, exact
+            # 3.5 claim before exposing this endpoint to later recovery steps.
+            if candidates[0].announced_versions != ("3.5",):
+                return RecoveryResult(RecoveryStatus.PROTOCOL_NOT_ELIGIBLE)
             return RecoveryResult(RecoveryStatus.CANDIDATE_UNVERIFIED, candidates)
         return RecoveryResult(
             RecoveryStatus.DISCOVERY_FAILED,

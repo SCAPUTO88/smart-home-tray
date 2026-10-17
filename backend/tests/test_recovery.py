@@ -95,6 +95,53 @@ def test_single_candidate_is_explicitly_unverified_and_contains_only_allowlisted
     assert not hasattr(result, "proposal_id")
 
 
+def test_single_candidate_announcing_only_protocol_35_remains_unverified():
+    recovery = service(announcements=(ann("192.0.2.10", version="3.5"),))
+
+    result = recovery.discover_for_recovery(DEVICE_ID)
+
+    assert result.status is RecoveryStatus.CANDIDATE_UNVERIFIED
+    assert result.candidates[0].announced_versions == ("3.5",)
+
+
+def test_single_candidate_announcing_only_protocol_33_is_not_recovery_eligible():
+    recovery = service(announcements=(ann("192.0.2.10", version="3.3"),))
+
+    result = recovery.discover_for_recovery(DEVICE_ID)
+
+    assert result.status is RecoveryStatus.PROTOCOL_NOT_ELIGIBLE
+    assert result.candidates == ()
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [("3.3", "3.5"), (None,)],
+    ids=("conflicting-claims", "missing-version"),
+)
+def test_single_candidate_with_conflicting_or_missing_versions_is_ineligible(versions):
+    recovery = service(
+        announcements=tuple(ann("192.0.2.10", version=version) for version in versions)
+    )
+
+    result = recovery.discover_for_recovery(DEVICE_ID)
+
+    assert result.status is RecoveryStatus.PROTOCOL_NOT_ELIGIBLE
+    assert result.candidates == ()
+
+
+def test_ambiguous_candidates_remain_ambiguous_across_protocol_claims():
+    recovery = service(
+        announcements=(ann("192.0.2.10", version="3.5"), ann("192.0.2.11", version="3.3"))
+    )
+
+    result = recovery.discover_for_recovery(DEVICE_ID)
+
+    assert result.status is RecoveryStatus.AMBIGUOUS
+    assert tuple(str(candidate.address) for candidate in result.candidates) == (
+        "192.0.2.10", "192.0.2.11"
+    )
+
+
 def test_no_announcement_maps_to_not_found():
     assert service().discover_for_recovery(DEVICE_ID).status is RecoveryStatus.NOT_FOUND
 
