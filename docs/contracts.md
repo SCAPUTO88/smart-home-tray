@@ -134,7 +134,7 @@ Os tipos não incluem `DeviceConfig`, configuração TOML, DPS, endereço LAN, L
 
 ## F2E.D.0 — recuperação manual (refinamento, não contrato implementado)
 
-D-018 aprova somente a política de confiança. Nenhuma operação JSONL/Tauri foi adicionada. O desenho em [`F2E_D_RECOVERY_ARCHITECTURE.md`](F2E_D_RECOVERY_ARCHITECTURE.md) propõe `device.recovery.prepare` com `{deviceId}` e `device.recovery.confirm` com `{proposalId}`: o cliente não envia IP. Resultados devem ser discriminados e normalizados; token opaco é temporário, single-use e não contém segredo. Um endereço só é aplicado em memória depois de validação read-only 3.5 e confirmação explícita; o retorno/readback normal é separado. Limites, nomes finais de comando/resultado e barreira do scheduler não estão aprovados.
+D-018 aprova somente a política de confiança. Nenhuma operação JSONL/Tauri foi adicionada. O desenho em [`F2E_D_RECOVERY_ARCHITECTURE.md`](F2E_D_RECOVERY_ARCHITECTURE.md) propõe `device.recovery.prepare` com `{deviceId}` e `device.recovery.confirm` com `{proposalId}`: o cliente não envia IP. D.1 somente coleta e normaliza candidatos não verificados; não cria proposta confirmável ou token. Solicitação de adoção para protocolo cadastrado 3.3 é recusada antes do scan; descoberta diagnóstica 3.3 é uma operação separada. Em estágios posteriores, token opaco é temporário, single-use e não contém segredo; um endereço só é aplicado em memória depois de validação read-only 3.5 e confirmação explícita. `ADOPTED` e readback são resultados irmãos, mesmo quando enviados na mesma resposta. Budgets, defaults, nomes finais de comando/resultado e barreira do scheduler não estão aprovados.
 
 ## Field knowledge metadata
 

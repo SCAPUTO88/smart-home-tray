@@ -61,37 +61,41 @@ sequenceDiagram
     U->>UI: Solicita recuperar Device ID cadastrado
     UI->>T: recovery.prepare(deviceId)
     T->>J: comando fixo; sem endereço ou chave
-    J->>M: consulta elegibilidade/snapshot versionado
-    J->>C: scan UDP limitado (até 3 s)
-    C-->>J: NOT_FOUND / AMBIGUOUS / FAILED / candidato
-    alt ausência, ambiguidade, falha ou truncamento
-        J-->>UI: resultado tipado; sem proposta
-    else candidato único
-        J->>M: reserva transação por Device ID; compara revisão
-        J->>V: status read-only em IP candidato, protocolo cadastrado 3.5, chave interna
-        V-->>J: leitura aceita ou falha normalizada
-        J->>J: cria token opaco, vinculado e expirável
-        J-->>UI: proposta + IP para revisão + ressalva de confiança
-        U->>UI: confirma explicitamente
-        UI->>T: recovery.confirm(proposalId)
-        T->>J: confirmação por token opaco apenas
-        J->>M: barreira por dispositivo; confere token/TTL/revisão/endereço
-        J->>V: nova leitura read-only no mesmo IP antes do commit
-        V-->>J: validação aceita ou falha normalizada
-        J->>M: troca somente IP em memória; invalida adapter/knowledge
-        J->>M: libera lock; executa readback normal separado
-        J-->>UI: ADOPTED + resultado do readback
+    J->>M: verifica cadastro e protocolo antes de descobrir
+    alt solicitação de adoção para cadastro diferente de 3.5
+        J-->>UI: PROTOCOL_NOT_ELIGIBLE; nenhum scan de recovery
+    else protocolo cadastrado 3.5
+        J->>C: scan UDP limitado (até 3 s)
+        C-->>J: NOT_FOUND / AMBIGUOUS / FAILED / candidato
+        alt ausência, ambiguidade, falha ou truncamento
+            J-->>UI: resultado tipado; sem proposta
+        else candidato único
+            J->>M: reserva transação por Device ID; compara revisão
+            J->>V: status read-only em IP candidato, protocolo cadastrado 3.5, chave interna
+            V-->>J: leitura aceita ou falha normalizada
+            J->>J: cria token opaco, vinculado e expirável
+            J-->>UI: proposta + IP para revisão + ressalva de confiança
+            U->>UI: confirma explicitamente
+            UI->>T: recovery.confirm(proposalId)
+            T->>J: confirmação por token opaco apenas
+            J->>M: barreira por dispositivo; confere token/TTL/revisão/endereço
+            J->>V: nova leitura read-only no mesmo IP antes do commit
+            V-->>J: validação aceita ou falha normalizada
+            J->>M: troca somente IP em memória; invalida adapter/knowledge
+            J->>M: libera lock; executa readback normal separado
+            J-->>UI: resultado ADOPTED e resultado de readback separados
+        end
     end
 ```
 
 ### Preparação da proposta
 
-1. O usuário inicia uma recuperação para um Device ID que já consta do catálogo. O backend consulta configuração sem serializar `DeviceConfig`.
-2. Executar uma única descoberta F2E.C com o budget aprovado abaixo; F2E.B normaliza a coleção.
+1. O usuário inicia uma solicitação cuja intenção é adotar um endereço para um Device ID já cadastrado. Antes de qualquer scan, o backend consulta a configuração sem serializar `DeviceConfig`; se o protocolo cadastrado não for 3.5, retorna `PROTOCOL_NOT_ELIGIBLE` sem iniciar descoberta. Uma ação diagnóstica de descoberta 3.3 é uma operação separada, não cria proposta nem pode adotar endereço.
+2. Para cadastro elegível 3.5, executar uma única descoberta F2E.C com o teto de até 3 s submetido para aprovação; F2E.B normaliza a coleção.
 3. `NOT_FOUND`, `AMBIGUOUS`, `TIMEOUT`, `PROVIDER_ERROR` ou qualquer truncamento/falha parcial terminam sem proposta e sem TCP. Nunca selecionar pela ordem, versão anunciada ou proximidade do IP salvo.
-4. Para um candidato único, verificar elegibilidade usando a configuração cadastrada e anúncio apenas como filtro: protocolo cadastrado deve ser 3.5 e o protocolo anunciado deve ser compatível. Se for 3.3, apresentar `PROTOCOL_NOT_ELIGIBLE`; não testar 3.3 com Local Key nem interpretar erro como sucesso.
+4. Para um candidato único, conferir que o protocolo anunciado é compatível com o cadastro 3.5. O anúncio não é autoridade para selecionar protocolo; mismatch encerra como `PROTOCOL_NOT_ELIGIBLE`, sem validação TCP.
 5. Validar o IP candidato sob o lock/coordenação exclusiva daquele Device ID usando um adapter temporário derivado da configuração cadastrada, alterando apenas o endereço da cópia. Chamar somente status/read-only. A leitura é válida se TinyTuya aceitar a resposta autenticada, o `dps` passar a validação escalar existente e ao menos um DPS mapeado no cadastro produzir valor semanticamente válido segundo os mesmos parsers/ranges do manager. Isso é critério de consistência da resposta, não prova de identidade. Fazer a validação por helper puro para não atualizar `_states`, `_last_read_fields`, adapter ativo ou configuração confirmada. D.2 deve revalidar a semântica TinyTuya 1.20.0.
-6. Uma validação aceita cria proposta em memória, sem mudar endereço. A proposta armazena referência opaca, ID cadastrado, candidato, protocolo, endereço original, revisão de configuração, expiração monotônica e resultado reduzido da validação; não armazena Local Key, pacote, MAC, DPS crus ou exceção.
+6. Somente após validação read-only aceita — trabalho da D.2 — cria-se proposta em memória, sem mudar endereço. A proposta armazena referência opaca, ID cadastrado, candidato, protocolo, endereço original, revisão de configuração, expiração monotônica e resultado reduzido da validação; não armazena Local Key, pacote, MAC, DPS crus ou exceção. D.1 não cria proposta confirmável nem emite token.
 
 ### Confirmação e aplicação
 
@@ -113,14 +117,16 @@ Usar resultado específico de recuperação, sem exceção bruta, Local Key, MAC
 | `TRANSPORT_FAILED` | timeout, bind, socket, conexão ou resposta ausente | original |
 | `AUTH_FAILED` | TinyTuya rejeitou a autenticação configurada | original |
 | `VALIDATION_FAILED` | resposta malformada/inválida ou falha não classificável | original |
-| `PROTOCOL_NOT_ELIGIBLE` | cadastro/anúncio incompatível ou protocolo não 3.5 | original |
-| `PROPOSAL_READY` | candidato único passou validação inicial | original até confirmação |
+| `PROTOCOL_NOT_ELIGIBLE` | cadastro/anúncio incompatível ou protocolo não 3.5; para cadastro 3.3 em solicitação de adoção, antes do scan | original |
+| `PROPOSAL_READY` | D.2 validou read-only o candidato único durante prepare | original até confirmação; D.1 não emite este resultado nem token |
 | `PROPOSAL_EXPIRED` | token não existe, expirou ou já foi consumido | original |
 | `CONFIG_CHANGED` | revisão, endereço ou protocolo mudou desde a captura | atual; não sobrepor |
 | `BUSY` | limite de operação/proposta atingido | original |
-| `ADOPTED` | confirmação válida e commit em memória concluído | candidato; readback reportado separadamente |
+| `ADOPTED` | confirmação válida e commit em memória concluído | candidato; campo de resultado de recovery independente do readback |
 
 `DiscoveryFailure.TIMEOUT`/`PROVIDER_ERROR` do F2E.B devem ser mapeados a resultados de recuperação sem detalhes originais. Transport/auth/validation só devem ser distinguidos a partir de códigos estruturados já normalizados, nunca por comparação de texto de exceção.
+
+O envelope terminal pode conter os dois resultados irmãos: `recovery: {status: "ADOPTED"}` e `readback: {status: "SUCCEEDED" | "FAILED"}`. A falha do readback não converte `ADOPTED` em falha de adoção nem desfaz a mudança em memória. Erros antes do commit não produzem `ADOPTED` nem um readback aparentado.
 
 ## C. Concorrência, consistência e estado
 
@@ -148,17 +154,34 @@ Tokens são aleatórios, opacos, single-use e vinculados no backend a um único 
 
 | Recurso | Limite sugerido | Justificativa / efeito |
 | --- | ---: | --- |
-| Descoberta UDP F2E.C | até 3 s; scanner mantém seu teto atual | Já validado como limite da coleta; janela menor pode não ver anúncio tardio. Budget inclui setup, bind, recepção e encerramento controlados pelo scanner. |
-| Validação TCP | no máximo 1 candidato único por fase; sem TCP se not-found/ambíguo/3.3 | Evita testar todos os IPs anunciados e reduz superfície/tráfego. O único candidato é validado antes da proposta e novamente no confirm. |
-| Tentativas read-only | máximo 2 por ação proposta (uma prepare + uma confirmação) | Reconfirma endpoint depois da decisão humana e reduz troca durante TTL; falha exige iniciar uma nova ação explícita. Cada fase não repete automaticamente. |
+| Descoberta UDP F2E.C | até 3 s; teto existente | Default recomendado; já é o teto do scanner. Janela menor pode não ver anúncio tardio. Budget inclui setup, bind, recepção e encerramento controlados pelo scanner. |
+| Validação TCP | no máximo 1 candidato único por fase; sem TCP se not-found/ambíguo/3.3 | Evita testar todos os IPs anunciados e reduz superfície/tráfego. O único candidato é validado uma vez no prepare e novamente no confirm. |
+| Tentativas read-only | máximo 2 validações por proposta (uma prepare + uma confirmação), sem retries; até 1 readback normal separado após adoção | Revalida endpoint depois da decisão humana. O readback atualiza estado físico e não é outra validação de identidade; falha exige nova ação explícita para validar/adotar. |
 | Timeout por validação | teto sugerido de 2,5 s, menor entre esse teto e o timeout já configurado | Mantém compatibilidade de configuração e limite prático. Confirmar que TinyTuya limita construtor, connect e status de ponta a ponta na versão distribuída. |
-| Operação ativa total | meta/teto sugerido de 9 s: até 3 s UDP + 2 × 2,5 s TCP + até 1 s de overhead | O tempo de espera da confirmação humana é excluído e regido pela expiração da proposta. Se a API síncrona não cumprir o teto real, não prometer hard cancellation nem criar thread abandonada. |
-| Concorrência global | 1 prepare/confirm de recovery em operação por processo | Alinha-se ao lock global do scanner atual e limita sockets/conexões de validação. Requests seguintes retornam `BUSY`; não ficam em fila ilimitada. |
+| Operação ativa total | meta sugerida de 9 s para prepare + confirm, incluindo até 3 s UDP, duas validações TCP, commit e readback normal | Exclui totalmente a espera humana entre prepare e confirm. Os sub-limites são máximos independentes: no pior caso 3 s + 3 × 2,5 s (duas validações e um readback) = 10,5 s, antes do overhead. Portanto 9 s é uma meta a alocar após medir TinyTuya, não garantia nem soma atualmente demonstrada. |
+| Concorrência global | 1 operação ativa por processo, prepare ou confirm | Alinha-se ao lock global do scanner atual e limita sockets/conexões de validação. O slot é liberado quando prepare retorna a proposta; a espera humana não o ocupa. Requests seguintes enquanto outro estágio está ativo retornam `BUSY`, sem fila ilimitada. |
 | Propostas pendentes | até 4 no processo, no máximo uma por Device ID | Catálogo atual é pequeno; limite restringe retenção de endpoints/tokens. Requests adicionais retornam `BUSY` até confirmação, cancelamento/expiração ou shutdown. |
 | TTL | 60 s monotônicos por proposta | Dá tempo para revisar/confirmação humana sem manter lock. Prazo curto reduz janela de troca. Valor a validar com UX. |
 | Limite UDP/candidatos | F2E.C: 256 pacotes e 64 IPs candidatos; F2E.B preserva ambiguidade | Já são os contratos implementados; qualquer saturação resulta em falha, nunca em proposta parcial. |
 
-Os números desta tabela são recomendação de refinamento, não decisão aprovada. Antes de D.1/D.2, confirmar o orçamento de 9 s, timeout TinyTuya real, limite 4/TTL 60 s e o comportamento síncrono de encerramento. A chamada LAN já iniciada não pode ser cancelada arbitrariamente; o shutdown deve aguardar apenas operações que demonstradamente terminem dentro do timeout escolhido e limpar propostas. Não iniciar polling, startup scan ou retries.
+Os números desta tabela são defaults recomendados para aprovação do mantenedor, não decisões aprovadas. O teto de 9 s é a meta para trabalho ativo combinado de prepare e confirm, não uma garantia de deadline; não inclui o período em que o usuário revisa/confirma a proposta. A conta de pior caso com timeout de 2,5 s em cada uma das três chamadas status chega a 10,5 s antes do overhead, então não cabe no alvo de 9 s. Antes da implementação, medir o timeout efetivo TinyTuya e aprovar alocação coerente (por exemplo, budgets menores por estágio ou meta total revista). A chamada LAN já iniciada não pode ser cancelada arbitrariamente; não alegar hard cancellation, criar worker órfão, iniciar polling, startup scan ou retry automático.
+
+### Defaults submetidos à aprovação do mantenedor
+
+- Ambiguidade bloqueia toda a recuperação nesta versão; nenhum candidate é escolhido, validado ou convertido em proposta automaticamente. A descoberta diagnóstica permanece disponível como ação separada.
+- F2E.C mantém o teto UDP existente de 3 s.
+- Cada validação TCP tem timeout inicialmente proposto de até 2,5 s, menor que o timeout cadastrado, sujeito a verificar o comportamento efetivo TinyTuya.
+- No máximo uma validação no prepare e uma no confirm; sem retry automático.
+- Após `ADOPTED`, no máximo um readback normal separado; `recovery.status` e `readback.status` permanecem resultados irmãos mesmo no mesmo envelope terminal.
+- Uma operação ativa por processo; a espera humana entre prepare e confirm não ocupa o slot.
+- Até quatro propostas pendentes em memória, no máximo uma por Device ID.
+- TTL monotônico de 60 s; token opaco e de uso único.
+- Confirm compara revisão/endereço/protocolo de configuração e revalida o endpoint antes de adotar.
+- `ADOPTED` é resultado distinto do readback; ambos podem ser enviados no mesmo envelope terminal.
+- Barreira FIFO tipada por Device ID, sem callback arbitrário, sem segurar a condição do scheduler em I/O e sem adquirir locks em ordem inversa.
+- Nenhuma recuperação automática, persistência TOML ou adoção de protocolo 3.3.
+
+Todos os itens acima aguardam aprovação explícita e não alteram D-018, que já está aprovada.
 
 ## E. Fronteira de segurança e transporte
 
@@ -174,20 +197,22 @@ Os números desta tabela são recomendação de refinamento, não decisão aprov
 
 ### D.1 — Contratos e orquestração backend
 
-**Escopo:** tipos de resultado/proposta, estado de confiança explícito, provider injetável, composição F2E.C→F2E.B→eligibilidade, mapa de erros seguro e orçamento/capacidade. Sem validação TCP/adoção.
+**Escopo:** contratos de resultado e estado de confiança, provider injetável, composição F2E.C→F2E.B→eligibilidade e limites de coleta. A primeira implementação D.1 somente coleta e normaliza candidatos não verificados. Não valida por TCP, não cria proposal/token confirmável, não emite `PROPOSAL_READY`, não adota endereço e não integra CLI/JSONL/Tauri/UI.
 
 **Aceite:**
 - not-found/ambiguous/timeout/falha/truncamento são tipos distintos; ambiguidade não cria proposta;
+- apenas candidatos explicitamente não verificados são retornados; D.1 nunca cria token confirmável ou `PROPOSAL_READY`;
+- pedido de adoção para configuração 3.3 retorna `PROTOCOL_NOT_ELIGIBLE` antes de chamar F2E.C; descoberta diagnóstica 3.3 permanece ação separada e sem token de adoção;
 - só Device ID do catálogo inicia ação; dados gerados pelo scan vêm de provider fake;
 - nenhum candidato é rotulado autenticado/identidade, não há Local Key em tipos/logs/IPC;
 - budgets/limites rejeitam timeout inválido, operação concorrente e saturação sem resultado parcial;
 - testes determinísticos cobrem estados, repetição, expiração, fechamento de sessão e shutdown.
 
-**Riscos/dependências:** decidir outputs de erro públicos e se candidato ambíguo bloqueia tentativa inteira ou permite escolha humana futura. Depende de manter F2E.B/C contratos e sem dependência CLI/UI.
+**Riscos/dependências:** defaults públicos e de orçamento permanecem pendentes de aprovação. Depende de manter F2E.B/C contratos e não deve incluir validação TCP, token/proposta confirmável ou dependência de CLI/UI.
 
 ### D.2 — Validação read-only e concorrência
 
-**Escopo:** validar candidato 3.5 usando Local Key interna e adapter temporário; revisão/generation, exclusão por dispositivo e barrier FIFO no scheduler; validação repetida na confirmação; lifecycle/timeout de adapters.
+**Escopo:** validar candidato 3.5 usando Local Key interna e adapter temporário; somente após validação aceita emitir `PROPOSAL_READY` e token; revisão/generation, exclusão por dispositivo e barrier FIFO no scheduler; validação repetida na confirmação; lifecycle/timeout de adapters.
 
 **Aceite:**
 - apenas protocolo cadastrado 3.5 e candidato elegível executam status; 3.3 nunca executa status de adoção;
@@ -238,11 +263,12 @@ Os números desta tabela são recomendação de refinamento, não decisão aprov
 
 ### Aprovação do mantenedor necessária antes de implementação
 
-1. Confirmar orçamento sugerido: 9 s total de trabalho ativo, até 2,5 s por read-only, 2 validações por proposta, 1 recovery ativo, 4 propostas e TTL de 60 s.
-2. Definir se `AMBIGUOUS` bloqueia toda a recuperação manual ou se uma versão futura pode validar cada candidato e permitir escolha explícita pelo usuário. A proposta inicial deste documento é bloquear e não criar token.
-3. Aprovar o contrato de resultados/códigos públicos de recovery e se o readback pós-adoção integra a mesma requisição ou retorna estado separado.
-4. Confirmar semântica real de autenticação, timeout/cancelamento e lifecycle `close()` em TinyTuya da versão instalada/distribuída; a inspeção 1.20.0 de F2E.A não cobre toda faixa `>=1.20,<2`.
-5. Aprovar fila de barreira tipada no `CommandScheduler`, incremento de generation em toda troca de config/endereço e regra de invalidação/fechamento do adapter antigo.
-6. Definir texto/UX de consentimento para o risco residual sem sugerir identidade criptograficamente comprovada.
+1. Aprovar ambiguidade bloqueante nesta versão e manter descoberta 3.3 apenas diagnóstica, separada do pedido de adoção.
+2. Aprovar teto UDP F2E.C de 3 s; timeout TCP inicialmente até 2,5 s sujeito à verificação efetiva; uma validação no prepare, uma no confirm, sem retry automático; e no máximo um readback normal pós-adoção.
+3. Aprovar o alvo de 9 s como meta de trabalho ativo combinada de prepare+confirm, excluída a espera humana, e escolher uma alocação compatível: os sub-limites atuais permitem 10,5 s no pior caso antes do overhead, portanto não constituem uma garantia rígida.
+4. Aprovar uma operação ativa por processo (slot liberado durante confirmação humana), até quatro propostas pendentes por processo/uma por Device ID e TTL de 60 s para token opaco single-use.
+5. Aprovar recheck de revisão/endereço e nova validação do endpoint durante confirm; `ADOPTED` separado do resultado readback, podendo ambos aparecer no mesmo envelope terminal.
+6. Aprovar barreira FIFO tipada no `CommandScheduler`, sem callback arbitrário e sem manter a condição durante I/O; revisar geração de config e invalidação/fechamento do adapter.
+7. Confirmar semântica efetiva de autenticação, timeout/cancelamento e lifecycle `close()` na versão TinyTuya distribuída; definir texto/UX de consentimento sem alegar identidade criptográfica comprovada.
 
 Não há aprovação para recuperação automática, atualização de TOML, scanning no startup, seleção por confiança/ordem, 3.3 adoption, novos comandos de iluminação ou testes físicos. Validação REAL exige autorização explícita separada.
