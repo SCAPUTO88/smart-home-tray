@@ -1,12 +1,14 @@
 # Refinamento: recuperação de IP por descoberta LAN
 
-**Estado:** proposta técnica para revisão. Nenhuma decisão arquitetural deste documento foi aprovada e nenhuma parte está implementada.
+**Estado:** investigação e plano históricos; implementação de recuperação não existe. A política de confiança manual foi aprovada em D-018. Este documento foi escrito antes dessa decisão e suas alternativas/condições antigas ficam supersedidas pelo refinamento normativo em [`F2E_D_RECOVERY_ARCHITECTURE.md`](F2E_D_RECOVERY_ARCHITECTURE.md). Orçamentos, contratos e mecanismo de concorrência continuam pendentes de aprovação.
+
+**Atualização F2E.D.0:** só recuperação manual Tuya 3.5, com status LAN read-only aceito sob a Local Key cadastrada e confirmação explícita, pode atualizar endereço em memória. Isso comprova posse da chave usada, não identidade independente do Device ID. Tuya 3.3 não adota endereço; UDP não autoriza adoção; ambiguidade não escolhe endereço automaticamente; recuperação automática e escrita no TOML seguem proibidas.
 
 ## Problema e objetivo
 
 Após queda de energia e renovação DHCP, o IPv4 de dispositivos Tuya mudou enquanto Device IDs e Local Keys permaneceram válidos. O TOML continuou apontando para endereços antigos, causando falha de leitura. A homologação recuperou a operação atualizando o arquivo TOML manualmente após descoberta com TinyTuya.
 
-O objetivo final é permitir que um dispositivo LAN já cadastrado seja reencontrado a partir de seu Device ID, mantendo identidade, capacidades e credenciais, inclusive por recuperação automática, limitada e segura após uma falha de conexão elegível. Essa recuperação é necessária para o uso diário sem intervenção manual recorrente. A primeira implementação continua sendo a recuperação manual por Device ID. A implementação automática futura permanece condicionada à validação da identidade, dos limites de execução e da segurança. Toda descoberta deve ser local, apenas de leitura, isolada por dispositivo e nunca deve enviar comandos de iluminação.
+O objetivo aprovado para F2E.D é permitir que um dispositivo LAN já cadastrado seja reencontrado a partir de seu Device ID e que o endereço de um Tuya 3.5 seja atualizado somente por ação manual confirmada. Recuperação automática não é objetivo aprovado e permanece proibida até uma nova decisão. Toda descoberta deve ser local, read-only e nunca deve enviar comandos de iluminação.
 
 ## Arquitetura existente relevante
 
@@ -50,6 +52,8 @@ Capabilities e Local Key continuam associados ao cadastro por Device ID. O proce
 | Recuperação explicitamente solicitada | Ação dedicada “redescobrir endereço” no app/CLI; resultado mostra encontrado, ambíguo, não encontrado ou validação falhou. | Intenção explícita e melhor diagnóstico. Exige novo comando/contrato e UX explícitos; recomendada como primeira entrega. |
 
 **Sequência proposta:** PR inicial adiciona uma operação explícita e dirigida por Device ID na CLI e na bridge REAL tipada; MOCK/FIXTURE retornam resultado sintético, sem scanner. Este é o primeiro incremento de recuperação, não o objetivo final. Depois da validação da recuperação manual, implementar recuperação automática após falha de conexão elegível, com identidade verificável, orçamento finito, limite por dispositivo e global, cooldown, cancelamento no encerramento e UX aprovada. Não adicionar polling, scan periódico ou retry infinito. Startup REAL continua fazendo o readback atual; não deve scanear todos os dispositivos por padrão na primeira versão.
+
+**Substituição:** o parágrafo acima registra uma proposta anterior. D-018 e o refinamento F2E.D.0 substituem a sugestão de CLI, os critérios de identidade e a intenção de recuperação automática. A divisão atual de PRs é D.1–D.4 no refinamento; não executar sem aprovação das decisões restantes.
 
 ## Isolamento, comandos e readbacks
 
@@ -130,4 +134,4 @@ Todos os testes devem ser determinísticos e não abrir sockets reais:
 
 ## Resumo para revisão arquitetural
 
-O plano recomenda recuperação explicitamente solicitada por Device ID no primeiro incremento e define como objetivo futuro necessário para uso diário a recuperação automática, limitada e segura após falha elegível de conexão. Esta etapa automática depende de validação da identidade, dos limites de execução e da segurança. A descoberta usa scanner UDP TinyTuya apenas para candidatos, validação read-only no endpoint com os dados já associados ao Device ID, coordenação por dispositivo e endereço atualizado somente em memória. Não recomenda startup scan global na primeira versão, polling, varredura TCP de sub-rede nem persistência automática. A principal questão técnica pendente é provar que a versão TinyTuya instalada consegue vincular a resposta validada ao Device ID pretendido, e não somente devolver status plausível.
+Resumo original supersedido: ele propunha recuperação automática e tratava vínculo independente entre resposta e Device ID como gate da adoção. D-018 substitui essa política somente para recuperação manual Tuya 3.5 com aceite explícito do risco residual. Recuperação automática permanece proibida. O desenho atual, critérios de implementação e decisões pendentes estão em `docs/F2E_D_RECOVERY_ARCHITECTURE.md`.
