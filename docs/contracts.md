@@ -132,6 +132,10 @@ Como a interface visual pode enviar um patch de um canal HSV, o adapter futuro d
 
 Os tipos não incluem `DeviceConfig`, configuração TOML, DPS, endereço LAN, Local Keys ou autenticação. Não são uma serialização nova do backend: o adapter Tauri futuro terá de mapear explicitamente os envelopes JSON Lines públicos e manter a allowlist da Etapa D.
 
+## F2E.D.0 — recuperação manual (refinamento, não contrato implementado)
+
+D-018 aprova somente a política de confiança. Nenhuma operação JSONL/Tauri foi adicionada. O desenho em [`F2E_D_RECOVERY_ARCHITECTURE.md`](F2E_D_RECOVERY_ARCHITECTURE.md) propõe `device.recovery.prepare` com `{deviceId}` e `device.recovery.confirm` com `{proposalId}`: o cliente não envia IP. D.1 somente coleta e normaliza candidatos não verificados; não cria proposta confirmável ou token. Solicitação de adoção para protocolo cadastrado 3.3 é recusada antes do scan; descoberta diagnóstica 3.3 é uma operação separada. Em estágios posteriores, token opaco é temporário, single-use e não contém segredo; um endereço só é aplicado em memória depois de validação read-only 3.5 e confirmação explícita. `ADOPTED` e readback são resultados irmãos, mesmo quando enviados na mesma resposta. Budgets, defaults, nomes finais de comando/resultado e barreira do scheduler não estão aprovados.
+
 ## Field knowledge metadata
 
 Every public device state includes an additive knowledge object with power, workMode, whiteBrightness, colorTemperature, hsv, colorValue, and scene. Each value is observed, stale, or unknown. The backend derives it from validated DPS readbacks and stores it in the immutable state snapshot. Nullable state values and global quality retain their existing meanings; field knowledge does not confirm pending writes. A successful partial read marks returned valid fields observed and absent or invalid previously observed fields stale. Failed reads preserve the last values and mark observed fields stale. colorValue follows the HSV DPS observation.
@@ -143,3 +147,5 @@ Every public device state includes an additive knowledge object with power, work
 `RecoveryResult` distingue `candidate_unverified`, `not_found`, `ambiguous`, `timeout`, `discovery_failed`, `catalog_failed`, `device_not_found`, `protocol_not_eligible`, `busy` e `invalid_request`. Seus candidatos expõem somente Device ID, IPv4 normalizado e versões anunciadas. Não há estado autenticado/verificado, proposalId, token, credencial, MAC, payload UDP ou exceção bruta. Falha ou timeout não transporta candidatos parciais. A concorrência usa um slot global não enfileirável; nenhum lock do DeviceManager permanece adquirido durante o scan.
 
 Este contrato é interno ao backend e não altera CLI, JSON Lines, Tauri ou frontend. Candidato único continua sendo apenas anúncio não autenticado. A D.1 não abre TCP, chama status/escrita, valida identidade, cria proposta confirmável ou atualiza endereço.
+
+Os budgets e defaults indicados como pendentes no registro F2E.D.0 foram posteriormente aprovados em D-019 para orientar D.1–D.3. Isso não torna esses fluxos implementados: em particular, o timeout efetivo do TinyTuya para validação TCP permanece sujeito a verificação.

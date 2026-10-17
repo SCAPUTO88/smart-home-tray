@@ -139,14 +139,13 @@
 - **Motivo:** emissão não equivale a confirmação. Um comando mais novo pode falhar depois que um anterior confirmou valores diferentes da intenção; o snapshot confirmado deve prevalecer, sem preservar intenção terminal como se ainda estivesse pendente.
 - **Trade-offs:** o controller mantém contadores distintos para ordem de comando, snapshots, refresh e mutações de estado por dispositivo, alinhados à precedência da sessão React. Isso não agenda nem reordena comandos; o `CommandScheduler` Python continua sendo o único scheduler de execução.
 
-## Decisões F2E — recuperação manual
+### D-018 — Política de confiança para recuperação manual de endereço F2E.D
 
-### D-018 — Recuperação manual de endereço com evidência read-only
-
-- **Estado:** aprovada pelo mantenedor; mantida como política vigente.
-- **Decisão:** somente Tuya 3.5 pode ter endereço atualizado por recuperação manual após leitura autenticada válida com a Local Key já cadastrada e confirmação explícita do usuário. Essa leitura indica posse da Local Key sob as premissas técnicas aplicáveis, mas não prova independentemente que a chave pertence exclusivamente ao Device ID anunciado. O risco residual é aceito somente nesse fluxo manual. Tuya 3.3 pode ser descoberto para diagnóstico, mas não pode adotar novo IP nesta fase. Anúncio UDP isolado nunca autoriza adoção; múltiplos candidatos ou ambiguidade impedem escolha automática. Recuperação automática segue proibida até nova decisão e endereço não é persistido no TOML.
-- **Motivo:** separar pista de rede, evidência de posse da chave e identidade criptograficamente comprovada; limitar a aceitação do risco residual a uma ação explícita do usuário.
-- **Trade-offs:** a leitura autenticada não vincula de forma independente a Local Key ao Device ID. A confirmação manual reduz adoção inadvertida, mas não elimina spoofing, compartilhamento ou vazamento da chave.
+- **Estado:** aprovada pelo mantenedor para orientar o refinamento F2E.D; implementação ainda não existe.
+- **Decisão:** somente Tuya 3.5 pode receber novo endereço em memória, após leitura LAN read-only aceita sob a Local Key já cadastrada e confirmação explícita do usuário. Essa leitura é evidência de posse da chave usada, sob as premissas técnicas aplicáveis; não prova independentemente que a chave pertence exclusivamente ao Device ID anunciado. O risco residual é aceito somente na recuperação manual. Tuya 3.3 pode ser descoberta, mas não pode adotar endereço nesta fase. Anúncio UDP isolado nunca autoriza adoção. Múltiplos candidatos/ambiguidade impedem escolha automática. Recuperação automática continua proibida até nova decisão. Não persistir endereço no TOML nesta fase.
+- **Motivo:** separar pista de rede, endpoint que aceitou autenticação por chave cadastrada e identidade independente. Exigir confirmação humana limita o risco aceito e impede que a descoberta dispare mudança silenciosa.
+- **Trade-offs:** recovery 3.5 ainda pode aceitar endpoint de equipamento/host que possua chave reutilizada, compartilhada ou vazada; usuário confirma esse risco residual. Sem TOML, a recuperação precisa ser repetida depois de reiniciar.
+- **Limites:** esta decisão não aprova budgets, concorrência, resultado/IPC, seleção manual entre candidatos ambíguos, implementação, integração Tauri/UI, startup scan, retries ou validação REAL física.
 
 ### D-019 — Defaults operacionais para recuperação manual F2E.D
 
@@ -158,4 +157,4 @@
 
 ## Registro de homologação F2D
 
-Em 2026-10-15, o mantenedor confirmou manualmente a homologação REAL da Luz Mesa e da Fita LED, conforme evidência e limitações em `docs/PROJECT_STATUS.md`. A Luz Escritório permanece pendente após resposta 904 e comportamento físico intermitente; não foi determinada uma causa. Este registro é evidência de validação do produto, não uma decisão que altera a arquitetura aprovada.
+Em 2026-10-15, o mantenedor confirmou manualmente a homologação REAL da Luz Mesa e da Fita LED, conforme evidência e limitações em `docs/PROJECT_STATUS.md`. A Luz Escritório permanece pendente após resposta 904 e comportamento físico intermitente; não foi determinada uma causa. Este registro é evidência de validação do produto, não uma decisão que altera a arquitetura aprovada. A política de confiança de recuperação manual foi aprovada em D-018; o restante do desenho de implementação em `docs/F2E_D_RECOVERY_ARCHITECTURE.md` continua refinamento, não aprovação de código ou orçamento.

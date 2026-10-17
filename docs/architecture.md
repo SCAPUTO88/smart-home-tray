@@ -22,8 +22,6 @@ Backend local-first executável como processo independente. A operação em runt
 
 `DeviceManager` cria o catálogo por `Device ID`, mantém estado público sem configuração privada e instancia adapters sob demanda. Cada dispositivo tem seu próprio lock; polling é opt-in via `start_polling()` e encerra com `stop_polling()`. `poll_once()` permite uma sincronização explícita sem thread. O intervalo padrão é 15 segundos. `update_address()` atualiza o IP e descarta o adapter para reconstruí-lo na próxima operação; não há descoberta automática nesta etapa. `list_device_ids()` expõe uma tupla lock-free das identidades do catálogo, cuja associação de IDs é imutável após a construção; alterações de endereço não mudam essa associação.
 
-F2E.D.1 adiciona `RecoveryService.discover_for_recovery()`, usando uma leitura curta de elegibilidade por `DeviceManagerRecoveryCatalog` e, somente para protocolo 3.5, uma única chamada ao provider UDP limitada a 3 segundos. Um lock global não enfileirável impede scans de recuperação simultâneos. A normalização permanece em F2E.B; os resultados carregam apenas candidatos não verificados ou estados/falhas normalizados. A operação não abre TCP, consulta status, acessa Local Keys, cria proposta confirmável nem chama `update_address()`. Validação e adoção pertencem às etapas posteriores.
-
 O CLI e o protocolo usam o mesmo DeviceManager. O frontend não recebe credenciais nem acessa TinyTuya diretamente.
 
 ## Fluxo de comunicação
@@ -142,3 +140,13 @@ No adapter, um HSV parcial é completado com canais conhecidos e intenções mai
 O estado público mantém valores nullable e quality global, e acrescenta knowledge imutável por campo. O backend atribui observed apenas quando lê DPS válido; ausência/invalidade marca stale se havia observação anterior e unknown nos demais casos. Falha de leitura preserva valores e degrada observed para stale. colorValue acompanha o DPS HSV. A escrita pendente continua separada da leitura: knowledge observado não confirma a operação.
 
 O frontend habilita controles por capacidade, conexão e conhecimento específico exigido. Atualização manual chama apenas device.status do dispositivo alvo. É bloqueada enquanto houver uma escrita pendente; respostas ultrapassadas, de outro dispositivo ou após desmontagem são ignoradas. Não existe polling automático.
+
+## F2E.D.0 — política aprovada, recuperação ainda não implementada
+
+D-018 aprova a política de recuperação manual: Tuya 3.5 pode ter somente o endereço atualizado em memória após status LAN read-only aceito sob a Local Key cadastrada e confirmação explícita; isso evidencia posse da chave usada, não identidade criptográfica independente do Device ID. Tuya 3.3 não adota IP, UDP isolado nunca autoriza, ambiguidade não permite escolha automática, não há recuperação automática nem persistência no TOML. D.1, ainda não implementada, poderá somente coletar/normalizar candidatos; pedido de adoção 3.3 será rejeitado antes de discovery e diagnóstico 3.3 ficará separado. Nenhum fluxo executável, contrato JSONL/Tauri ou UI de recovery existe nesta etapa. Budgets e defaults permanecem pendentes. O desenho proposto e seus gates estão em [`F2E_D_RECOVERY_ARCHITECTURE.md`](F2E_D_RECOVERY_ARCHITECTURE.md).
+
+## F2E.D.1 — orquestração interna de candidatos
+
+`RecoveryService.discover_for_recovery()` consulta elegibilidade pelo `DeviceManagerRecoveryCatalog` e, somente para protocolo 3.5, chama uma vez o provider UDP, limitado a 3 segundos. O slot global não enfileirável permite uma descoberta de recuperação ativa por processo. A normalização permanece em F2E.B; os resultados carregam candidatos explicitamente não verificados ou falhas normalizadas. A operação não abre TCP, consulta status de dispositivo, acessa Local Keys, cria proposta confirmável nem chama `update_address()`.
+
+D-019 aprovou os defaults operacionais para as etapas seguintes. A validação TCP read-only, propostas/tokens, barreira FIFO e adoção continuam fora da D.1; o limite sugerido de 2,5 segundos por validação depende da confirmação do comportamento efetivo do TinyTuya.
