@@ -199,7 +199,7 @@ class TinyTuyaLanDiscoveryProvider:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 sock.bind((source_ip, 0))
                 if self._monotonic() >= deadline:
-                    return failed
+                    return failed, truncated
                 sock.sendto(self._discovery_packet(source_ip), (broadcast_ip, 7000))
             except Exception:
                 # A failed adapter is tolerated when listeners or other adapters work.
@@ -284,9 +284,9 @@ class TinyTuyaLanDiscoveryProvider:
                     raise OSError("LAN discovery listeners failed")
             if not waited_for_packets and self._monotonic() >= deadline:
                 raise TimeoutError("LAN discovery budget expired before listening")
-            if not announcements and retired_listener:
+            if retired_listener:
                 raise OSError("LAN discovery listener receive failed")
-            if not announcements and broadcast_failed:
+            if broadcast_failed:
                 raise OSError("LAN discovery broadcast failed")
             if interfaces_truncated:
                 raise RuntimeError("LAN discovery interface limit reached")

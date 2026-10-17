@@ -93,7 +93,8 @@ class FakeSocket:
     def bind(self, address):
         self.bound = address
         if self.factory.bind_clock is not None:
-            self.factory.bind_clock.advance(self.factory.bind_delay)
+            delay = self.factory.tx_bind_delay if address[1] == 0 else self.factory.bind_delay
+            self.factory.bind_clock.advance(delay)
         if address[1] in self.factory.bind_fail_ports:
             raise OSError("synthetic bind error")
 
@@ -125,6 +126,7 @@ class FakeSocketFactory:
         receive_error_ports=(),
         bind_clock=None,
         bind_delay=0.0,
+        tx_bind_delay=0.0,
         send_error=False,
     ):
         self.datagrams = list(datagrams)
@@ -133,6 +135,7 @@ class FakeSocketFactory:
         self.receive_error_ports = set(receive_error_ports)
         self.bind_clock = bind_clock
         self.bind_delay = bind_delay
+        self.tx_bind_delay = tx_bind_delay
         self.send_error = send_error
         self.receive_calls = 0
         self.sockets = []
@@ -311,16 +314,46 @@ def test_repeated_receive_oserror_retires_failed_listeners_without_busy_loop():
     assert all(sock.closed for sock in factory.sockets)
 
 
-def test_healthy_listener_keeps_collecting_after_another_listener_fails():
+def test_retired_listener_makes_partial_candidate_result_fail_closed():
     factory = FakeSocketFactory(
         datagrams=[(packet_33(), ("192.0.2.44", 6667))],
         receive_error_ports={6666},
     )
     provider = make_provider(factory, FakeClock())
 
-    results = provider.discover(DEVICE_ID, timeout_seconds=1.0)
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
 
-    assert results == [DiscoveryAnnouncement(DEVICE_ID, "192.0.2.44", "3.3")]
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure.value == "provider_error"
+    assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)
+
+
+def test_failed_broadcast_makes_partial_candidate_result_fail_closed():
+    factory = FakeSocketFactory(
+        datagrams=[(packet_33(), ("192.0.2.44", 6667))],
+        send_error=True,
+    )
+    provider = make_provider(factory, FakeClock())
+
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure.value == "provider_error"
+    assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)
+
+
+def test_expiration_during_transmit_bind_normalizes_to_timeout():
+    clock = FakeClock()
+    factory = FakeSocketFactory(bind_clock=clock, tx_bind_delay=0.2)
+    provider = make_provider(factory, clock)
+
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=0.2)
+
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure.value == "timeout"
+    assert result.candidates == ()
     assert all(sock.closed for sock in factory.sockets)
 
 
