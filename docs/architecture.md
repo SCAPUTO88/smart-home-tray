@@ -13,6 +13,7 @@ Backend local-first executável como processo independente. A operação em runt
 | `tuya_adapter.py` | Construir cliente TinyTuya, ler status LAN e escrever DPS. | TinyTuya, models |
 | `device_manager.py` | Identidade persistente por Device ID, endereço mutável, coordenação de estado, timeout, reconexão e falhas isoladas. | Adapter, config, models |
 | `command_scheduler.py` | Submissão assíncrona de operações normalizadas, coalescing de controles contínuos e ordenação discreta por dispositivo. | DeviceManager, biblioteca padrão (`threading`, `concurrent.futures`) |
+| `recovery.py` | Orquestrar, sob solicitação explícita, descoberta e classificação de candidatos não verificados para recuperação manual. | Catálogo público estreito, `discovery.py`, provider injetável e biblioteca padrão |
 | `color.py` | Conversão RGB/HSV e serialização/validação HSV16 dos valores de cor Tuya. | Biblioteca padrão, `colorsys` |
 | `protocol.py` | Ler requests e escrever responses JSON Lines com framing limitado, validação e correlação assíncrona. | DeviceManager, CommandScheduler, models, biblioteca padrão |
 | `cli.py` | Interface de diagnóstico e comandos explicitamente invocados pelo usuário. | config, DeviceManager, CommandScheduler, protocol |
@@ -143,3 +144,9 @@ O frontend habilita controles por capacidade, conexão e conhecimento específic
 ## F2E.D.0 — política aprovada, recuperação ainda não implementada
 
 D-018 aprova a política de recuperação manual: Tuya 3.5 pode ter somente o endereço atualizado em memória após status LAN read-only aceito sob a Local Key cadastrada e confirmação explícita; isso evidencia posse da chave usada, não identidade criptográfica independente do Device ID. Tuya 3.3 não adota IP, UDP isolado nunca autoriza, ambiguidade não permite escolha automática, não há recuperação automática nem persistência no TOML. D.1, ainda não implementada, poderá somente coletar/normalizar candidatos; pedido de adoção 3.3 será rejeitado antes de discovery e diagnóstico 3.3 ficará separado. Nenhum fluxo executável, contrato JSONL/Tauri ou UI de recovery existe nesta etapa. Budgets e defaults permanecem pendentes. O desenho proposto e seus gates estão em [`F2E_D_RECOVERY_ARCHITECTURE.md`](F2E_D_RECOVERY_ARCHITECTURE.md).
+
+## F2E.D.1 — orquestração interna de candidatos
+
+`RecoveryService.discover_for_recovery()` consulta elegibilidade pelo `DeviceManagerRecoveryCatalog` e, somente para protocolo cadastrado 3.5, chama uma vez o provider UDP, limitado a 3 segundos. Após F2E.B preservar a classificação, candidato único só retorna `CANDIDATE_UNVERIFIED` quando suas versões distintas anunciadas são exatamente `("3.5",)`; claims ausentes, incompatíveis ou conflitantes retornam `PROTOCOL_NOT_ELIGIBLE`. `AMBIGUOUS` não é alterado nem filtrado por versão. As claims continuam não confiáveis e não provam identidade. O slot global não enfileirável permite uma descoberta de recuperação ativa por processo. A operação não abre TCP, consulta status de dispositivo, acessa Local Keys, cria proposta confirmável nem chama `update_address()`.
+
+D-019 aprovou os defaults operacionais para as etapas seguintes. A validação TCP read-only, propostas/tokens, barreira FIFO e adoção continuam fora da D.1; o limite sugerido de 2,5 segundos por validação depende da confirmação do comportamento efetivo do TinyTuya.
