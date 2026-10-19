@@ -361,6 +361,7 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 ## F2E.D.2.B.1 — coordenação e concorrência (2026-10-19)
 
 - **Base:** branch `feature/f2e-d2b-coordination` em `8b2c6ef`, merge da PR #35 sobre `origin/develop`. A PR #35 permanece fora deste checkpoint funcional.
+- **Commit local:** `cf685f9` (`feat: coordinate recovery validation safely`); sem push ou merge.
 - **Implementado:** revisão privada de configuração por Device ID, incremento em cada `update_address()` bem-sucedido (inclusive mesmo IP), snapshot privado redigido e lease com deadline. A validação sob lease usa configuração atual e `CandidateValidator` sem modificar status, adapter ativo, pending, knowledge ou caches de leitura.
 - **Scheduler/coordenação:** novo item interno `VALIDATE_RECOVERY` discreto, imediato e não coalescível; Condition não cobre lease/I/O. Recuperação usa a mesma trava global de D.1 sem chamá-la recursivamente e mantém o slot até conclusão real da Future. Shutdown cancela fila, mas operação ativa continua dona do worker/lease até terminar; `stop()` sinaliza timeout por `False`.
 - **Fora de escopo:** ProposalStore, token, TTL, confirmação pública, JSONL/UI, adoção e mudança de endereço por recovery não foram criados. Não houve rede, cloud ou dispositivo físico.
