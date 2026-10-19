@@ -368,3 +368,11 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Cobertura nova:** revisão same-IP e A→B→A, rejeição de revisão antiga antes do validator, invariância do estado do manager, request de validação não coalescido, progresso de outro Device ID e shutdown durante I/O fake.
 - **Verificação:** focados (`test_device_manager`, `test_command_scheduler`, `test_recovery`, `test_recovery_validation`) — 105 passed; suíte backend — 327 passed; `compileall` e `git diff --check` passaram. Testes novos usam fakes, Event/barriers e nenhum hardware/rede.
 - **Resumo para revisão arquitetural:** B.1 introduz revisão/lease por ID, barreira tipada e coordenação na trava global existente. Revisar o lifecycle `close()` (retorno `False` enquanto I/O drena) e a limitação de cancelamento do transporte síncrono antes de B.2; B.1 não adiciona proposta nem superfície pública.
+
+### Correções CR-37.1 e CR-37.2 — PR #37
+
+- **CR-37.1:** descoberta repete a checagem de lifecycle depois de adquirir o slot global. A admissão é linearizada sob o mutex curto; ele é liberado antes do provider/I/O. Regressão determinística pausa a aquisição do slot, deixa `close()` concluir e confirma que o provider não é chamado.
+- **CR-37.2:** o coordenador espera Futures em intervalos limitados pelo deadline. Se a validação ainda está pendente, `cancel()` impede que ela comece e o resultado é `TIMEOUT`. Se já iniciou, cancelamento falha e o coordenador drena a operação real antes de soltar slot; conclusão após deadline resulta em `TIMEOUT`. Cancelamento pelo shutdown resulta em `CLOSED`. O fechamento do serviço também cancela trabalho pendente e aguarda o trabalho iniciado.
+- **Interleavings:** regressões cobrem timeout na FIFO, validação iniciada com retenção do slot, shutdown concorrente e progresso do outro Device ID.
+- **Verificação:** focados — 109 passed; backend — 331 passed (327 anteriores + 4 regressões novas); `compileall` e `git diff --check` passaram. Sem LAN REAL, hardware ou cloud.
+- **Resumo para revisão:** o lifecycle pós-admissão impede descoberta após fechamento concluído; o timeout não abandona I/O nem libera o slot cedo. Compatibilidade FIFO e locks não reentrantes preservados.

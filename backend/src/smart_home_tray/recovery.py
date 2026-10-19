@@ -10,9 +10,10 @@ import ipaddress
 import math
 import threading
 import time
+from concurrent.futures import CancelledError, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .device_manager import DeviceManager
 from .discovery import (
@@ -24,6 +25,7 @@ from .discovery import (
 
 MAX_RECOVERY_DISCOVERY_SECONDS = 3.0
 MAX_RECOVERY_VALIDATION_SECONDS = 2.5
+RECOVERY_FUTURE_POLL_SECONDS = 0.05
 _PROCESS_RECOVERY_LOCK = threading.Lock()
 
 
@@ -116,12 +118,15 @@ class RecoveryService:
         *,
         catalog: RecoveryCatalog,
         provider: DiscoveryProvider,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._catalog = catalog
         self._provider = provider
         self._device_manager = getattr(catalog, "_device_manager", None)
         self._lifecycle_lock = threading.Lock()
         self._closed = False
+        self._closing_event = threading.Event()
+        self._clock = clock
 
     def close(self, *, timeout_seconds: float = 0.0) -> bool:
         """Close this coordinator and wait boundedly for the process recovery slot.
@@ -138,6 +143,7 @@ class RecoveryService:
             return False
         with self._lifecycle_lock:
             self._closed = True
+            self._closing_event.set()
         acquired = _PROCESS_RECOVERY_LOCK.acquire(timeout=float(timeout_seconds))
         if acquired:
             _PROCESS_RECOVERY_LOCK.release()
@@ -161,7 +167,7 @@ class RecoveryService:
             or not math.isfinite(deadline)
         ):
             return ValidationResult(ValidationStatus.INVALID_REQUEST)
-        deadline = min(float(deadline), time.monotonic() + MAX_RECOVERY_VALIDATION_SECONDS)
+        deadline = min(float(deadline), self._clock() + MAX_RECOVERY_VALIDATION_SECONDS)
         if scheduler._is_worker_thread():
             return ValidationResult(ValidationStatus.INVALID_REQUEST)
         with self._lifecycle_lock:
@@ -180,11 +186,36 @@ class RecoveryService:
                 device_id, candidate, snapshot.revision, deadline=deadline
             )
             # This caller is the recovery coordinator, never its scheduler worker.
-            result = future.result()
+            # Poll in short waits so an injected monotonic clock can advance.
+            # Once running, cancellation fails and we must drain actual I/O.
+            while True:
+                if self._closing_event.is_set():
+                    if future.cancel():
+                        return ValidationResult(ValidationStatus.CLOSED)
+                    result = future.result()
+                    break
+                remaining = deadline - self._clock()
+                try:
+                    result = future.result(
+                        timeout=min(max(remaining, 0.0), RECOVERY_FUTURE_POLL_SECONDS)
+                    )
+                    break
+                except FutureTimeoutError:
+                    if self._clock() < deadline:
+                        continue
+                    if future.cancel():
+                        return ValidationResult(ValidationStatus.TIMEOUT)
+                    # Running work owns its lease and the global slot until done.
+                    result = future.result()
+                    break
             with self._lifecycle_lock:
                 if self._closed:
                     return ValidationResult(ValidationStatus.CLOSED)
+            if self._clock() >= deadline:
+                return ValidationResult(ValidationStatus.TIMEOUT)
             return result
+        except CancelledError:
+            return ValidationResult(ValidationStatus.CLOSED)
         except Exception:
             with self._lifecycle_lock:
                 if self._closed:
@@ -241,6 +272,11 @@ class RecoveryService:
             return RecoveryResult(RecoveryStatus.BUSY)
 
         try:
+            # Admission linearizes here against close(): release the lifecycle
+            # mutex before provider I/O, while retaining the process slot.
+            with self._lifecycle_lock:
+                if self._closed:
+                    return RecoveryResult(RecoveryStatus.INVALID_REQUEST)
             discovery = discover_candidates(
                 self._provider,
                 device_id,

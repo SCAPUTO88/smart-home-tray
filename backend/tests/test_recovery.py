@@ -109,6 +109,230 @@ def test_close_reports_incomplete_until_active_validation_finishes_and_suppresse
     assert scheduler.stop(timeout_seconds=1)
 
 
+def test_discovery_rechecks_closed_after_global_slot_admission(monkeypatch):
+    from smart_home_tray import recovery as recovery_module
+
+    acquisition_entered = threading.Event()
+    allow_acquisition = threading.Event()
+
+    class PausingLock:
+        def __init__(self):
+            self._lock = threading.Lock()
+            self._paused = False
+
+        def acquire(self, *args, **kwargs):
+            if threading.current_thread().name == "discovery-race" and not self._paused:
+                self._paused = True
+                acquisition_entered.set()
+                assert allow_acquisition.wait(timeout=3)
+            return self._lock.acquire(*args, **kwargs)
+
+        def release(self):
+            self._lock.release()
+
+    provider = FakeProvider(announcements=(ann("192.0.2.10"),))
+    recovery = RecoveryService(catalog=FakeCatalog(), provider=provider)
+    monkeypatch.setattr(recovery_module, "_PROCESS_RECOVERY_LOCK", PausingLock())
+    result_box = []
+    discoverer = threading.Thread(
+        name="discovery-race",
+        target=lambda: result_box.append(recovery.discover_for_recovery(DEVICE_ID)),
+    )
+    discoverer.start()
+    assert acquisition_entered.wait(timeout=1)
+
+    assert recovery.close(timeout_seconds=0) is True
+    allow_acquisition.set()
+    discoverer.join(timeout=1)
+
+    assert not discoverer.is_alive()
+    assert result_box[0].status is RecoveryStatus.INVALID_REQUEST
+    assert provider.calls == []
+
+
+class ManualClock:
+    def __init__(self, value):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+    def advance(self, amount):
+        self.value += amount
+
+
+class CoordinatedManager:
+    def __init__(self):
+        self.device_ids = ("lamp-a", "lamp-b")
+        self.validation_entered = threading.Event()
+        self.release_validation = threading.Event()
+        self.control_entered = threading.Event()
+        self.release_control = threading.Event()
+        self.other_control_done = threading.Event()
+        self.validation_calls = 0
+
+    def list_device_ids(self):
+        return self.device_ids
+
+    def _recovery_snapshot(self, device_id, *, deadline):
+        from types import SimpleNamespace
+        return SimpleNamespace(revision=4)
+
+    def set_power(self, device_id, enabled):
+        if device_id == "lamp-a":
+            self.control_entered.set()
+            assert self.release_control.wait(timeout=3)
+        else:
+            self.other_control_done.set()
+        return (device_id, enabled)
+
+    def _validate_recovery_candidate(self, device_id, revision, candidate, *, deadline):
+        from smart_home_tray.recovery_validation import ValidationResult, ValidationStatus
+        self.validation_calls += 1
+        self.validation_entered.set()
+        assert self.release_validation.wait(timeout=3)
+        return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+
+def _coordinator(manager, clock):
+    class Catalog:
+        _device_manager = manager
+
+        def protocol_version_for(self, device_id):
+            return 3.5
+
+    return RecoveryService(catalog=Catalog(), provider=FakeProvider(), clock=clock)
+
+
+def _candidate_for_lamp_a():
+    import ipaddress
+    from smart_home_tray.recovery import RecoveryCandidate
+    return RecoveryCandidate("lamp-a", ipaddress.IPv4Address("192.0.2.20"), ("3.5",))
+
+
+def _wait_for_recovery_queue(scheduler):
+    with scheduler._condition:
+        assert scheduler._condition.wait_for(
+            lambda: bool(scheduler._queues["lamp-a"]), timeout=1
+        )
+
+
+def test_validation_expiring_in_fifo_is_cancelled_without_late_execution():
+    import time
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery_validation import ValidationStatus
+
+    manager = CoordinatedManager()
+    clock = ManualClock(time.monotonic())
+    recovery = _coordinator(manager, clock)
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    caller_done = threading.Event()
+    result_box = []
+    try:
+        active_control = scheduler.submit_power("lamp-a", True)
+        assert manager.control_entered.wait(timeout=1)
+        deadline = clock() + 5
+        caller = threading.Thread(target=lambda: (
+            result_box.append(recovery._validate_candidate(
+                "lamp-a", _candidate_for_lamp_a(), scheduler, deadline=deadline
+            )), caller_done.set()
+        ))
+        caller.start()
+        _wait_for_recovery_queue(scheduler)
+        clock.advance(6)
+        assert caller_done.wait(timeout=1)
+        assert result_box[0].status is ValidationStatus.TIMEOUT
+        assert manager.validation_calls == 0
+        manager.release_control.set()
+        assert active_control.result(timeout=1) == ("lamp-a", True)
+        caller.join(timeout=1)
+        assert not caller.is_alive()
+        assert manager.validation_calls == 0
+    finally:
+        manager.release_control.set()
+        manager.release_validation.set()
+        scheduler.stop(timeout_seconds=1)
+
+
+def test_expired_started_validation_keeps_slot_until_real_completion_and_other_device_progresses():
+    import time
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery_validation import ValidationStatus
+
+    manager = CoordinatedManager()
+    clock = ManualClock(time.monotonic())
+    recovery = _coordinator(manager, clock)
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    caller_done = threading.Event()
+    result_box = []
+    try:
+        deadline = clock() + 5
+        caller = threading.Thread(target=lambda: (
+            result_box.append(recovery._validate_candidate(
+                "lamp-a", _candidate_for_lamp_a(), scheduler, deadline=deadline
+            )), caller_done.set()
+        ))
+        caller.start()
+        assert manager.validation_entered.wait(timeout=1)
+        other_device = scheduler.submit_power("lamp-b", True)
+        assert manager.other_control_done.wait(timeout=1)
+        assert other_device.result(timeout=1) == ("lamp-b", True)
+
+        clock.advance(6)
+        assert caller_done.wait(timeout=0.1) is False
+        busy = recovery._validate_candidate(
+            "lamp-a", _candidate_for_lamp_a(), scheduler, deadline=clock() + 5
+        )
+        assert busy.status is ValidationStatus.BUSY
+
+        manager.release_validation.set()
+        assert caller_done.wait(timeout=1)
+        caller.join(timeout=1)
+        assert result_box[0].status is ValidationStatus.TIMEOUT
+        assert not caller.is_alive()
+    finally:
+        manager.release_validation.set()
+        scheduler.stop(timeout_seconds=1)
+
+
+def test_scheduler_shutdown_cancellation_returns_closed_for_queued_validation():
+    import time
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery_validation import ValidationStatus
+
+    manager = CoordinatedManager()
+    clock = ManualClock(time.monotonic())
+    recovery = _coordinator(manager, clock)
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    result_box = []
+    caller_done = threading.Event()
+    try:
+        active_control = scheduler.submit_power("lamp-a", True)
+        assert manager.control_entered.wait(timeout=1)
+        caller = threading.Thread(target=lambda: (
+            result_box.append(recovery._validate_candidate(
+                "lamp-a", _candidate_for_lamp_a(), scheduler, deadline=clock() + 5
+            )), caller_done.set()
+        ))
+        caller.start()
+        _wait_for_recovery_queue(scheduler)
+        assert scheduler.stop(timeout_seconds=0) is False
+        assert caller_done.wait(timeout=1)
+        caller.join(timeout=1)
+        assert result_box[0].status is ValidationStatus.CLOSED
+        assert manager.validation_calls == 0
+        manager.release_control.set()
+        assert active_control.result(timeout=1) == ("lamp-a", True)
+        assert scheduler.stop(timeout_seconds=1) is True
+    finally:
+        manager.release_control.set()
+        manager.release_validation.set()
+        scheduler.stop(timeout_seconds=1)
+
+
 def test_unknown_device_does_not_start_discovery():
     recovery = service(protocols={})
 

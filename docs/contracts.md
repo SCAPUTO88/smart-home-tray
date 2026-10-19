@@ -122,6 +122,8 @@ O `DeviceManager` mantém revisão privada monotônica da configuração por Dev
 
 `RecoveryService.close(timeout_seconds=0.0) -> bool` fecha novas validações e espera pelo slot global sem segurar mutex de lifecycle durante I/O. `False` significa que a operação continua ativa e o serviço ainda não terminou o fechamento; uma chamada posterior pode concluir a espera. Resultado de validação concluído após o fechamento é normalizado para `CLOSED`.
 
+A espera da validação usa a deadline monotônica do request. Ao expirar, o coordenador tenta cancelar a Future: sucesso significa item ainda não iniciado e retorna `TIMEOUT`; falha significa que o worker já iniciou, então o coordenador drena a Future até a conclusão real antes de liberar o slot, e retorna `TIMEOUT` se a deadline passou. Cancelamento da Future pelo shutdown retorna `CLOSED`. Nenhuma thread é destacada para abandonar I/O.
+
 
 ## Consumidor frontend mock (F2A)
 
