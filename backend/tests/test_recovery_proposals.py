@@ -77,7 +77,7 @@ def test_expired_proposal_is_removed_and_device_can_prepare_again():
     assert second.status is ProposalStoreStatus.CREATED
 
 
-def test_revision_invalidation_handles_a_to_b_to_a_and_shutdown_clears_tokens():
+def test_revision_invalidation_handles_a_to_b_to_a_and_owner_close_clears_tokens():
     clock = Clock()
     entropy = iter((b"c" * 32, b"e" * 32))
     store = ProposalStore(clock=clock, token_bytes=lambda _size: next(entropy))
@@ -86,9 +86,10 @@ def test_revision_invalidation_handles_a_to_b_to_a_and_shutdown_clears_tokens():
     store.invalidate_older("lamp-a", 2)
     assert store.lookup(first.token).status is ProposalStoreStatus.NOT_FOUND
 
-    current = store.create_validated(binding("lamp-a", revision=2)).descriptor
+    owner = object()
+    current = store.create_validated(binding("lamp-a", revision=2), owner=owner).descriptor
     assert current is not None
-    store.invalidate_all()
+    store.invalidate_owner(owner)
     assert store.lookup(current.token).status is ProposalStoreStatus.NOT_FOUND
 
 
@@ -116,6 +117,20 @@ def test_claimed_token_cannot_be_reissued_during_its_original_ttl():
 
     assert second.status is ProposalStoreStatus.TOKEN_COLLISION
     assert store.pending_count == 0
+
+
+def test_retracting_expired_publication_cannot_remove_newer_same_device_proposal():
+    clock = Clock()
+    entropy = iter((b"o" * 32, b"n" * 32))
+    store = ProposalStore(clock=clock, token_bytes=lambda _size: next(entropy))
+    old = store.create_validated(binding("lamp-a")).descriptor
+    assert old is not None
+    clock.value += 60
+    newer = store.create_validated(binding("lamp-a", revision=1)).descriptor
+    assert newer is not None
+
+    assert store.retract(old.token) is False
+    assert store.lookup(newer.token).status is ProposalStoreStatus.AVAILABLE
 
 
 def test_deadline_expiring_during_token_generation_prevents_publication():

@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Protocol
 
@@ -68,6 +68,7 @@ class _RecoveryValidationRequest:
     deadline: float
     cancellation: threading.Event | None = None
     publish_proposal: bool = False
+    proposal_owner: object | None = field(default=None, repr=False, compare=False)
 
 
 class CommandScheduler:
@@ -188,7 +189,7 @@ class CommandScheduler:
     def submit_recovery_validation(
         self, device_id: str, candidate: RecoveryCandidate, revision: int, *,
         deadline: float, cancellation: threading.Event | None = None,
-        publish_proposal: bool = False,
+        publish_proposal: bool = False, proposal_owner: object | None = None,
     ) -> Future[object]:
         """Enqueue a discrete internal validation turn; never coalesced."""
         future: Future[object] = Future()
@@ -199,7 +200,8 @@ class CommandScheduler:
             if queue is None:
                 raise BackendError(ErrorCode.INVALID_INPUT, "Unknown device ID")
             request = _RecoveryValidationRequest(
-                device_id, candidate, revision, deadline, cancellation, publish_proposal
+                device_id, candidate, revision, deadline, cancellation,
+                publish_proposal, proposal_owner,
             )
             now = self._clock()
             for previous in queue:
@@ -305,6 +307,7 @@ class CommandScheduler:
                     return manager._prepare_recovery_candidate(
                         request.device_id, request.revision, request.candidate,
                         deadline=request.deadline, cancellation=request.cancellation,
+                        proposal_owner=request.proposal_owner,
                     )
                 kwargs = {"deadline": request.deadline}
                 if request.cancellation is not None:

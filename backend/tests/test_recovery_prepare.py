@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 import ipaddress
 import threading
 import time
@@ -18,6 +19,7 @@ from smart_home_tray.recovery import (
 )
 from smart_home_tray.recovery_proposals import ProposalBinding, ProposalStore, ProposalStoreStatus
 from smart_home_tray.recovery_validation import CandidateValidator, ValidationResult, ValidationStatus
+from smart_home_tray.recovery_validation import ValidationPublicationResult
 
 
 DEVICE_ID = "synthetic-lamp"
@@ -45,7 +47,11 @@ class StoreClock:
 
 
 def make_store(clock=None):
-    return ProposalStore(clock=clock or StoreClock(), token_bytes=lambda size: b"p" * size)
+    entropy = iter(range(1, 256))
+    return ProposalStore(
+        clock=clock or StoreClock(),
+        token_bytes=lambda size: bytes([next(entropy)]) * size,
+    )
 
 
 def make_manager(store, clock=time.monotonic):
@@ -57,8 +63,12 @@ def make_manager(store, clock=time.monotonic):
         "lamp-b", "other synthetic", "192.0.2.30", 3.5,
         "synthetic-key-456", DPSMap(power=20),
     )
+    third = DeviceConfig(
+        "lamp-c", "third synthetic", "192.0.2.40", 3.5,
+        "synthetic-key-789", DPSMap(power=20),
+    )
     return DeviceManager(
-        AppConfig((config, other)), adapter_factory=lambda _config: object(),
+        AppConfig((config, other, third)), adapter_factory=lambda _config: object(),
         proposal_store=store, recovery_clock=clock,
     )
 
@@ -140,14 +150,86 @@ def test_pending_proposal_is_rejected_before_second_discovery(monkeypatch):
 def test_service_shutdown_invalidates_existing_shared_token():
     store = make_store()
     manager = make_manager(store)
+    recovery = make_service(manager, Provider())
+    created = store.create_validated(ProposalBinding(
+        DEVICE_ID, ipaddress.IPv4Address("192.0.2.20"), 3.5, 0, "192.0.2.10"
+    ), owner=recovery._proposal_owner)
+    assert created.descriptor is not None
+
+    assert recovery.close(timeout_seconds=1) is True
+    assert store.lookup(created.descriptor.token).status is ProposalStoreStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize("terminal", ["timeout", "closed"])
+def test_late_future_collection_retracts_its_already_published_proposal(terminal):
+    clock = StoreClock()
+    store = make_store(clock)
+    manager = make_manager(store, clock)
+    recovery = make_service(manager, Provider(), clock)
     created = store.create_validated(ProposalBinding(
         DEVICE_ID, ipaddress.IPv4Address("192.0.2.20"), 3.5, 0, "192.0.2.10"
     ))
     assert created.descriptor is not None
-    recovery = make_service(manager, Provider())
+    future = Future()
+    future.set_result(ValidationPublicationResult(
+        ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ),
+        proposal=created.descriptor,
+    ))
+    deadline = clock() + 1
+    if terminal == "timeout":
+        clock.value += 1
+    else:
+        recovery._closing_event.set()
 
-    assert recovery.close(timeout_seconds=1) is True
+    result = recovery._await_prepare_future(future, deadline)
+
+    assert result.status is (
+        PreparationStatus.TIMEOUT if terminal == "timeout" else PreparationStatus.CLOSED
+    )
     assert store.lookup(created.descriptor.token).status is ProposalStoreStatus.NOT_FOUND
+
+
+def test_closing_one_service_preserves_other_instance_proposals_while_it_is_active(monkeypatch):
+    validation_entered = threading.Event()
+    release_validation = threading.Event()
+
+    def validate(_self, _config, candidate, *, deadline):
+        if candidate.device_id == "lamp-c":
+            validation_entered.set()
+            assert release_validation.wait(timeout=3)
+        return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    monkeypatch.setattr(CandidateValidator, "validate", validate)
+    store = make_store()
+    manager = make_manager(store)
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    first = make_service(manager, Provider())
+    second = make_service(manager, Provider())
+    first_result = first.prepare_internal(DEVICE_ID, scheduler)
+    second_result = second.prepare_internal("lamp-b", scheduler)
+    assert first_result.proposal is not None and second_result.proposal is not None
+    active_result = []
+    active = threading.Thread(
+        target=lambda: active_result.append(second.prepare_internal("lamp-c", scheduler))
+    )
+    active.start()
+    try:
+        assert validation_entered.wait(timeout=1)
+        assert first.close(timeout_seconds=0) is False
+        assert store.lookup(first_result.proposal.token).status is ProposalStoreStatus.NOT_FOUND
+        assert store.lookup(second_result.proposal.token).status is ProposalStoreStatus.AVAILABLE
+        release_validation.set()
+        active.join(timeout=2)
+        assert not active.is_alive()
+        assert active_result[0].status is PreparationStatus.PROPOSAL_READY_INTERNAL
+        assert store.lookup(second_result.proposal.token).status is ProposalStoreStatus.AVAILABLE
+        assert store.lookup(active_result[0].proposal.token).status is ProposalStoreStatus.AVAILABLE
+    finally:
+        release_validation.set()
+        first.close(timeout_seconds=1)
+        second.close(timeout_seconds=1)
+        scheduler.stop(timeout_seconds=1)
 
 
 def test_configuration_change_during_udp_invalidates_snapshot_before_validation(monkeypatch):

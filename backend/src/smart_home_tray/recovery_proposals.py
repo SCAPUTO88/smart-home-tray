@@ -28,7 +28,6 @@ class ProposalStoreStatus(StrEnum):
     CAPACITY = "capacity"
     TOKEN_COLLISION = "token_collision"
     DEADLINE_EXPIRED = "deadline_expired"
-    CLOSED = "closed"
     CANCELLED = "cancelled"
 
 
@@ -76,6 +75,7 @@ class _StoredProposal:
     binding: ProposalBinding
     created_at: float
     expires_at: float
+    owner: object | None = field(repr=False, compare=False)
 
 
 class ProposalStore:
@@ -95,7 +95,6 @@ class ProposalStore:
         self._by_digest: dict[bytes, _StoredProposal] = {}
         self._digest_by_device: dict[str, bytes] = {}
         self._retired_digests: dict[bytes, float] = {}
-        self._closed = False
 
     @property
     def pending_count(self) -> int:
@@ -109,6 +108,7 @@ class ProposalStore:
         *,
         cancellation: threading.Event | None = None,
         deadline: float | None = None,
+        owner: object | None = None,
     ) -> ProposalStoreResult:
         """Publish an already validated binding after a final cancellation check."""
         if not isinstance(binding, ProposalBinding):
@@ -116,8 +116,6 @@ class ProposalStore:
         with self._lock:
             now = self._clock()
             self._purge_expired(now)
-            if self._closed:
-                return ProposalStoreResult(ProposalStoreStatus.CLOSED)
             if cancellation is not None and cancellation.is_set():
                 return ProposalStoreResult(ProposalStoreStatus.CANCELLED)
             if deadline is not None and now >= deadline:
@@ -142,7 +140,7 @@ class ProposalStore:
             if deadline is not None and now >= deadline:
                 return ProposalStoreResult(ProposalStoreStatus.DEADLINE_EXPIRED)
             expires_at = now + PROPOSAL_TTL_SECONDS
-            self._by_digest[digest] = _StoredProposal(binding, now, expires_at)
+            self._by_digest[digest] = _StoredProposal(binding, now, expires_at, owner)
             self._digest_by_device[binding.device_id] = digest
             descriptor = ProposalDescriptor(
                 token, binding.device_id, binding.candidate_address, expires_at
@@ -156,8 +154,6 @@ class ProposalStore:
         """Check capacity before discovery; publication rechecks under this lock."""
         with self._lock:
             self._purge_expired(self._clock())
-            if self._closed:
-                return ProposalStoreStatus.CLOSED
             if device_id in self._digest_by_device:
                 return ProposalStoreStatus.DEVICE_PENDING
             if len(self._by_digest) >= MAX_PENDING_PROPOSALS:
@@ -168,6 +164,21 @@ class ProposalStore:
         """Atomically consume a live token; later claims cannot replay it."""
         return self._get(token, consume=True)
 
+    def retract(self, token: str) -> bool:
+        """Remove only the exact still-pending token named by a late result."""
+        raw_token = _decode_token(token)
+        if raw_token is None:
+            return False
+        digest = hashlib.sha256(raw_token).digest()
+        with self._lock:
+            self._purge_expired(self._clock())
+            stored = self._by_digest.get(digest)
+            if stored is None:
+                return False
+            self._remove(digest, stored)
+            self._retired_digests[digest] = stored.expires_at
+            return True
+
     def _get(self, token: str, *, consume: bool) -> ProposalStoreResult:
         raw_token = _decode_token(token)
         if raw_token is None:
@@ -175,8 +186,6 @@ class ProposalStore:
         digest = hashlib.sha256(raw_token).digest()
         with self._lock:
             expired = self._purge_expired(self._clock())
-            if self._closed:
-                return ProposalStoreResult(ProposalStoreStatus.CLOSED)
             if digest in expired:
                 return ProposalStoreResult(ProposalStoreStatus.EXPIRED)
             stored = self._by_digest.get(digest)
@@ -201,18 +210,18 @@ class ProposalStore:
                 self._remove(digest, stored)
                 self._retired_digests[digest] = stored.expires_at
 
-    def invalidate_all(self) -> None:
+    def invalidate_owner(self, owner: object) -> None:
+        """Invalidate only proposals published by one service instance."""
         with self._lock:
-            self._retire_all()
-            self._by_digest.clear()
-            self._digest_by_device.clear()
-
-    def close(self) -> None:
-        with self._lock:
-            self._retire_all()
-            self._by_digest.clear()
-            self._digest_by_device.clear()
-            self._closed = True
+            self._purge_expired(self._clock())
+            owned = tuple(
+                (digest, stored)
+                for digest, stored in self._by_digest.items()
+                if stored.owner is owner
+            )
+            for digest, stored in owned:
+                self._remove(digest, stored)
+                self._retired_digests[digest] = stored.expires_at
 
     def _purge_expired(self, now: float) -> set[bytes]:
         expired = {
@@ -227,10 +236,6 @@ class ProposalStore:
             if now >= expires_at:
                 self._retired_digests.pop(digest, None)
         return expired
-
-    def _retire_all(self) -> None:
-        for digest, stored in self._by_digest.items():
-            self._retired_digests[digest] = stored.expires_at
 
     def _remove(self, digest: bytes, stored: _StoredProposal) -> None:
         self._by_digest.pop(digest, None)

@@ -296,6 +296,7 @@ class DeviceManager:
     def _prepare_recovery_candidate(
         self, device_id: str, revision: int, candidate: object, *, deadline: float,
         cancellation: threading.Event | None = None,
+        proposal_owner: object | None = None,
     ):
         from smart_home_tray.recovery_validation import (
             CandidateValidator,
@@ -333,6 +334,7 @@ class DeviceManager:
                     ),
                     cancellation=cancellation,
                     deadline=deadline,
+                    owner=proposal_owner,
                 )
                 if stored.status is not ProposalStoreStatus.CREATED:
                     status = (

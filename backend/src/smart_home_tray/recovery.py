@@ -167,6 +167,7 @@ class RecoveryService:
         self._closed = False
         self._closing_event = threading.Event()
         self._clock = clock
+        self._proposal_owner = object()
         self._proposal_store = getattr(
             self._device_manager, "_proposal_store", process_proposal_store()
         )
@@ -187,9 +188,9 @@ class RecoveryService:
         with self._lifecycle_lock:
             self._closed = True
             self._closing_event.set()
-        # A service shutdown invalidates all shared pending tokens. The event
-        # prevents this instance's active worker from publishing after clear.
-        self._proposal_store.invalidate_all()
+        # Instance shutdown retracts only its own proposals; other active
+        # service instances share the store and retain their pending tokens.
+        self._proposal_store.invalidate_owner(self._proposal_owner)
         acquired = _PROCESS_RECOVERY_LOCK.acquire(timeout=float(timeout_seconds))
         if acquired:
             _PROCESS_RECOVERY_LOCK.release()
@@ -305,8 +306,6 @@ class RecoveryService:
                 return PreparationResult(PreparationStatus.PROPOSAL_CAPACITY)
             if admission is ProposalStoreStatus.DEVICE_PENDING:
                 return PreparationResult(PreparationStatus.PROPOSAL_PENDING)
-            if admission is ProposalStoreStatus.CLOSED:
-                return PreparationResult(PreparationStatus.CLOSED)
             if self._closing_event.is_set():
                 return PreparationResult(PreparationStatus.CLOSED)
 
@@ -331,6 +330,7 @@ class RecoveryService:
                     deadline=validation_deadline,
                     cancellation=self._closing_event,
                     publish_proposal=True,
+                    proposal_owner=self._proposal_owner,
                 )
             except RuntimeError:
                 return PreparationResult(PreparationStatus.CLOSED)
@@ -428,7 +428,8 @@ class RecoveryService:
             if self._closing_event.is_set():
                 if future.cancel():
                     return PreparationResult(PreparationStatus.CLOSED)
-                future.result()  # Running validation owns its lease and slot until actual completion.
+                raw = future.result()  # Running validation owns its lease and slot until actual completion.
+                self._retract_completed_proposal(raw)
                 return PreparationResult(PreparationStatus.CLOSED)
             remaining = deadline - self._clock()
             try:
@@ -440,10 +441,15 @@ class RecoveryService:
                     continue
                 if future.cancel():
                     return PreparationResult(PreparationStatus.TIMEOUT)
-                future.result()  # Do not release the process slot while I/O is active.
+                raw = future.result()  # Do not release the process slot while I/O is active.
+                self._retract_completed_proposal(raw)
                 return PreparationResult(PreparationStatus.TIMEOUT)
             if self._clock() >= deadline:
+                self._retract_completed_proposal(raw)
                 return PreparationResult(PreparationStatus.TIMEOUT)
+            if self._closing_event.is_set():
+                self._retract_completed_proposal(raw)
+                return PreparationResult(PreparationStatus.CLOSED)
             if not isinstance(raw, ValidationPublicationResult):
                 return PreparationResult(PreparationStatus.INTERNAL_ERROR)
             if raw.proposal is not None:
@@ -465,13 +471,17 @@ class RecoveryService:
                 mapped = PreparationStatus.TOKEN_COLLISION
             elif raw.publication_status is ProposalStoreStatus.DEADLINE_EXPIRED:
                 mapped = PreparationStatus.TIMEOUT
-            elif raw.publication_status in {
-                ProposalStoreStatus.CANCELLED, ProposalStoreStatus.CLOSED
-            }:
+            elif raw.publication_status is ProposalStoreStatus.CANCELLED:
                 mapped = PreparationStatus.CLOSED
             else:
                 mapped = PreparationStatus.VALIDATION_FAILED
             return PreparationResult(mapped, validation_status=status.value)
+
+    def _retract_completed_proposal(self, outcome: object) -> None:
+        from .recovery_validation import ValidationPublicationResult
+
+        if isinstance(outcome, ValidationPublicationResult) and outcome.proposal is not None:
+            self._proposal_store.retract(outcome.proposal.token)
 
     def discover_for_recovery(
         self,

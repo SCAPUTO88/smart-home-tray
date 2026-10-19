@@ -386,3 +386,11 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificação:** bateria focada de recovery, manager, scheduler, descoberta, transporte e parser — 237 passed; suíte backend — 352 passed; `rtk py -m compileall -q backend/src backend/tests` e `rtk git diff --check` passaram.
 - **Segurança/escopo:** todos os testes usam stores/relógios/fakes e Events. Sem LAN REAL, hardware, cloud, credenciais, JSONL, UI, TOML ou adoção.
 - **Resumo para revisão arquitetural:** o token interno só nasce após leitura autenticada e cleanup bem-sucedidos, enquanto a configuração ainda está leaseada. Revisar compartilhamento/encerramento do store e a fronteira do claim interno; sem confirmação pública nesta etapa.
+
+## CR-39.1/39.2 — lifecycle e coleta tardia de propostas (2026-10-19)
+
+- **Correção:** resultados coletados após TIMEOUT/CLOSED removem apenas o digest da proposta exata retornada pela Future. A remoção verifica a existência desse digest e não interfere em uma proposta mais recente para o mesmo Device ID.
+- **Ownership:** `ProposalStore` permanece compartilhado e sem fechamento global parcial. Cada registro guarda owner privado; `RecoveryService.close()` invalida somente propostas dessa instância, preservando operações e tokens de outras instâncias ativas.
+- **Regressões:** clock fake para expiração entre publicação e coleta; teste de retração sem apagar token mais novo; duas instâncias concorrentes com validação bloqueada por Events; expiração de owner e manutenção de propostas de outra instância.
+- **Verificação:** testes focados `test_recovery_proposals.py` e `test_recovery_prepare.py` — 25 passed; suíte backend — 356 passed; compileall e diff-check aprovados.
+- **Resumo para revisão arquitetural:** fechamento é por instância, pois não há lifecycle global da aplicação neste store; a coleta tardia é compensada por remoção exata e idempotente. Nenhuma adoção ou confirmação pública foi adicionada.
