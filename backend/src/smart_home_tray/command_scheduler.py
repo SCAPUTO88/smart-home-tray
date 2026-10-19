@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Protocol
 
@@ -66,6 +66,9 @@ class _RecoveryValidationRequest:
     candidate: RecoveryCandidate
     revision: int
     deadline: float
+    cancellation: threading.Event | None = None
+    publish_proposal: bool = False
+    proposal_owner: object | None = field(default=None, repr=False, compare=False)
 
 
 class CommandScheduler:
@@ -183,16 +186,23 @@ class CommandScheduler:
     def submit_power(self, device_id: str, enabled: bool) -> Future[DeviceStatus]:
         return self._submit(_CommandKind.POWER, device_id, enabled)
 
-    def submit_recovery_validation(self, device_id: str, candidate: RecoveryCandidate, revision: int, *, deadline: float) -> Future[ValidationResult]:
+    def submit_recovery_validation(
+        self, device_id: str, candidate: RecoveryCandidate, revision: int, *,
+        deadline: float, cancellation: threading.Event | None = None,
+        publish_proposal: bool = False, proposal_owner: object | None = None,
+    ) -> Future[object]:
         """Enqueue a discrete internal validation turn; never coalesced."""
-        future: Future[ValidationResult] = Future()
+        future: Future[object] = Future()
         with self._condition:
             if not self._started or self._closed:
                 raise RuntimeError("command scheduler is unavailable")
             queue = self._queues.get(device_id)
             if queue is None:
                 raise BackendError(ErrorCode.INVALID_INPUT, "Unknown device ID")
-            request = _RecoveryValidationRequest(device_id, candidate, revision, deadline)
+            request = _RecoveryValidationRequest(
+                device_id, candidate, revision, deadline, cancellation,
+                publish_proposal, proposal_owner,
+            )
             now = self._clock()
             for previous in queue:
                 if previous.kind.continuous:
@@ -292,7 +302,28 @@ class CommandScheduler:
             if request is None:
                 from smart_home_tray.recovery_validation import ValidationStatus
                 return ValidationResult(ValidationStatus.INVALID_REQUEST)
-            return manager._validate_recovery_candidate(request.device_id, request.revision, request.candidate, deadline=request.deadline)
+            try:
+                if request.publish_proposal:
+                    return manager._prepare_recovery_candidate(
+                        request.device_id, request.revision, request.candidate,
+                        deadline=request.deadline, cancellation=request.cancellation,
+                        proposal_owner=request.proposal_owner,
+                    )
+                kwargs = {"deadline": request.deadline}
+                if request.cancellation is not None:
+                    kwargs["cancellation"] = request.cancellation
+                return manager._validate_recovery_candidate(
+                    request.device_id, request.revision, request.candidate, **kwargs
+                )
+            except Exception:
+                from smart_home_tray.recovery_validation import (
+                    ValidationPublicationResult, ValidationResult, ValidationStatus,
+                )
+                outcome = ValidationResult(ValidationStatus.INTERNAL_ERROR)
+                return (
+                    ValidationPublicationResult(outcome)
+                    if request.publish_proposal else outcome
+                )
         if command.kind is _CommandKind.WHITE_BRIGHTNESS:
             return manager.set_white_brightness(command.device_id, *command.arguments)
         if command.kind is _CommandKind.COLOR_TEMPERATURE:
