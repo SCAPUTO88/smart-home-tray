@@ -174,3 +174,13 @@ Contrato interno do backend, sem rota CLI/JSONL/Tauri:
 Limitações do contrato: a deadline limita connect/send/recv e a verificação após close, mas não consegue interromper um travamento síncrono nativo do sistema durante cleanup. A classificação de interfaces é baseada em psutil: RFC1918, ativa, máscara até /30 e mesma sub-rede; redes VPN que atendam esses critérios também podem ser elegíveis. Nenhuma validação de firmware em hardware foi realizada.
 
 D.2.A não cria tokens/propostas, não coordena locks, não altera DeviceManager, endereço ou TOML e não integra a orquestração D.1. Esses elementos permanecem para D.2.B/D.3 conforme o documento de arquitetura.
+
+## Coordenação de propostas — D.2.B
+
+`RecoveryService.prepare_internal(device_id, scheduler)` é somente backend interno. Reserva o slot global antes do snapshot, limita o prepare a 5,5 segundos, executa uma descoberta D.1 (máximo 3 segundos) sem reacquirir o slot e usa a barreira FIFO `VALIDATE_RECOVERY`. A janela da validação permanece limitada a 2,5 segundos e inclui espera na fila. O slot não é liberado enquanto uma validação iniciada ainda possui I/O; trabalho pendente pode ser cancelado e não começa tardiamente.
+
+`PreparationResult` mantém resultados tipados de descoberta, revisão, validação, store, cancelamento e shutdown. Só `PROPOSAL_READY_INTERNAL` carrega um descritor interno; token é redigido do repr e nunca é registrado. Nenhuma falha preserva exceção bruta, configuração privada, Local Key, DPS ou pacote.
+
+O store compartilhado mantém no máximo quatro propostas e uma por Device ID. Cada token contém 32 bytes de entropia codificados em Base64 URL-safe; a tabela usa SHA-256 do token como índice e não guarda o token. TTL é de 60 segundos monotônicos. Lookup não consome; claim consome atomicamente sob mutex, sem replay nem extensão de TTL. Colisão de entropia falha fechada. Shutdown limpa os pendentes; revisão nova invalida proposta mais antiga com ordem de locks ID → store. O store nunca adquire lock do manager.
+
+As propostas internas não são autorização de adoção. Não existe endpoint, envelope público, confirmação, aplicação de endereço, persistência ou readback associado ao token nesta entrega.

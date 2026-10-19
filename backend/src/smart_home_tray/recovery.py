@@ -22,9 +22,15 @@ from .discovery import (
     DiscoveryResultStatus,
     discover_candidates,
 )
+from .recovery_proposals import (
+    ProposalDescriptor,
+    ProposalStoreStatus,
+    process_proposal_store,
+)
 
 MAX_RECOVERY_DISCOVERY_SECONDS = 3.0
 MAX_RECOVERY_VALIDATION_SECONDS = 2.5
+MAX_RECOVERY_PREPARE_SECONDS = 5.5
 RECOVERY_FUTURE_POLL_SECONDS = 0.05
 _PROCESS_RECOVERY_LOCK = threading.Lock()
 
@@ -66,6 +72,40 @@ class RecoveryFailure(StrEnum):
     INVALID_ANNOUNCEMENT = "invalid_announcement"
     INVALID_RESULT = "invalid_result"
     COORDINATION_ERROR = "coordination_error"
+
+
+class PreparationStatus(StrEnum):
+    PROPOSAL_READY_INTERNAL = "proposal_ready_internal"
+    NOT_FOUND = "not_found"
+    AMBIGUOUS = "ambiguous"
+    TIMEOUT = "timeout"
+    DISCOVERY_FAILED = "discovery_failed"
+    CATALOG_FAILED = "catalog_failed"
+    DEVICE_NOT_FOUND = "device_not_found"
+    PROTOCOL_NOT_ELIGIBLE = "protocol_not_eligible"
+    BUSY = "busy"
+    INVALID_REQUEST = "invalid_request"
+    CONFIG_CHANGED = "config_changed"
+    CLOSED = "closed"
+    VALIDATION_FAILED = "validation_failed"
+    PROPOSAL_CAPACITY = "proposal_capacity"
+    PROPOSAL_PENDING = "proposal_pending"
+    TOKEN_COLLISION = "token_collision"
+    INTERNAL_ERROR = "internal_error"
+
+
+@dataclass(frozen=True)
+class PreparationResult:
+    """Internal prepare outcome; only success contains an opaque descriptor."""
+
+    status: PreparationStatus
+    proposal: ProposalDescriptor | None = None
+    failure: RecoveryFailure | None = None
+    validation_status: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.status is PreparationStatus.PROPOSAL_READY_INTERNAL) != (self.proposal is not None):
+            raise ValueError("only an internally ready proposal carries a descriptor")
 
 
 @dataclass(frozen=True)
@@ -127,6 +167,9 @@ class RecoveryService:
         self._closed = False
         self._closing_event = threading.Event()
         self._clock = clock
+        self._proposal_store = getattr(
+            self._device_manager, "_proposal_store", process_proposal_store()
+        )
 
     def close(self, *, timeout_seconds: float = 0.0) -> bool:
         """Close this coordinator and wait boundedly for the process recovery slot.
@@ -144,6 +187,9 @@ class RecoveryService:
         with self._lifecycle_lock:
             self._closed = True
             self._closing_event.set()
+        # A service shutdown invalidates all shared pending tokens. The event
+        # prevents this instance's active worker from publishing after clear.
+        self._proposal_store.invalidate_all()
         acquired = _PROCESS_RECOVERY_LOCK.acquire(timeout=float(timeout_seconds))
         if acquired:
             _PROCESS_RECOVERY_LOCK.release()
@@ -223,6 +269,209 @@ class RecoveryService:
             return ValidationResult(ValidationStatus.INTERNAL_ERROR)
         finally:
             _PROCESS_RECOVERY_LOCK.release()
+
+    def prepare_internal(
+        self, device_id: str, scheduler: object, *,
+        timeout_seconds: float = MAX_RECOVERY_PREPARE_SECONDS,
+    ) -> PreparationResult:
+        """Discover, validate and publish internally under one process slot."""
+        if (
+            self._device_manager is None
+            or not isinstance(device_id, str)
+            or not device_id.strip()
+            or isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            return PreparationResult(PreparationStatus.INVALID_REQUEST)
+        if scheduler._is_worker_thread():
+            return PreparationResult(PreparationStatus.INVALID_REQUEST)
+        with self._lifecycle_lock:
+            if self._closed:
+                return PreparationResult(PreparationStatus.CLOSED)
+        deadline = self._clock() + min(float(timeout_seconds), MAX_RECOVERY_PREPARE_SECONDS)
+        if not _PROCESS_RECOVERY_LOCK.acquire(blocking=False):
+            return PreparationResult(PreparationStatus.BUSY)
+        try:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return PreparationResult(PreparationStatus.CLOSED)
+            snapshot = self._device_manager._recovery_snapshot(device_id, deadline=deadline)
+            if snapshot is None:
+                return PreparationResult(PreparationStatus.TIMEOUT)
+            admission = self._proposal_store.admission(device_id)
+            if admission is ProposalStoreStatus.CAPACITY:
+                return PreparationResult(PreparationStatus.PROPOSAL_CAPACITY)
+            if admission is ProposalStoreStatus.DEVICE_PENDING:
+                return PreparationResult(PreparationStatus.PROPOSAL_PENDING)
+            if admission is ProposalStoreStatus.CLOSED:
+                return PreparationResult(PreparationStatus.CLOSED)
+            if self._closing_event.is_set():
+                return PreparationResult(PreparationStatus.CLOSED)
+
+            discovery = self._discover_with_held_slot(
+                device_id, deadline=deadline
+            )
+            mapped = self._preparation_from_discovery(discovery)
+            if mapped is not None:
+                return mapped
+            candidate = discovery.candidates[0]
+            if self._clock() >= deadline:
+                return PreparationResult(PreparationStatus.TIMEOUT)
+            with self._lifecycle_lock:
+                if self._closed:
+                    return PreparationResult(PreparationStatus.CLOSED)
+            validation_deadline = min(
+                deadline, self._clock() + MAX_RECOVERY_VALIDATION_SECONDS
+            )
+            try:
+                future = scheduler.submit_recovery_validation(
+                    device_id, candidate, snapshot.revision,
+                    deadline=validation_deadline,
+                    cancellation=self._closing_event,
+                    publish_proposal=True,
+                )
+            except RuntimeError:
+                return PreparationResult(PreparationStatus.CLOSED)
+            outcome = self._await_prepare_future(future, validation_deadline)
+            if outcome.status is PreparationStatus.TIMEOUT or outcome.status is PreparationStatus.CLOSED:
+                return outcome
+            if not isinstance(outcome, PreparationResult):
+                return outcome
+            if self._closing_event.is_set():
+                return PreparationResult(PreparationStatus.CLOSED)
+            return outcome
+        except CancelledError:
+            return PreparationResult(PreparationStatus.CLOSED)
+        except Exception:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return PreparationResult(PreparationStatus.CLOSED)
+            return PreparationResult(PreparationStatus.INTERNAL_ERROR)
+        finally:
+            _PROCESS_RECOVERY_LOCK.release()
+
+    def _discover_with_held_slot(self, device_id: str, *, deadline: float) -> RecoveryResult:
+        """D.1 classification for a caller that already owns the process slot."""
+        from .discovery import DiscoveryFailure, DiscoveryResultStatus
+
+        try:
+            protocol_version = self._catalog.protocol_version_for(device_id)
+        except Exception:
+            return RecoveryResult(
+                RecoveryStatus.CATALOG_FAILED,
+                failure=RecoveryFailure.CATALOG_ERROR,
+            )
+        if protocol_version is None:
+            return RecoveryResult(RecoveryStatus.DEVICE_NOT_FOUND)
+        if (
+            isinstance(protocol_version, bool)
+            or not isinstance(protocol_version, (int, float))
+            or protocol_version != 3.5
+        ):
+            return RecoveryResult(RecoveryStatus.PROTOCOL_NOT_ELIGIBLE)
+        remaining = min(MAX_RECOVERY_DISCOVERY_SECONDS, deadline - self._clock())
+        if remaining <= 0:
+            return RecoveryResult(RecoveryStatus.TIMEOUT)
+        discovery = discover_candidates(
+            self._provider, device_id, timeout_seconds=remaining
+        )
+        if discovery.status is DiscoveryResultStatus.FAILED:
+            if discovery.failure is DiscoveryFailure.TIMEOUT:
+                return RecoveryResult(RecoveryStatus.TIMEOUT)
+            failure = (
+                RecoveryFailure.INVALID_ANNOUNCEMENT
+                if discovery.failure is DiscoveryFailure.INVALID_ANNOUNCEMENT
+                else RecoveryFailure.PROVIDER_ERROR
+            )
+            return RecoveryResult(RecoveryStatus.DISCOVERY_FAILED, failure=failure)
+        if discovery.status is DiscoveryResultStatus.NOT_FOUND:
+            return RecoveryResult(RecoveryStatus.NOT_FOUND)
+        candidates = tuple(
+            RecoveryCandidate(item.device_id, item.address, item.announced_versions)
+            for item in discovery.candidates
+        )
+        if discovery.status is DiscoveryResultStatus.AMBIGUOUS:
+            return RecoveryResult(RecoveryStatus.AMBIGUOUS, candidates)
+        if discovery.status is DiscoveryResultStatus.CANDIDATES and len(candidates) == 1:
+            if candidates[0].announced_versions != ("3.5",):
+                return RecoveryResult(RecoveryStatus.PROTOCOL_NOT_ELIGIBLE)
+            return RecoveryResult(RecoveryStatus.CANDIDATE_UNVERIFIED, candidates)
+        return RecoveryResult(
+            RecoveryStatus.DISCOVERY_FAILED,
+            failure=RecoveryFailure.INVALID_RESULT,
+        )
+
+    @staticmethod
+    def _preparation_from_discovery(result: RecoveryResult) -> PreparationResult | None:
+        mapping = {
+            RecoveryStatus.NOT_FOUND: PreparationStatus.NOT_FOUND,
+            RecoveryStatus.AMBIGUOUS: PreparationStatus.AMBIGUOUS,
+            RecoveryStatus.TIMEOUT: PreparationStatus.TIMEOUT,
+            RecoveryStatus.DISCOVERY_FAILED: PreparationStatus.DISCOVERY_FAILED,
+            RecoveryStatus.CATALOG_FAILED: PreparationStatus.CATALOG_FAILED,
+            RecoveryStatus.DEVICE_NOT_FOUND: PreparationStatus.DEVICE_NOT_FOUND,
+            RecoveryStatus.PROTOCOL_NOT_ELIGIBLE: PreparationStatus.PROTOCOL_NOT_ELIGIBLE,
+        }
+        if result.status is RecoveryStatus.CANDIDATE_UNVERIFIED:
+            return None
+        return PreparationResult(
+            mapping.get(result.status, PreparationStatus.INTERNAL_ERROR),
+            failure=result.failure,
+        )
+
+    def _await_prepare_future(self, future, deadline: float) -> PreparationResult:
+        from .recovery_validation import ValidationPublicationResult, ValidationStatus
+
+        while True:
+            if self._closing_event.is_set():
+                if future.cancel():
+                    return PreparationResult(PreparationStatus.CLOSED)
+                future.result()  # Running validation owns its lease and slot until actual completion.
+                return PreparationResult(PreparationStatus.CLOSED)
+            remaining = deadline - self._clock()
+            try:
+                raw = future.result(
+                    timeout=min(max(remaining, 0.0), RECOVERY_FUTURE_POLL_SECONDS)
+                )
+            except FutureTimeoutError:
+                if self._clock() < deadline:
+                    continue
+                if future.cancel():
+                    return PreparationResult(PreparationStatus.TIMEOUT)
+                future.result()  # Do not release the process slot while I/O is active.
+                return PreparationResult(PreparationStatus.TIMEOUT)
+            if self._clock() >= deadline:
+                return PreparationResult(PreparationStatus.TIMEOUT)
+            if not isinstance(raw, ValidationPublicationResult):
+                return PreparationResult(PreparationStatus.INTERNAL_ERROR)
+            if raw.proposal is not None:
+                return PreparationResult(
+                    PreparationStatus.PROPOSAL_READY_INTERNAL, proposal=raw.proposal
+                )
+            status = raw.validation.status
+            if status is ValidationStatus.CLOSED:
+                mapped = PreparationStatus.CLOSED
+            elif status is ValidationStatus.TIMEOUT:
+                mapped = PreparationStatus.TIMEOUT
+            elif status is ValidationStatus.CONFIG_CHANGED:
+                mapped = PreparationStatus.CONFIG_CHANGED
+            elif raw.publication_status is ProposalStoreStatus.CAPACITY:
+                mapped = PreparationStatus.PROPOSAL_CAPACITY
+            elif raw.publication_status is ProposalStoreStatus.DEVICE_PENDING:
+                mapped = PreparationStatus.PROPOSAL_PENDING
+            elif raw.publication_status is ProposalStoreStatus.TOKEN_COLLISION:
+                mapped = PreparationStatus.TOKEN_COLLISION
+            elif raw.publication_status is ProposalStoreStatus.DEADLINE_EXPIRED:
+                mapped = PreparationStatus.TIMEOUT
+            elif raw.publication_status in {
+                ProposalStoreStatus.CANCELLED, ProposalStoreStatus.CLOSED
+            }:
+                mapped = PreparationStatus.CLOSED
+            else:
+                mapped = PreparationStatus.VALIDATION_FAILED
+            return PreparationResult(mapped, validation_status=status.value)
 
     def discover_for_recovery(
         self,

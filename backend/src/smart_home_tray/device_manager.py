@@ -24,6 +24,12 @@ from smart_home_tray.models import (
     HSVColor,
     LightState,
 )
+from smart_home_tray.recovery_proposals import (
+    ProposalBinding,
+    ProposalStore,
+    ProposalStoreStatus,
+    process_proposal_store,
+)
 from smart_home_tray.tuya_adapter import TuyaAdapter
 
 AdapterFactory = Callable[[DeviceConfig], TuyaAdapter]
@@ -48,7 +54,7 @@ class _PrivateDeviceLease:
         self._acquired = False
 
     def __enter__(self) -> "_PrivateDeviceLease":
-        remaining = self.deadline - time.monotonic()
+        remaining = self.deadline - self._manager._recovery_clock()
         if remaining <= 0 or not self._manager._locks[self.device_id].acquire(timeout=remaining):
             return self
         self._acquired = True
@@ -58,7 +64,7 @@ class _PrivateDeviceLease:
 
     @property
     def valid(self) -> bool:
-        return self._acquired and self.config is not None and time.monotonic() < self.deadline
+        return self._acquired and self.config is not None and self._manager._recovery_clock() < self.deadline
 
     def __exit__(self, *_: object) -> None:
         if self._acquired:
@@ -75,6 +81,8 @@ class DeviceManager:
         *,
         adapter_factory: AdapterFactory = TuyaAdapter,
         polling_interval_seconds: float = 15.0,
+        proposal_store: ProposalStore | None = None,
+        recovery_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if (
             isinstance(polling_interval_seconds, bool)
@@ -85,6 +93,8 @@ class DeviceManager:
             raise BackendError(ErrorCode.INVALID_INPUT, "Polling interval must be a positive finite number")
 
         self._configs: dict[str, DeviceConfig] = {}
+        self._proposal_store = proposal_store or process_proposal_store()
+        self._recovery_clock = recovery_clock
         self._adapters: dict[str, TuyaAdapter | None] = {}
         self._states: dict[str, DeviceStatus] = {}
         self._pending_power: dict[str, bool] = {}
@@ -229,6 +239,9 @@ class DeviceManager:
 
             self._configs[device_id] = updated_config
             self._config_revisions[device_id] += 1
+            self._proposal_store.invalidate_older(
+                device_id, self._config_revisions[device_id]
+            )
             self._adapters[device_id] = None
             current = self._states[device_id]
             quality = (
@@ -245,11 +258,11 @@ class DeviceManager:
 
     def _recovery_snapshot(self, device_id: str, *, deadline: float) -> _PrivateRecoverySnapshot | None:
         device_id = self._validate_device_id(device_id)
-        remaining = deadline - time.monotonic()
+        remaining = deadline - self._recovery_clock()
         if remaining <= 0 or not self._locks[device_id].acquire(timeout=remaining):
             return None
         try:
-            if time.monotonic() >= deadline:
+            if self._recovery_clock() >= deadline:
                 return None
             return _PrivateRecoverySnapshot(device_id, self._config_revisions[device_id])
         finally:
@@ -259,21 +272,86 @@ class DeviceManager:
         self._validate_device_id(device_id)
         return _PrivateDeviceLease(self, device_id, revision, deadline)
 
-    def _validate_recovery_candidate(self, device_id: str, revision: int, candidate: object, *, deadline: float):
+    def _validate_recovery_candidate(
+        self, device_id: str, revision: int, candidate: object, *, deadline: float,
+        cancellation: threading.Event | None = None,
+    ):
         from smart_home_tray.recovery_validation import CandidateValidator, ValidationResult, ValidationStatus
 
         with self._recovery_lease(device_id, revision, deadline=deadline) as lease:
-            if not lease._acquired or time.monotonic() >= deadline:
+            if not lease._acquired or self._recovery_clock() >= deadline:
                 return ValidationResult(ValidationStatus.TIMEOUT)
+            if cancellation is not None and cancellation.is_set():
+                return ValidationResult(ValidationStatus.CLOSED)
             if lease.config is None:
                 return ValidationResult(ValidationStatus.CONFIG_CHANGED)
             try:
                 result = CandidateValidator().validate(lease.config, candidate, deadline=deadline)
-                if time.monotonic() >= deadline:
+                if self._recovery_clock() >= deadline:
                     return ValidationResult(ValidationStatus.TIMEOUT)
                 return result
             except Exception:
                 return ValidationResult(ValidationStatus.INTERNAL_ERROR)
+
+    def _prepare_recovery_candidate(
+        self, device_id: str, revision: int, candidate: object, *, deadline: float,
+        cancellation: threading.Event | None = None,
+    ):
+        from smart_home_tray.recovery_validation import (
+            CandidateValidator,
+            ValidationPublicationResult,
+            ValidationResult,
+            ValidationStatus,
+        )
+        from smart_home_tray.recovery import RecoveryCandidate
+
+        with self._recovery_lease(device_id, revision, deadline=deadline) as lease:
+            if not lease.valid:
+                status = ValidationStatus.TIMEOUT if self._recovery_clock() >= deadline else ValidationStatus.CONFIG_CHANGED
+                return ValidationPublicationResult(ValidationResult(status))
+            if cancellation is not None and cancellation.is_set():
+                return ValidationPublicationResult(ValidationResult(ValidationStatus.CLOSED))
+            if lease.config is None or not isinstance(candidate, RecoveryCandidate):
+                return ValidationPublicationResult(ValidationResult(ValidationStatus.CONFIG_CHANGED))
+            try:
+                validation = CandidateValidator().validate(
+                    lease.config, candidate, deadline=deadline
+                )
+                if validation.status is not ValidationStatus.KEY_AUTHENTICATED_READ:
+                    return ValidationPublicationResult(validation)
+                if self._recovery_clock() >= deadline:
+                    return ValidationPublicationResult(ValidationResult(ValidationStatus.TIMEOUT))
+                if cancellation is not None and cancellation.is_set():
+                    return ValidationPublicationResult(ValidationResult(ValidationStatus.CLOSED))
+                stored = self._proposal_store.create_validated(
+                    ProposalBinding(
+                        device_id=device_id,
+                        candidate_address=candidate.address,
+                        protocol_version=lease.config.protocol_version,
+                        revision=revision,
+                        original_address=lease.config.address,
+                    ),
+                    cancellation=cancellation,
+                    deadline=deadline,
+                )
+                if stored.status is not ProposalStoreStatus.CREATED:
+                    status = (
+                        ValidationStatus.TIMEOUT
+                        if stored.status is ProposalStoreStatus.DEADLINE_EXPIRED
+                        else ValidationStatus.INTERNAL_ERROR
+                    )
+                    return ValidationPublicationResult(
+                        ValidationResult(status),
+                        publication_status=stored.status,
+                    )
+                return ValidationPublicationResult(
+                    validation, proposal=stored.descriptor,
+                    publication_status=stored.status,
+                )
+            except Exception:
+                return ValidationPublicationResult(
+                    ValidationResult(ValidationStatus.INTERNAL_ERROR)
+                )
 
     def set_white_brightness(self, device_id: str, percent: object) -> DeviceStatus:
         return self._set_ranged_control(device_id, "white_brightness", percent, "white")

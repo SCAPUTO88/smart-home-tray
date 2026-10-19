@@ -376,3 +376,13 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Interleavings:** regressões cobrem timeout na FIFO, validação iniciada com retenção do slot, shutdown concorrente e progresso do outro Device ID.
 - **Verificação:** focados — 109 passed; backend — 331 passed (327 anteriores + 4 regressões novas); `compileall` e `git diff --check` passaram. Sem LAN REAL, hardware ou cloud.
 - **Resumo para revisão:** o lifecycle pós-admissão impede descoberta após fechamento concluído; o timeout não abandona I/O nem libera o slot cedo. Compatibilidade FIFO e locks não reentrantes preservados.
+
+## F2E.D.2.B.2 — ProposalStore e prepare interno (2026-10-19)
+
+- **Base:** branch `feature/f2e-d2b-proposal-store` criada de `origin/develop` no merge commit `708044f` da PR #37.
+- **Store:** criado `recovery_proposals.py`, compartilhado no processo, com limite quatro/um por ID, TTL monotônico de 60 s, tokens derivados de 32 bytes de entropia, índice SHA-256, lookup, claim atômico, replay bloqueado, expiração, colisão fail-closed e invalidação no shutdown.
+- **Composição:** `prepare_internal()` mantém o slot global por snapshot, D.1, barreira FIFO, validação e publicação. A publicação acontece no handler fixo durante a lease; `update_address()` invalida revisões antigas na ordem ID → store. Deadline, cancelamento, fechamento, revisão obsoleta, falha de autenticação e cleanup não publicam proposta. Nenhuma confirmação/adopção pública ou mudança de endereço foi criada.
+- **Regressões:** cobertura de capacidade, duplicata por ID, TTL, claim/replay concorrente, colisão, shutdown, expiração durante validação iniciada, revisão alterada durante UDP/FIFO/validação, falha de autenticação/cleanup, progresso de outro ID e invariância do estado do manager.
+- **Verificação:** bateria focada de recovery, manager, scheduler, descoberta, transporte e parser — 237 passed; suíte backend — 352 passed; `rtk py -m compileall -q backend/src backend/tests` e `rtk git diff --check` passaram.
+- **Segurança/escopo:** todos os testes usam stores/relógios/fakes e Events. Sem LAN REAL, hardware, cloud, credenciais, JSONL, UI, TOML ou adoção.
+- **Resumo para revisão arquitetural:** o token interno só nasce após leitura autenticada e cleanup bem-sucedidos, enquanto a configuração ainda está leaseada. Revisar compartilhamento/encerramento do store e a fronteira do claim interno; sem confirmação pública nesta etapa.

@@ -9,6 +9,7 @@ from typing import Protocol
 
 from smart_home_tray.dps_observation import observe_dps
 from smart_home_tray.models import DeviceConfig
+from smart_home_tray.recovery_proposals import ProposalDescriptor, ProposalStoreStatus
 from smart_home_tray.recovery import RecoveryCandidate
 from smart_home_tray.tuya35_readonly import (
     ReadOnlyError,
@@ -40,6 +41,15 @@ class ValidationResult:
 
     status: ValidationStatus
     phase: str | None = None
+
+
+@dataclass(frozen=True)
+class ValidationPublicationResult:
+    """Worker outcome; a descriptor exists only after validated store publication."""
+
+    validation: ValidationResult
+    proposal: ProposalDescriptor | None = None
+    publication_status: ProposalStoreStatus | None = None
 
 
 class ReadOnlyClient(Protocol):
