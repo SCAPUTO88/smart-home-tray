@@ -26,6 +26,7 @@ MAX_FRAMES = 8
 MAX_BYTES = 12 * 1024
 MAX_FRAME_PAYLOAD = 1440
 MAX_VALIDATION_SECONDS = 2.5
+MAX_INTERFACE_RECORDS = 64
 DEVICE_PORT = 6668
 _HEADER_6699_BYTES = 18
 _RFC1918_NETWORKS = tuple(
@@ -83,6 +84,8 @@ def _default_interface_reader() -> tuple[InterfaceRecord, ...]:
         for address in addresses:
             if address.family != socket.AF_INET or not address.address or not address.netmask:
                 continue
+            if len(records) == MAX_INTERFACE_RECORDS:
+                raise ValueError("interface record limit exceeded")
             records.append((address.address, address.netmask, True))
     return tuple(records)
 
@@ -281,7 +284,7 @@ class TinyTuya35ReadOnlyClient:
         self._phase = "preflight"
         self._check_deadline(deadline)
         key = self._preflight_key()
-        address = self._preflight_address()
+        address = self._preflight_address(deadline)
         self._phase_deadline(deadline)
 
         self._phase = "connect"
@@ -382,15 +385,21 @@ class TinyTuya35ReadOnlyClient:
             raise ReadOnlyError(ReadOnlyFailure.DEPENDENCY_UNSUPPORTED, self._phase)
         return key
 
-    def _preflight_address(self) -> ipaddress.IPv4Address:
+    def _preflight_address(self, deadline: float) -> ipaddress.IPv4Address:
         try:
             address = ipaddress.IPv4Address(self._candidate_address)
         except (ipaddress.AddressValueError, TypeError):
             raise ReadOnlyError(ReadOnlyFailure.PROTOCOL_NOT_ELIGIBLE, self._phase) from None
+        self._check_deadline(deadline)
         try:
-            interfaces = tuple(self._interface_reader())
+            interfaces: list[InterfaceRecord] = []
+            for record in self._interface_reader():
+                if len(interfaces) == MAX_INTERFACE_RECORDS:
+                    raise ValueError("interface record limit exceeded")
+                interfaces.append(record)
         except Exception:
             raise ReadOnlyError(ReadOnlyFailure.INTERFACE_UNAVAILABLE, self._phase) from None
+        self._check_deadline(deadline)
         try:
             eligible = validate_candidate_address(address, interfaces)
         except Exception:

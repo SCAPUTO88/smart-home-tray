@@ -6,16 +6,20 @@ import ipaddress
 import json
 import logging
 import socket
+import sys
 from collections import deque
+from types import SimpleNamespace
 
 import pytest
 import tinytuya
 
 from smart_home_tray.models import DeviceConfig, DPSMap, ValueRange
 from smart_home_tray.tuya35_readonly import (
+    MAX_INTERFACE_RECORDS,
     ReadOnlyError,
     ReadOnlyFailure,
     TinyTuya35ReadOnlyClient,
+    _default_interface_reader,
     validate_candidate_address,
 )
 
@@ -539,6 +543,38 @@ def test_validation_budget_caps_caller_deadline_and_covers_interface_enumeration
 
     assert error.value.failure is ReadOnlyFailure.TIMEOUT
     assert opened == []
+
+
+def test_excessive_synthetic_interfaces_fail_closed_before_socket():
+    opened = []
+    interfaces = (record for record in _network_interfaces() * (MAX_INTERFACE_RECORDS + 1))
+    client = TinyTuya35ReadOnlyClient(
+        _config(), ADDRESS, candidate_device_id=DEVICE_ID,
+        announced_versions=("3.5",), socket_factory=lambda *_args: opened.append(True),
+        clock=FakeClock(), entropy=lambda length: b"N" * length,
+        interface_reader=lambda: interfaces,
+    )
+
+    with pytest.raises(ReadOnlyError) as error:
+        client.read_authenticated_dps(deadline=2.5)
+
+    assert error.value.failure is ReadOnlyFailure.INTERFACE_UNAVAILABLE
+    assert opened == []
+
+
+def test_default_interface_provider_rejects_excess_during_materialization(monkeypatch):
+    address = SimpleNamespace(family=socket.AF_INET, address="10.70.4.10", netmask="255.255.255.0")
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        SimpleNamespace(
+            net_if_stats=lambda: {"synthetic": SimpleNamespace(isup=True)},
+            net_if_addrs=lambda: {"synthetic": [address] * (MAX_INTERFACE_RECORDS + 1)},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="interface record limit exceeded"):
+        _default_interface_reader()
 
 
 @pytest.mark.parametrize("deadline", [float("nan"), float("inf"), True, "2.5"])
