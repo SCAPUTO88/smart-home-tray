@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import math
 import threading
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -22,6 +23,7 @@ from .discovery import (
 )
 
 MAX_RECOVERY_DISCOVERY_SECONDS = 3.0
+MAX_RECOVERY_VALIDATION_SECONDS = 2.5
 _PROCESS_RECOVERY_LOCK = threading.Lock()
 
 
@@ -117,6 +119,79 @@ class RecoveryService:
     ) -> None:
         self._catalog = catalog
         self._provider = provider
+        self._device_manager = getattr(catalog, "_device_manager", None)
+        self._lifecycle_lock = threading.Lock()
+        self._closed = False
+
+    def close(self, *, timeout_seconds: float = 0.0) -> bool:
+        """Close this coordinator and wait boundedly for the process recovery slot.
+
+        False means an active discovery/validation still owns the slot. Its
+        owner is not abandoned; call close again after the operation drains.
+        """
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds < 0
+        ):
+            return False
+        with self._lifecycle_lock:
+            self._closed = True
+        acquired = _PROCESS_RECOVERY_LOCK.acquire(timeout=float(timeout_seconds))
+        if acquired:
+            _PROCESS_RECOVERY_LOCK.release()
+        return acquired
+
+    def _validate_candidate(self, device_id: str, candidate: RecoveryCandidate, scheduler: object, *, deadline: float):
+        """Run one private validation turn under the process-wide recovery slot.
+
+        This is backend-internal composition. Callers must be outside scheduler
+        workers because the coordinator waits for the FIFO turn to finish.
+        """
+        from .recovery_validation import ValidationResult, ValidationStatus
+
+        if (
+            self._device_manager is None
+            or not isinstance(device_id, str)
+            or not isinstance(candidate, RecoveryCandidate)
+            or candidate.device_id != device_id
+            or isinstance(deadline, bool)
+            or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)
+        ):
+            return ValidationResult(ValidationStatus.INVALID_REQUEST)
+        deadline = min(float(deadline), time.monotonic() + MAX_RECOVERY_VALIDATION_SECONDS)
+        if scheduler._is_worker_thread():
+            return ValidationResult(ValidationStatus.INVALID_REQUEST)
+        with self._lifecycle_lock:
+            if self._closed:
+                return ValidationResult(ValidationStatus.CLOSED)
+        if not _PROCESS_RECOVERY_LOCK.acquire(blocking=False):
+            return ValidationResult(ValidationStatus.BUSY)
+        try:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return ValidationResult(ValidationStatus.CLOSED)
+            snapshot = self._device_manager._recovery_snapshot(device_id, deadline=deadline)
+            if snapshot is None:
+                return ValidationResult(ValidationStatus.TIMEOUT)
+            future = scheduler.submit_recovery_validation(
+                device_id, candidate, snapshot.revision, deadline=deadline
+            )
+            # This caller is the recovery coordinator, never its scheduler worker.
+            result = future.result()
+            with self._lifecycle_lock:
+                if self._closed:
+                    return ValidationResult(ValidationStatus.CLOSED)
+            return result
+        except Exception:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return ValidationResult(ValidationStatus.CLOSED)
+            return ValidationResult(ValidationStatus.INTERNAL_ERROR)
+        finally:
+            _PROCESS_RECOVERY_LOCK.release()
 
     def discover_for_recovery(
         self,
@@ -134,6 +209,9 @@ class RecoveryService:
             or timeout_seconds <= 0
         ):
             return RecoveryResult(RecoveryStatus.INVALID_REQUEST)
+        with self._lifecycle_lock:
+            if self._closed:
+                return RecoveryResult(RecoveryStatus.INVALID_REQUEST)
 
         try:
             protocol_version = self._catalog.protocol_version_for(device_id)
@@ -172,6 +250,10 @@ class RecoveryService:
             )
         finally:
             _PROCESS_RECOVERY_LOCK.release()
+
+        with self._lifecycle_lock:
+            if self._closed:
+                return RecoveryResult(RecoveryStatus.INVALID_REQUEST)
 
         if discovery.status is DiscoveryResultStatus.FAILED:
             if discovery.failure is DiscoveryFailure.TIMEOUT:

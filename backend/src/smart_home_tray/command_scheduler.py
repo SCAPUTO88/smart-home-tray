@@ -12,6 +12,8 @@ from enum import Enum
 from typing import Callable, Protocol
 
 from smart_home_tray.models import BackendError, DeviceStatus, ErrorCode
+from smart_home_tray.recovery import RecoveryCandidate
+from smart_home_tray.recovery_validation import ValidationResult
 
 DEFAULT_COALESCING_WINDOW_SECONDS = 0.150
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10.0
@@ -37,10 +39,14 @@ class _CommandKind(Enum):
     HSV = "hsv"
     COLOR_BRIGHTNESS = "color_brightness"
     POWER = "power"
+    VALIDATE_RECOVERY = "validate_recovery"
 
     @property
     def continuous(self) -> bool:
-        return self is not _CommandKind.POWER
+        return self in {
+            _CommandKind.WHITE_BRIGHTNESS, _CommandKind.COLOR_TEMPERATURE,
+            _CommandKind.HSV, _CommandKind.COLOR_BRIGHTNESS,
+        }
 
 
 @dataclass
@@ -48,9 +54,18 @@ class _QueuedCommand:
     kind: _CommandKind
     device_id: str
     arguments: tuple[object, ...]
-    future: Future[DeviceStatus]
+    future: Future[object]
     ready_at: float
     bypass_window: bool = False
+    recovery_request: "_RecoveryValidationRequest | None" = None
+
+
+@dataclass(frozen=True)
+class _RecoveryValidationRequest:
+    device_id: str
+    candidate: RecoveryCandidate
+    revision: int
+    deadline: float
 
 
 class CommandScheduler:
@@ -168,6 +183,30 @@ class CommandScheduler:
     def submit_power(self, device_id: str, enabled: bool) -> Future[DeviceStatus]:
         return self._submit(_CommandKind.POWER, device_id, enabled)
 
+    def submit_recovery_validation(self, device_id: str, candidate: RecoveryCandidate, revision: int, *, deadline: float) -> Future[ValidationResult]:
+        """Enqueue a discrete internal validation turn; never coalesced."""
+        future: Future[ValidationResult] = Future()
+        with self._condition:
+            if not self._started or self._closed:
+                raise RuntimeError("command scheduler is unavailable")
+            queue = self._queues.get(device_id)
+            if queue is None:
+                raise BackendError(ErrorCode.INVALID_INPUT, "Unknown device ID")
+            request = _RecoveryValidationRequest(device_id, candidate, revision, deadline)
+            now = self._clock()
+            for previous in queue:
+                if previous.kind.continuous:
+                    previous.ready_at = min(previous.ready_at, now)
+                    previous.bypass_window = True
+            queue.append(_QueuedCommand(_CommandKind.VALIDATE_RECOVERY, device_id, (), future, self._clock(), recovery_request=request))
+            self._condition.notify_all()
+        return future
+
+    def _is_worker_thread(self) -> bool:
+        current = threading.current_thread()
+        with self._condition:
+            return any(worker is current for worker in self._workers.values())
+
     def _submit(self, kind: _CommandKind, device_id: str, *arguments: object) -> Future[DeviceStatus]:
         future: Future[DeviceStatus] = Future()
         superseded: Future[DeviceStatus] | None = None
@@ -246,8 +285,14 @@ class CommandScheduler:
             else:
                 command.future.set_result(result)
 
-    def _execute(self, command: _QueuedCommand) -> DeviceStatus:
+    def _execute(self, command: _QueuedCommand):
         manager = self._device_manager
+        if command.kind is _CommandKind.VALIDATE_RECOVERY:
+            request = command.recovery_request
+            if request is None:
+                from smart_home_tray.recovery_validation import ValidationStatus
+                return ValidationResult(ValidationStatus.INVALID_REQUEST)
+            return manager._validate_recovery_candidate(request.device_id, request.revision, request.candidate, deadline=request.deadline)
         if command.kind is _CommandKind.WHITE_BRIGHTNESS:
             return manager.set_white_brightness(command.device_id, *command.arguments)
         if command.kind is _CommandKind.COLOR_TEMPERATURE:

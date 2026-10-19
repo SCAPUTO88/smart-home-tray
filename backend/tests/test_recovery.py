@@ -68,6 +68,47 @@ def test_protocol_33_is_rejected_before_discovery_provider_is_called():
     assert recovery._provider.calls == []
 
 
+def test_close_reports_incomplete_until_active_validation_finishes_and_suppresses_result(monkeypatch):
+    import ipaddress
+    import time
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.config import AppConfig
+    from smart_home_tray.device_manager import DeviceManager
+    from smart_home_tray.models import DeviceConfig, DPSMap
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import CandidateValidator, ValidationResult, ValidationStatus
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def validate(self, *_args, **_kwargs):
+        entered.set()
+        assert release.wait(timeout=3)
+        return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    monkeypatch.setattr(CandidateValidator, "validate", validate)
+
+    config = DeviceConfig(DEVICE_ID, "synthetic", "192.0.2.10", 3.5, "synthetic-key", DPSMap(power=20))
+    manager = DeviceManager(AppConfig((config,)))
+    recovery = RecoveryService(catalog=DeviceManagerRecoveryCatalog(manager), provider=FakeProvider())
+    scheduler = CommandScheduler(manager)
+    scheduler.start()
+    candidate = RecoveryCandidate(DEVICE_ID, ipaddress.IPv4Address("192.0.2.11"), ("3.5",))
+    result_box = []
+    caller = threading.Thread(target=lambda: result_box.append(recovery._validate_candidate(
+        DEVICE_ID, candidate, scheduler, deadline=time.monotonic() + 3
+    )))
+    caller.start()
+    assert entered.wait(timeout=1)
+    assert recovery.close(timeout_seconds=0) is False
+    release.set()
+    caller.join(timeout=1)
+    assert not caller.is_alive()
+    assert result_box[0].status is ValidationStatus.CLOSED
+    assert recovery.close(timeout_seconds=1) is True
+    assert scheduler.stop(timeout_seconds=1)
+
+
 def test_unknown_device_does_not_start_discovery():
     recovery = service(protocols={})
 
