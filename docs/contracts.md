@@ -149,3 +149,18 @@ Every public device state includes an additive knowledge object with power, work
 Este contrato é interno ao backend e não altera CLI, JSON Lines, Tauri ou frontend. Candidato único continua sendo apenas anúncio não autenticado. A D.1 não abre TCP, chama status/escrita, valida identidade, cria proposta confirmável ou atualiza endereço.
 
 Os budgets e defaults indicados como pendentes no registro F2E.D.0 foram posteriormente aprovados em D-019 para orientar D.1–D.3. Isso não torna esses fluxos implementados: em particular, o timeout efetivo do TinyTuya para validação TCP permanece sujeito a verificação.
+
+## Validação read-only isolada — D.2.A
+
+Contrato interno do backend, sem rota CLI/JSONL/Tauri:
+
+- CandidateValidator.validate(config, candidate, *, deadline) retorna somente ValidationResult(status, phase). O sucesso chama-se KEY_AUTHENTICATED_READ; significa que DPS aceito foi recebido numa sessão autenticada pela Local Key cadastrada. Não representa identidade independente nem autorização para alterar IP.
+- O transporte aceita somente protocolo cadastrado 3.5 e versões anunciadas exatamente ("3.5"), TinyTuya instalado exatamente 1.20.0, chave codificável em Latin-1 com 16 bytes, GCM disponível e endereço IPv4 RFC1918 de host numa sub-rede privada ativa elegível.
+- Uma operação abre no máximo um socket TCP, faz handshake e uma consulta DP_QUERY_NEW read-only. Só frames 6699 com autenticação GCM válida são aceitos. Retcode diferente/ausente, comando inesperado, 55AA, JSON duplicado/malformado, DPS sem campo reconhecido, deadline, limite ou cleanup com falha rejeitam a leitura.
+- Deadline monotônica cumulativa é limitada a 2,5 s. Orçamento por operação: 8 frames, 12 KiB incluindo entrada e saída, 1.440 bytes por payload. IVs de envio são gerados explicitamente por entropia do sistema; IVs repetidos de recepção são rejeitados. Nenhum retry ou reconexão ocorre.
+- Os limites de compatibilidade são locais ao cliente: backend mantém tinytuya>=1.20,<2. Uma versão diferente de 1.20.0 permanece permitida aos demais componentes, mas não habilita este validador até auditoria própria.
+- DPS brutos existem somente durante a validação interna e não são copiados para ValidationResult. O parser puro compartilhado dps_observation.py reconhece somente DPS mapeados com tipos/faixas já usados pelo DeviceManager; não aplica estado, pendências, conhecimento ou readback.
+
+Limitações do contrato: a deadline limita connect/send/recv e a verificação após close, mas não consegue interromper um travamento síncrono nativo do sistema durante cleanup. A classificação de interfaces é baseada em psutil: RFC1918, ativa, máscara até /30 e mesma sub-rede; redes VPN que atendam esses critérios também podem ser elegíveis. Nenhuma validação de firmware em hardware foi realizada.
+
+D.2.A não cria tokens/propostas, não coordena locks, não altera DeviceManager, endereço ou TOML e não integra a orquestração D.1. Esses elementos permanecem para D.2.B/D.3 conforme o documento de arquitetura.
