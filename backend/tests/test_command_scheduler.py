@@ -151,6 +151,116 @@ def test_burst_coalesces_hundreds_of_brightness_values_to_the_last_intent():
         scheduler.stop()
 
 
+def test_shutdown_keeps_active_recovery_turn_until_worker_finishes():
+    import ipaddress
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import ValidationResult, ValidationStatus
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    class Manager(FakeDeviceManager):
+        def _validate_recovery_candidate(self, device_id, revision, candidate, *, deadline):
+            calls.append((device_id, revision, candidate.address))
+            entered.set()
+            assert release.wait(timeout=3)
+            return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    manager = Manager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    candidate = RecoveryCandidate("lamp-a", ipaddress.IPv4Address("192.0.2.2"), ("3.5",))
+    first = scheduler.submit_recovery_validation("lamp-a", candidate, 3, deadline=9999999999)
+    assert entered.wait(timeout=1)
+    second = scheduler.submit_recovery_validation("lamp-a", candidate, 3, deadline=9999999999)
+    assert scheduler.stop(timeout_seconds=0) is False
+    assert not first.done() and second.cancelled()
+    release.set()
+    assert first.result(timeout=1).status is ValidationStatus.KEY_AUTHENTICATED_READ
+    assert calls == [("lamp-a", 3, candidate.address)]
+    assert scheduler.stop(timeout_seconds=1) is True
+
+
+def test_recovery_validation_items_are_not_coalesced():
+    import ipaddress
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import ValidationResult, ValidationStatus
+
+    calls = []
+
+    class Manager(FakeDeviceManager):
+        def _validate_recovery_candidate(self, device_id, revision, candidate, *, deadline):
+            calls.append((device_id, revision))
+            return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    scheduler = CommandScheduler(Manager(), coalescing_window_seconds=0.15)
+    scheduler.start()
+    candidate = RecoveryCandidate("lamp-a", ipaddress.IPv4Address("192.0.2.2"), ("3.5",))
+    first = scheduler.submit_recovery_validation("lamp-a", candidate, 1, deadline=9999999999)
+    second = scheduler.submit_recovery_validation("lamp-a", candidate, 1, deadline=9999999999)
+    assert first.result(timeout=1).status is ValidationStatus.KEY_AUTHENTICATED_READ
+    assert second.result(timeout=1).status is ValidationStatus.KEY_AUTHENTICATED_READ
+    assert calls == [("lamp-a", 1), ("lamp-a", 1)]
+    assert scheduler.stop(timeout_seconds=1)
+
+
+def test_recovery_barrier_flushes_continuous_commands_ahead_of_it():
+    import ipaddress
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import ValidationResult, ValidationStatus
+
+    class Manager(FakeDeviceManager):
+        def _validate_recovery_candidate(self, device_id, revision, candidate, *, deadline):
+            with self._condition:
+                self.calls.append((device_id, "validate_recovery", (revision,)))
+                self._condition.notify_all()
+            return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    clock = FakeClock()
+    manager = Manager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0.15, clock=clock)
+    scheduler.start()
+    continuous = scheduler.submit_white_brightness("lamp-a", 50)
+    candidate = RecoveryCandidate("lamp-a", ipaddress.IPv4Address("192.0.2.2"), ("3.5",))
+    recovery = scheduler.submit_recovery_validation("lamp-a", candidate, 1, deadline=9999999999)
+    assert continuous.result(timeout=1) == ("lamp-a", "white_brightness", (50,))
+    assert recovery.result(timeout=1).status is ValidationStatus.KEY_AUTHENTICATED_READ
+    assert [call[1] for call in manager.calls] == ["white_brightness", "validate_recovery"]
+    assert scheduler.stop(timeout_seconds=1)
+
+
+def test_other_device_worker_progresses_during_recovery_validation():
+    import ipaddress
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import ValidationResult, ValidationStatus
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class Manager(FakeDeviceManager):
+        def _validate_recovery_candidate(self, device_id, revision, candidate, *, deadline):
+            entered.set()
+            assert release.wait(timeout=3)
+            return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    manager = Manager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    candidate = RecoveryCandidate("lamp-a", ipaddress.IPv4Address("192.0.2.2"), ("3.5",))
+    recovery = scheduler.submit_recovery_validation("lamp-a", candidate, 1, deadline=9999999999)
+    assert entered.wait(timeout=1)
+    other = scheduler.submit_power("lamp-b", True)
+    assert other.result(timeout=1) == ("lamp-b", "power", (True,))
+    release.set()
+    assert recovery.result(timeout=1).status is ValidationStatus.KEY_AUTHENTICATED_READ
+    assert scheduler.stop(timeout_seconds=1)
+
+
 def test_continuous_drag_sends_periodic_latest_values_without_waiting_for_release():
     from smart_home_tray.command_scheduler import CommandScheduler
 

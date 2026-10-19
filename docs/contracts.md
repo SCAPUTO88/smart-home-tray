@@ -114,6 +114,16 @@ Power sempre é enfileirado sem coalescing ou espera de janela própria. Na cheg
 
 `stop(timeout_seconds=10.0) -> bool` fecha novas submissões, cancela Futures de comandos ainda na fila, permite comandos iniciados terminarem e aguarda os workers até o limite. `True` indica que todos os workers encerraram; `False` indica que pelo menos um ainda está ativo. Se chamado dentro de callback de Future, não tenta executar `join()` da própria thread e retorna `False` enquanto ela não tiver encerrado; uma chamada posterior de outra thread pode completar a espera. Callbacks de Future executam sincronamente na thread publicadora, podendo atrasar o worker e o shutdown. O scheduler é de ciclo único e não reinicia após stop. Workers são explicitamente não daemon; a aplicação deve chamar `stop()` no encerramento. A duração efetiva de shutdown depende dos timeouts de rede, da operação síncrona em andamento e de callbacks.
 
+### Coordenação interna F2E.D.2.B.1
+
+O `DeviceManager` mantém revisão privada monotônica da configuração por Device ID. Cada `update_address()` bem-sucedido incrementa a revisão, inclusive quando o endereço recebido é igual ao atual. Snapshot/lease são contratos internos e nunca entram na conversão pública de status. A lease segura o lock do ID enquanto `CandidateValidator` usa a configuração atual; não se chama `read_state()`, adapter ativo ou qualquer método que readquira esse lock.
+
+`CommandScheduler.submit_recovery_validation(device_id, candidate, revision, deadline)` enfileira `VALIDATE_RECOVERY`, retorno `Future[ValidationResult]`. É uma barreira imediata e discreta, sem coalescing; não é comando JSON Lines e não aceita handler/callback no payload. A coordenação de recuperação é chamada fora dos workers e mantém o slot global D.1 até a Future concluir. Shutdown cancela itens ainda enfileirados; item já iniciado mantém worker e lease até terminar, mesmo quando `stop()` retorna `False` por timeout.
+
+`RecoveryService.close(timeout_seconds=0.0) -> bool` fecha novas validações e espera pelo slot global sem segurar mutex de lifecycle durante I/O. `False` significa que a operação continua ativa e o serviço ainda não terminou o fechamento; uma chamada posterior pode concluir a espera. Resultado de validação concluído após o fechamento é normalizado para `CLOSED`.
+
+A espera da validação usa a deadline monotônica do request. Ao expirar, o coordenador tenta cancelar a Future: sucesso significa item ainda não iniciado e retorna `TIMEOUT`; falha significa que o worker já iniciou, então o coordenador drena a Future até a conclusão real antes de liberar o slot, e retorna `TIMEOUT` se a deadline passou. Cancelamento da Future pelo shutdown retorna `CLOSED`. Nenhuma thread é destacada para abandonar I/O.
+
 
 ## Consumidor frontend mock (F2A)
 

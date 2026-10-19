@@ -555,6 +555,125 @@ def test_update_address_rebuilds_adapter_without_changing_device_identity():
     assert status.state.power is False
 
 
+def test_recovery_revision_increments_on_successful_same_address_replacement():
+    import time
+
+    manager, _ = make_manager([make_device("revision", "192.0.2.10")], {})
+    before = manager._recovery_snapshot("revision", deadline=time.monotonic() + 1)
+    manager.update_address("revision", "192.0.2.10")
+    after = manager._recovery_snapshot("revision", deadline=time.monotonic() + 1)
+    assert before is not None and after is not None
+    assert after.revision == before.revision + 1
+    assert "local_key" not in repr(before)
+    assert "unit-test-key-not-real" not in repr(before)
+
+
+def test_recovery_revision_detects_address_a_to_b_to_a():
+    import time
+
+    manager, _ = make_manager([make_device("revision-aba", "192.0.2.10")], {})
+    original = manager._recovery_snapshot("revision-aba", deadline=time.monotonic() + 1)
+    original_address = manager.get_device("revision-aba").address
+    manager.update_address("revision-aba", "192.0.2.11")
+    manager.update_address("revision-aba", "192.0.2.10")
+    restored = manager._recovery_snapshot("revision-aba", deadline=time.monotonic() + 1)
+    assert original is not None and restored is not None
+    assert manager.get_device("revision-aba").address == original_address
+    assert restored.revision == original.revision + 2
+
+
+def test_stale_recovery_revision_is_rejected_without_mutating_status():
+    import time
+    from smart_home_tray.recovery_validation import ValidationStatus
+
+    manager, _ = make_manager([make_device("stale", "192.0.2.10")], {})
+    snapshot = manager._recovery_snapshot("stale", deadline=time.monotonic() + 1)
+    assert snapshot is not None
+    manager.update_address("stale", "192.0.2.11")
+    before = manager.get_device("stale")
+
+    class Validator:
+        def validate(self, *_args, **_kwargs):
+            raise AssertionError("stale configuration must not reach validator")
+
+    result = manager._validate_recovery_candidate("stale", snapshot.revision, object(), deadline=time.monotonic() + 1)
+    assert result.status is ValidationStatus.CONFIG_CHANGED
+    assert manager.get_device("stale") == before
+
+
+def test_recovery_validation_lease_preserves_all_manager_state(monkeypatch):
+    import time
+    import ipaddress
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import CandidateValidator
+    from smart_home_tray.recovery_validation import ValidationStatus
+
+    adapter = FakeAdapter(statuses=[{"20": False}], write_error=BackendError(ErrorCode.TIMEOUT, "synthetic timeout"))
+    manager, _ = make_manager([make_device("lease", "192.0.2.10")], {"lease": adapter})
+    manager.read_state("lease")
+    with pytest.raises(BackendError):
+        manager.set_power("lease", True)
+    before = manager.get_device("lease")
+    pending_power = dict(manager._pending_power)
+    pending_fields = {key: dict(value) for key, value in manager._pending_fields.items()}
+    last_read_fields = {key: dict(value) for key, value in manager._last_read_fields.items()}
+    last_read_power = dict(manager._last_read_power)
+    snapshot = manager._recovery_snapshot("lease", deadline=time.monotonic() + 1)
+    assert snapshot is not None
+
+    class Result:
+        status = ValidationStatus.KEY_AUTHENTICATED_READ
+
+    monkeypatch.setattr(CandidateValidator, "validate", lambda *_args, **_kwargs: Result())
+
+    candidate = RecoveryCandidate("lease", ipaddress.IPv4Address("192.0.2.11"), ("3.5",))
+    result = manager._validate_recovery_candidate("lease", snapshot.revision, candidate, deadline=time.monotonic() + 1)
+    assert result.status is ValidationStatus.KEY_AUTHENTICATED_READ
+    assert manager.get_device("lease") == before
+    assert manager._pending_power == pending_power == {"lease": True}
+    assert manager._pending_fields == pending_fields
+    assert manager._last_read_fields == last_read_fields
+    assert manager._last_read_power == last_read_power
+
+
+def test_recovery_lease_excludes_direct_read_of_same_device(monkeypatch):
+    import ipaddress
+    import time
+    from smart_home_tray.recovery import RecoveryCandidate
+    from smart_home_tray.recovery_validation import CandidateValidator, ValidationResult, ValidationStatus
+
+    validation_entered = threading.Event()
+    release_validation = threading.Event()
+    read_entered = threading.Event()
+    adapter = FakeAdapter(statuses=[{"20": True}], on_status=read_entered.set)
+    manager, _ = make_manager([make_device("lease-lock", "192.0.2.10")], {"lease-lock": adapter})
+
+    def validate(self, *_args, **_kwargs):
+        validation_entered.set()
+        assert release_validation.wait(timeout=3)
+        return ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ)
+
+    monkeypatch.setattr(CandidateValidator, "validate", validate)
+    snapshot = manager._recovery_snapshot("lease-lock", deadline=time.monotonic() + 1)
+    assert snapshot is not None
+    candidate = RecoveryCandidate("lease-lock", ipaddress.IPv4Address("192.0.2.11"), ("3.5",))
+    validation = threading.Thread(target=lambda: manager._validate_recovery_candidate(
+        "lease-lock", snapshot.revision, candidate, deadline=time.monotonic() + 2
+    ))
+    validation.start()
+    assert validation_entered.wait(timeout=1)
+    read_attempted = threading.Event()
+    reader = threading.Thread(target=lambda: (read_attempted.set(), manager.read_state("lease-lock")))
+    reader.start()
+    assert read_attempted.wait(timeout=1)
+    assert read_entered.wait(timeout=0.05) is False
+    release_validation.set()
+    validation.join(timeout=1)
+    reader.join(timeout=1)
+    assert not validation.is_alive() and not reader.is_alive()
+    assert read_entered.is_set()
+
+
 def test_read_state_normalizes_white_temperature_hsv_and_scene_separately():
     device = make_color_device("mesa", "192.0.2.10")
     adapter = FakeAdapter(
