@@ -68,6 +68,8 @@ class ProposalStoreResult:
     status: ProposalStoreStatus
     descriptor: ProposalDescriptor | None = None
     binding: ProposalBinding | None = None
+    expires_at: float | None = None
+    owner: object | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -160,9 +162,9 @@ class ProposalStore:
                 return ProposalStoreStatus.CAPACITY
             return ProposalStoreStatus.ADMISSION_ALLOWED
 
-    def claim(self, token: str) -> ProposalStoreResult:
-        """Atomically consume a live token; later claims cannot replay it."""
-        return self._get(token, consume=True)
+    def claim(self, token: str, *, owner: object | None = None) -> ProposalStoreResult:
+        """Consume a live token only for its owner, atomically and without replay."""
+        return self._get(token, consume=True, owner=owner)
 
     def retract(self, token: str) -> bool:
         """Remove only the exact still-pending token named by a late result."""
@@ -179,7 +181,9 @@ class ProposalStore:
             self._retired_digests[digest] = stored.expires_at
             return True
 
-    def _get(self, token: str, *, consume: bool) -> ProposalStoreResult:
+    def _get(
+        self, token: str, *, consume: bool, owner: object | None = None
+    ) -> ProposalStoreResult:
         raw_token = _decode_token(token)
         if raw_token is None:
             return ProposalStoreResult(ProposalStoreStatus.NOT_FOUND)
@@ -191,6 +195,8 @@ class ProposalStore:
             stored = self._by_digest.get(digest)
             if stored is None:
                 return ProposalStoreResult(ProposalStoreStatus.NOT_FOUND)
+            if consume and stored.owner is not owner:
+                return ProposalStoreResult(ProposalStoreStatus.NOT_FOUND)
             if consume:
                 del self._by_digest[digest]
                 self._digest_by_device.pop(stored.binding.device_id, None)
@@ -198,7 +204,12 @@ class ProposalStore:
                 status = ProposalStoreStatus.CLAIMED
             else:
                 status = ProposalStoreStatus.AVAILABLE
-            return ProposalStoreResult(status, binding=stored.binding)
+            return ProposalStoreResult(
+                status,
+                binding=stored.binding,
+                expires_at=stored.expires_at,
+                owner=stored.owner,
+            )
 
     def invalidate_older(self, device_id: str, revision: int) -> None:
         """Remove proposals made against an earlier monotonic configuration revision."""

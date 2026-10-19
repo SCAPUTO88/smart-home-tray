@@ -16,6 +16,8 @@ class TuyaAdapter:
 
     def __init__(self, config: DeviceConfig, device_factory: DeviceFactory | None = None) -> None:
         self._config = config
+        self._closed = False
+        self._unusable = False
         try:
             factory = device_factory or self._default_device_factory()
             self._device = factory(
@@ -72,8 +74,32 @@ class TuyaAdapter:
             raise BackendError(ErrorCode.DEVICE_OFFLINE, "Device is unreachable") from None
         raise BackendError(ErrorCode.DEVICE_ERROR, "Tuya LAN operation failed") from None
 
+    def _ensure_usable(self) -> None:
+        if self._unusable:
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Device adapter is unavailable")
+
+    def close(self) -> None:
+        """Close owned TinyTuya socket and surface cleanup failures safely.
+
+        TinyTuya 1.20.0's Device.close() suppresses socket errors. Close the
+        owned socket here so the caller can fail closed when cleanup is uncertain.
+        Once cleanup starts, this adapter cannot be used again, even on failure.
+        """
+        if self._closed:
+            return
+        self._unusable = True
+        try:
+            device_socket = getattr(self._device, "socket", None)
+            if device_socket is not None:
+                device_socket.close()
+                setattr(self._device, "socket", None)
+        except Exception:
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Device adapter cleanup failed") from None
+        self._closed = True
+
     def read_status(self) -> dict[str, object]:
         """Return a validated DPS map from the device's LAN status response."""
+        self._ensure_usable()
         try:
             response = self._device.status()
         except (socket.timeout, TimeoutError, OSError) as error:
@@ -100,6 +126,7 @@ class TuyaAdapter:
         TinyTuya may return ``None`` for a null ACK. Callers must read status
         afterward before publishing a confirmed state.
         """
+        self._ensure_usable()
         if isinstance(dps_index, bool) or not isinstance(dps_index, int) or dps_index <= 0:
             raise BackendError(ErrorCode.INVALID_INPUT, "DPS index must be a positive integer")
         if not isinstance(value, (str, int, float, bool)):

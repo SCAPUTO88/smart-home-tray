@@ -25,6 +25,7 @@ class FakeTuyaDevice:
         self.write_result = write_result
         self.status_error = status_error
         self.writes = []
+        self.socket = None
 
     def status(self):
         if self.status_error:
@@ -55,6 +56,47 @@ def test_adapter_constructs_tinytuya_device_with_bounded_connection_settings():
     assert received["connection_retry_limit"] == 1
     assert received["persist"] is False
     assert received["local_key"] == config.local_key
+
+
+def test_adapter_close_is_idempotent_and_closes_owned_socket():
+    class Socket:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    fake = FakeTuyaDevice()
+    owned_socket = Socket()
+    fake.socket = owned_socket
+    adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
+
+    adapter.close()
+    adapter.close()
+
+    assert fake.socket is None
+    assert owned_socket.close_calls == 1
+
+
+def test_adapter_cleanup_failure_is_sanitized_and_prevents_reuse():
+    class BrokenSocket:
+        def close(self):
+            raise OSError("secret socket diagnostic")
+
+    fake = FakeTuyaDevice(status_result={"dps": {"20": True}})
+    fake.socket = BrokenSocket()
+    adapter = TuyaAdapter(make_config(), device_factory=lambda **_: fake)
+
+    with pytest.raises(BackendError) as error:
+        adapter.close()
+
+    assert error.value.code is ErrorCode.DEVICE_ERROR
+    assert "secret socket diagnostic" not in str(error.value)
+    with pytest.raises(BackendError):
+        adapter.read_status()
+    with pytest.raises(BackendError):
+        adapter.write_dps(20, True)
+    assert fake.socket is not None
 
 
 def test_adapter_writes_one_dps_through_tinytuya():

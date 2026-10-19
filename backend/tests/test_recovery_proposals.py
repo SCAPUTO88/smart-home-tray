@@ -168,3 +168,35 @@ def test_concurrent_claim_consumes_token_exactly_once():
 
     assert results.count(ProposalStoreStatus.CLAIMED) == 1
     assert results.count(ProposalStoreStatus.NOT_FOUND) == 1
+
+
+def test_claim_checks_owner_before_consuming_proposal():
+    store = ProposalStore(clock=Clock(), token_bytes=lambda size: b"w" * size)
+    owner = object()
+    descriptor = store.create_validated(binding("lamp-owner"), owner=owner).descriptor
+    assert descriptor is not None
+
+    rejected = store.claim(descriptor.token, owner=object())
+    accepted = store.claim(descriptor.token, owner=owner)
+
+    assert rejected.status is ProposalStoreStatus.NOT_FOUND
+    assert accepted.status is ProposalStoreStatus.CLAIMED
+    assert accepted.binding == binding("lamp-owner")
+
+
+def test_claim_preserves_owner_and_original_expiration():
+    clock = Clock()
+    store = ProposalStore(clock=clock, token_bytes=lambda size: b"v" * size)
+    owner = object()
+    descriptor = store.create_validated(binding("lamp-expiry"), owner=owner).descriptor
+    assert descriptor is not None
+    original_expiry = descriptor.expires_at
+    clock.value += 17
+
+    claimed = store.claim(descriptor.token, owner=owner)
+
+    assert claimed.status is ProposalStoreStatus.CLAIMED
+    assert claimed.expires_at == original_expiry
+    assert claimed.expires_at < clock() + 60
+    assert claimed.owner is owner
+    assert "owner" not in repr(claimed)
