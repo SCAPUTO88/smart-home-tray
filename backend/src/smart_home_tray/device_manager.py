@@ -9,6 +9,7 @@ from typing import Callable
 
 from smart_home_tray.color import decode_tuya_hsv, encode_tuya_hsv
 from smart_home_tray.config import AppConfig
+from smart_home_tray.dps_observation import observe_dps
 from smart_home_tray.models import (
     BackendError,
     ConnectionStatus,
@@ -414,67 +415,39 @@ class DeviceManager:
             raise BackendError(ErrorCode.DEVICE_ERROR, "Device returned an invalid status")
 
         previous = self._states[device_id].state
-        power = previous.power
-        work_mode = previous.work_mode
+        observation = observe_dps(config, dps)
+        power = observation.power if observation.power is not None else previous.power
+        work_mode = observation.work_mode if observation.work_mode is not None else previous.work_mode
         pending_power = self._pending_power.get(device_id)
-        observed: dict[str, object] = {}
-        recognized_value = False
+        observed = {
+            "power": observation.power,
+            "work_mode": observation.work_mode,
+            "white_brightness": observation.white_brightness_percent,
+            "white_temperature": observation.color_temperature_percent,
+            "hsv": observation.hsv,
+            "scene": observation.scene,
+        }
+        observed = {name: value for name, value in observed.items() if name in observation.observed}
+        if observation.power is not None:
+            self._last_read_power[device_id] = observation.power
+            if pending_power is not None and observation.power is pending_power:
+                self._pending_power.pop(device_id, None)
+                pending_power = None
 
-        if config.dps.power is not None and str(config.dps.power) in dps:
-            raw_power = dps[str(config.dps.power)]
-            if isinstance(raw_power, bool):
-                power = raw_power
-                self._last_read_power[device_id] = raw_power
-                observed["power"] = raw_power
-                recognized_value = True
-                if pending_power is not None and raw_power is pending_power:
-                    self._pending_power.pop(device_id, None)
-                    pending_power = None
-
-        if config.dps.work_mode is not None and str(config.dps.work_mode) in dps:
-            raw_mode = dps[str(config.dps.work_mode)]
-            if isinstance(raw_mode, str):
-                work_mode = raw_mode
-                observed["work_mode"] = raw_mode
-                recognized_value = True
-
-        white = previous.white_brightness_percent
-        if config.dps.white_brightness is not None and config.white_brightness_range is not None:
-            value = self._read_numeric_range(dps, config.dps.white_brightness, config.white_brightness_range)
-            if value is not None:
-                white = value
-                observed["white_brightness"] = value
-                recognized_value = True
-
-        temperature = previous.color_temperature_percent
-        if config.dps.white_temperature is not None and config.white_temperature_range is not None:
-            value = self._read_numeric_range(dps, config.dps.white_temperature, config.white_temperature_range)
-            if value is not None:
-                temperature = value
-                observed["white_temperature"] = value
-                recognized_value = True
-
-        color_value = previous.color_value_percent
-        hsv = previous.hsv
-        if config.dps.hsv is not None:
-            raw_hsv = dps.get(str(config.dps.hsv))
-            try:
-                decoded = decode_tuya_hsv(raw_hsv)
-            except (TypeError, ValueError, OverflowError):
-                pass
-            else:
-                hsv = decoded
-                color_value = decoded.value
-                observed["hsv"] = decoded
-                recognized_value = True
-
-        scene = previous.scene
-        if config.dps.scene is not None:
-            raw_scene = dps.get(str(config.dps.scene))
-            if isinstance(raw_scene, str):
-                scene = raw_scene
-                observed["scene"] = raw_scene
-                recognized_value = True
+        white = (
+            observation.white_brightness_percent
+            if observation.white_brightness_percent is not None
+            else previous.white_brightness_percent
+        )
+        temperature = (
+            observation.color_temperature_percent
+            if observation.color_temperature_percent is not None
+            else previous.color_temperature_percent
+        )
+        hsv = observation.hsv if observation.hsv is not None else previous.hsv
+        color_value = hsv.value if observation.hsv is not None else previous.color_value_percent
+        scene = observation.scene if observation.scene is not None else previous.scene
+        recognized_value = bool(observation.observed)
 
         self._last_read_fields[device_id] = observed
         pending_fields = self._pending_fields.get(device_id, {})
@@ -516,18 +489,6 @@ class DeviceManager:
         )
         self._states[device_id] = self._make_status(config, ConnectionStatus.ONLINE, state)
         return self._states[device_id]
-
-    @staticmethod
-    def _read_numeric_range(dps: dict[str, object], index: int, value_range: object) -> float | None:
-        raw = dps.get(str(index))
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            return None
-        try:
-            if not math.isfinite(raw) or not value_range.minimum <= raw <= value_range.maximum:
-                return None
-            return value_range.to_percent(raw)
-        except (TypeError, ValueError, OverflowError):
-            return None
 
     def _has_pending(self, device_id: str) -> bool:
         return device_id in self._pending_power or bool(self._pending_fields.get(device_id))
