@@ -30,6 +30,8 @@ class ValidationStatus(StrEnum):
     CLOSED = "closed"
     CLEANUP_FAILED = "cleanup_failed"
     INTERNAL_ERROR = "internal_error"
+    CONFIG_CHANGED = "config_changed"
+    BUSY = "busy"
 
 
 @dataclass(frozen=True)

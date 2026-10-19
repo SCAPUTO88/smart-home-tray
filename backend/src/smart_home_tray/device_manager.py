@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from dataclasses import replace
+from dataclasses import dataclass
 from typing import Callable
 
 from smart_home_tray.color import decode_tuya_hsv, encode_tuya_hsv
@@ -26,6 +28,42 @@ from smart_home_tray.tuya_adapter import TuyaAdapter
 
 AdapterFactory = Callable[[DeviceConfig], TuyaAdapter]
 _OFFLINE_ERRORS = {ErrorCode.TIMEOUT, ErrorCode.DEVICE_OFFLINE, ErrorCode.AUTH_FAILED}
+
+
+@dataclass(frozen=True)
+class _PrivateRecoverySnapshot:
+    device_id: str
+    revision: int
+
+
+class _PrivateDeviceLease:
+    """Owns the device lock and private config for one validation turn."""
+
+    def __init__(self, manager: "DeviceManager", device_id: str, revision: int, deadline: float) -> None:
+        self._manager = manager
+        self.device_id = device_id
+        self.revision = revision
+        self.deadline = deadline
+        self.config: DeviceConfig | None = None
+        self._acquired = False
+
+    def __enter__(self) -> "_PrivateDeviceLease":
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0 or not self._manager._locks[self.device_id].acquire(timeout=remaining):
+            return self
+        self._acquired = True
+        if self._manager._config_revisions[self.device_id] == self.revision:
+            self.config = self._manager._configs[self.device_id]
+        return self
+
+    @property
+    def valid(self) -> bool:
+        return self._acquired and self.config is not None and time.monotonic() < self.deadline
+
+    def __exit__(self, *_: object) -> None:
+        if self._acquired:
+            self._manager._locks[self.device_id].release()
+            self._acquired = False
 
 
 class DeviceManager:
@@ -55,6 +93,7 @@ class DeviceManager:
         self._quality_before_pending: dict[str, DeviceStateQuality] = {}
         self._last_read_fields: dict[str, dict[str, object]] = {}
         self._locks: dict[str, threading.Lock] = {}
+        self._config_revisions: dict[str, int] = {}
         self._adapter_factory = adapter_factory
         self._polling_interval_seconds = float(polling_interval_seconds)
         self._poll_stop = threading.Event()
@@ -67,6 +106,7 @@ class DeviceManager:
             self._configs[device.device_id] = device
             self._adapters[device.device_id] = None
             self._locks[device.device_id] = threading.Lock()
+            self._config_revisions[device.device_id] = 0
             self._states[device.device_id] = self._make_status(
                 device, ConnectionStatus.UNKNOWN, LightState()
             )
@@ -188,6 +228,7 @@ class DeviceManager:
                 raise BackendError(ErrorCode.INVALID_INPUT, "Device address is invalid") from None
 
             self._configs[device_id] = updated_config
+            self._config_revisions[device_id] += 1
             self._adapters[device_id] = None
             current = self._states[device_id]
             quality = (
@@ -201,6 +242,38 @@ class DeviceManager:
                 replace(current.state, quality=quality, knowledge=DeviceKnowledge()),
             )
             return self._states[device_id]
+
+    def _recovery_snapshot(self, device_id: str, *, deadline: float) -> _PrivateRecoverySnapshot | None:
+        device_id = self._validate_device_id(device_id)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self._locks[device_id].acquire(timeout=remaining):
+            return None
+        try:
+            if time.monotonic() >= deadline:
+                return None
+            return _PrivateRecoverySnapshot(device_id, self._config_revisions[device_id])
+        finally:
+            self._locks[device_id].release()
+
+    def _recovery_lease(self, device_id: str, revision: int, *, deadline: float) -> _PrivateDeviceLease:
+        self._validate_device_id(device_id)
+        return _PrivateDeviceLease(self, device_id, revision, deadline)
+
+    def _validate_recovery_candidate(self, device_id: str, revision: int, candidate: object, *, deadline: float):
+        from smart_home_tray.recovery_validation import CandidateValidator, ValidationResult, ValidationStatus
+
+        with self._recovery_lease(device_id, revision, deadline=deadline) as lease:
+            if not lease._acquired or time.monotonic() >= deadline:
+                return ValidationResult(ValidationStatus.TIMEOUT)
+            if lease.config is None:
+                return ValidationResult(ValidationStatus.CONFIG_CHANGED)
+            try:
+                result = CandidateValidator().validate(lease.config, candidate, deadline=deadline)
+                if time.monotonic() >= deadline:
+                    return ValidationResult(ValidationStatus.TIMEOUT)
+                return result
+            except Exception:
+                return ValidationResult(ValidationStatus.INTERNAL_ERROR)
 
     def set_white_brightness(self, device_id: str, percent: object) -> DeviceStatus:
         return self._set_ranged_control(device_id, "white_brightness", percent, "white")

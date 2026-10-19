@@ -357,3 +357,22 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Regressões:** provider injetado sintético com 65 registros e provider padrão com `psutil` sintético excedente; ambos verificam rejeição sem acesso à rede/socket. A autenticação e o contrato de leitura permanecem iguais.
 - **Verificação CR-35.1:** Python 3.14.3; `rtk py -m pytest backend/tests/test_tuya35_readonly.py -q` — 43 passed; `rtk py -m pytest backend/tests -q` — 317 passed; `rtk py -m compileall -q backend/src backend/tests` e `rtk git diff --check` passaram. Testes usam provider/`psutil` sintéticos e socket fake; sem LAN REAL, hardware, cloud ou credenciais.
 - **Resumo para revisão arquitetural:** enumeradores agora têm teto explícito e rejeição integral em excesso; deadline protege a abertura de socket, com a ressalva de que chamada nativa bloqueante não é interrompível.
+
+## F2E.D.2.B.1 — coordenação e concorrência (2026-10-19)
+
+- **Base:** branch `feature/f2e-d2b-coordination` em `8b2c6ef`, merge da PR #35 sobre `origin/develop`. A PR #35 permanece fora deste checkpoint funcional.
+- **Commit local:** `cf685f9` (`feat: coordinate recovery validation safely`); sem push ou merge.
+- **Implementado:** revisão privada de configuração por Device ID, incremento em cada `update_address()` bem-sucedido (inclusive mesmo IP), snapshot privado redigido e lease com deadline. A validação sob lease usa configuração atual e `CandidateValidator` sem modificar status, adapter ativo, pending, knowledge ou caches de leitura.
+- **Scheduler/coordenação:** novo item interno `VALIDATE_RECOVERY` discreto, imediato e não coalescível; Condition não cobre lease/I/O. Recuperação usa a mesma trava global de D.1 sem chamá-la recursivamente e mantém o slot até conclusão real da Future. Shutdown cancela fila, mas operação ativa continua dona do worker/lease até terminar; `stop()` sinaliza timeout por `False`.
+- **Fora de escopo:** ProposalStore, token, TTL, confirmação pública, JSONL/UI, adoção e mudança de endereço por recovery não foram criados. Não houve rede, cloud ou dispositivo físico.
+- **Cobertura nova:** revisão same-IP e A→B→A, rejeição de revisão antiga antes do validator, invariância do estado do manager, request de validação não coalescido, progresso de outro Device ID e shutdown durante I/O fake.
+- **Verificação:** focados (`test_device_manager`, `test_command_scheduler`, `test_recovery`, `test_recovery_validation`) — 105 passed; suíte backend — 327 passed; `compileall` e `git diff --check` passaram. Testes novos usam fakes, Event/barriers e nenhum hardware/rede.
+- **Resumo para revisão arquitetural:** B.1 introduz revisão/lease por ID, barreira tipada e coordenação na trava global existente. Revisar o lifecycle `close()` (retorno `False` enquanto I/O drena) e a limitação de cancelamento do transporte síncrono antes de B.2; B.1 não adiciona proposta nem superfície pública.
+
+### Correções CR-37.1 e CR-37.2 — PR #37
+
+- **CR-37.1:** descoberta repete a checagem de lifecycle depois de adquirir o slot global. A admissão é linearizada sob o mutex curto; ele é liberado antes do provider/I/O. Regressão determinística pausa a aquisição do slot, deixa `close()` concluir e confirma que o provider não é chamado.
+- **CR-37.2:** o coordenador espera Futures em intervalos limitados pelo deadline. Se a validação ainda está pendente, `cancel()` impede que ela comece e o resultado é `TIMEOUT`. Se já iniciou, cancelamento falha e o coordenador drena a operação real antes de soltar slot; conclusão após deadline resulta em `TIMEOUT`. Cancelamento pelo shutdown resulta em `CLOSED`. O fechamento do serviço também cancela trabalho pendente e aguarda o trabalho iniciado.
+- **Interleavings:** regressões cobrem timeout na FIFO, validação iniciada com retenção do slot, shutdown concorrente e progresso do outro Device ID.
+- **Verificação:** focados — 109 passed; backend — 331 passed (327 anteriores + 4 regressões novas); `compileall` e `git diff --check` passaram. Sem LAN REAL, hardware ou cloud.
+- **Resumo para revisão:** o lifecycle pós-admissão impede descoberta após fechamento concluído; o timeout não abandona I/O nem libera o slot cedo. Compatibilidade FIFO e locks não reentrantes preservados.
