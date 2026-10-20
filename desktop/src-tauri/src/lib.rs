@@ -170,6 +170,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bridge::bridge_info,
             bridge::bridge_list,
+            bridge::bridge_recovery_prepare,
+            bridge::bridge_recovery_confirm,
             bridge::bridge_status,
             bridge::bridge_power,
             bridge::bridge_white_brightness,
