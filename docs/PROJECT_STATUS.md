@@ -447,4 +447,6 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificações:** Rust `cargo fmt --check` e `cargo test` — **28 passed**; Python focados (`test_fixture.py`, `test_protocol.py`) — **53 passed**; suíte backend — **398 passed**; `python -m compileall -q backend/src backend/tests` passou. Nenhum teste acessou dispositivo real.
 - **Limites:** sem React/UX, `ManualRecoveryController`, polling, recuperação automática, escrita TOML/DPS, adoção 3.3 ou homologação física/REAL. A FIXTURE é simulação determinística, não evidência de compatibilidade física.
 - **Riscos para D.4.B:** adaptar DTOs Tauri à capability `ManualRecoveryController`; expor elegibilidade somente via catálogo público dedicado; representar timeout de confirm como `indeterminate`; reconciliar readback por Device ID sem sobrescrever comandos/refreshes mais novos.
-- **Estado:** implementação pronta para publicação na PR de D.4.A; sem merge. Parar para code review após publicação.
+- **PR/estado:** [PR #46](https://github.com/SCAPUTO88/smart-home-tray/pull/46), direcionada a `develop`, publicada sem merge; branch `feature/f2e-d4a-tauri-fixture`. Commits de implementação `a07a883` e cobertura corretiva `6604c62`; checkpoint desta publicação segue nesta branch.
+- **Review interno:** nenhuma issue crítica/importante; cobertura de prepare `TIMEOUT` foi adicionada após apontamento menor e passou novamente.
+- **Checkpoint:** entrega publicada e parada para code review humano. Não iniciar D.4.B sem revisão.
