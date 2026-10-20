@@ -416,3 +416,9 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificação:** focados (`test_protocol.py`, `test_cli.py`, `test_recovery.py`, `test_recovery_prepare.py`, `test_recovery_confirm.py`) — **109 passed**; suíte backend — **391 passed**; `python -m compileall -q src tests` e `git diff --check` concluídos sem erros. Somente fakes/streams em memória; sem LAN, cloud ou hardware.
 - **Escopo preservado:** sem Tauri/React, recuperação automática, TOML, escrita DPS ou acesso a hardware.
 - **Resumo para revisão arquitetural:** a composição D.3.A agora está exposta somente por dois comandos JSONL fixos. Confirmar sobretudo os nomes/campos dos status públicos e o encerramento do serviço antes da integração Tauri.
+
+### CR-43.1 — integração end-to-end prepare/confirm/replay
+
+- Adicionado teste numa única sessão JSONL usando `RecoveryService`, `ProposalStore`, `DeviceManager` e `CommandScheduler` reais, com provider, validator e adapter fake. O teste lê o token da resposta prepare, espera cada resposta terminal antes do próximo comando, confirma adoção em memória, valida replay bloqueado e `ADOPTED` com readback `FAILED`.
+- `JsonLinesServer` aceita clock monotônico injetável e o serializer de prepare usa esse mesmo clock para calcular TTL. O teste fixa o clock em valor não relacionado ao relógio real e verifica TTL restante de 60 segundos.
+- A saída da regressão verifica os três requestIds, exatamente três respostas e um único thread escritor. EOF só ocorre após a resposta do replay.

@@ -802,3 +802,118 @@ def test_serve_builds_recovery_catalog_and_provider_without_starting_discovery(m
     JsonLinesServer(FakeManager(), FakeScheduler())
     assert isinstance(created["catalog"], recovery.DeviceManagerRecoveryCatalog)
     assert created["provider"] is created["injected_provider"]
+
+
+def test_jsonl_prepare_confirm_replay_adopts_once_and_reports_failed_readback(monkeypatch):
+    import base64
+    import threading
+
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.config import AppConfig
+    from smart_home_tray.device_manager import DeviceManager
+    from smart_home_tray.discovery import DiscoveryAnnouncement
+    from smart_home_tray.models import BackendError, DeviceConfig, DPSMap, ErrorCode
+    from smart_home_tray.recovery import DeviceManagerRecoveryCatalog, RecoveryService
+    from smart_home_tray.recovery_proposals import ProposalStore
+    from smart_home_tray.recovery_validation import CandidateValidator, ValidationResult, ValidationStatus
+
+    class Clock:
+        now = 500.0
+
+        def __call__(self):
+            return self.now
+
+    class Provider:
+        def discover(self, expected_device_id, *, timeout_seconds):
+            assert expected_device_id == "lamp-a"
+            return (DiscoveryAnnouncement(expected_device_id, "192.168.1.99", "3.5"),)
+
+    class FailedReadbackAdapter:
+        def read_status(self):
+            raise BackendError(ErrorCode.DEVICE_OFFLINE, "private adapter details")
+
+        def close(self):
+            pass
+
+        def write_dps(self, *_args):
+            raise AssertionError("recovery/readback must not write DPS")
+
+    clock = Clock()
+    token = base64.urlsafe_b64encode(b"\x01" * 32).rstrip(b"=").decode("ascii")
+    store = ProposalStore(clock=clock, token_bytes=lambda size: b"\x01" * size)
+    device = DeviceConfig("lamp-a", "Synthetic lamp", "192.168.1.10", 3.5, "synthetic-local-key", DPSMap(power=20))
+    manager = DeviceManager(
+        AppConfig((device,)),
+        adapter_factory=lambda _config: FailedReadbackAdapter(),
+        proposal_store=store,
+        recovery_clock=clock,
+    )
+    recovery = RecoveryService(
+        catalog=DeviceManagerRecoveryCatalog(manager), provider=Provider(), clock=clock
+    )
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0, clock=clock)
+
+    monkeypatch.setattr(
+        CandidateValidator,
+        "validate",
+        lambda _self, *_args, **_kwargs: ValidationResult(ValidationStatus.KEY_AUTHENTICATED_READ),
+    )
+
+    prepare_done = threading.Event()
+    confirm_done = threading.Event()
+    replay_done = threading.Event()
+
+    class StagedInput:
+        lines = iter((
+            b'{"requestId":"prep-1","command":"recovery.prepare","payload":{"deviceId":"lamp-a"}}\n',
+            (json.dumps({"requestId": "confirm-1", "command": "recovery.confirm", "payload": {"proposalId": token}}) + "\n").encode(),
+            (json.dumps({"requestId": "replay-1", "command": "recovery.confirm", "payload": {"proposalId": token}}) + "\n").encode(),
+            b"",
+        ))
+
+        def readline(self, size=-1):
+            index = getattr(self, "index", 0)
+            if index == 1:
+                assert prepare_done.wait(timeout=2)
+            elif index == 2:
+                assert confirm_done.wait(timeout=2)
+            elif index == 3:
+                assert replay_done.wait(timeout=2)
+            self.index = index + 1
+            return next(self.lines)
+
+    class SignalingOutput(io.BytesIO):
+        writer_threads = set()
+
+        def write(self, value):
+            self.writer_threads.add(threading.get_ident())
+            result = super().write(value)
+            response = json.loads(value)
+            if response.get("requestId") == "prep-1":
+                prepare_done.set()
+            elif response.get("requestId") == "confirm-1":
+                confirm_done.set()
+            elif response.get("requestId") == "replay-1":
+                replay_done.set()
+            return result
+
+    output = SignalingOutput()
+    JsonLinesServer(manager, scheduler, recovery_service=recovery, monotonic=clock).run(
+        StagedInput(), output, io.StringIO()
+    )
+
+    response_lines = output.getvalue().splitlines()
+    assert len(response_lines) == 3
+    assert len(output.writer_threads) == 1
+    responses = {item["requestId"]: item for item in map(json.loads, response_lines)}
+    assert set(responses) == {"prep-1", "confirm-1", "replay-1"}
+    assert responses["prep-1"]["result"]["status"] == "PROPOSAL_READY"
+    assert responses["prep-1"]["result"]["proposalId"] == token
+    assert responses["prep-1"]["result"]["ttlSeconds"] == 60.0
+    assert responses["prep-1"]["result"]["candidateIp"] == "192.168.1.99"
+    assert responses["confirm-1"]["result"] == {
+        "recovery": {"status": "ADOPTED"}, "readback": {"status": "FAILED"}
+    }
+    assert responses["replay-1"]["result"] == {"recovery": {"status": "PROPOSAL_EXPIRED"}}
+    assert manager._configs["lamp-a"].address == "192.168.1.99"
+    assert manager._config_revisions["lamp-a"] == 1

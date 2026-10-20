@@ -56,9 +56,19 @@ class _DiscardingStdout:
 class JsonLinesServer:
     """Read requests continuously and publish terminal responses on one writer."""
 
-    def __init__(self, device_manager: object, command_scheduler: object, recovery_service: object | None = None) -> None:
+    def __init__(
+        self,
+        device_manager: object,
+        command_scheduler: object,
+        recovery_service: object | None = None,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not callable(monotonic):
+            raise TypeError("monotonic clock must be callable")
         self._manager = device_manager
         self._scheduler = command_scheduler
+        self._monotonic = monotonic
         if recovery_service is None:
             from smart_home_tray.lan_discovery import TinyTuyaLanDiscoveryProvider
             from smart_home_tray.recovery import DeviceManagerRecoveryCatalog, RecoveryService
@@ -226,7 +236,11 @@ class JsonLinesServer:
                 raise BackendError(ErrorCode.INVALID_INPUT, "deviceId is invalid")
             self._ensure_scheduler_started()
             future = executor.submit(self._recovery.prepare_internal, device_id, self._scheduler)
-            self._attach_future(request_id, future, self._public_preparation)
+            self._attach_future(
+                request_id,
+                future,
+                lambda outcome: self._public_preparation(outcome, monotonic=self._monotonic),
+            )
             return
 
         if command == "recovery.confirm":
@@ -305,7 +319,9 @@ class JsonLinesServer:
         return {"devices": [cls._public_status(status) for status in statuses]}
 
     @staticmethod
-    def _public_preparation(outcome: object) -> dict[str, object]:
+    def _public_preparation(
+        outcome: object, *, monotonic: Callable[[], float] = time.monotonic
+    ) -> dict[str, object]:
         from smart_home_tray.recovery import PreparationStatus
 
         if not hasattr(outcome, "status"):
@@ -318,7 +334,7 @@ class JsonLinesServer:
                 "status": "PROPOSAL_READY",
                 "proposalId": proposal.token,
                 "candidateIp": str(proposal.candidate_address),
-                "ttlSeconds": round(max(0.0, proposal.expires_at - time.monotonic()), 3),
+                "ttlSeconds": round(max(0.0, proposal.expires_at - monotonic()), 3),
             }
         if status is PreparationStatus.VALIDATION_FAILED:
             public = {
