@@ -202,3 +202,22 @@ Prepare e confirm são submetidos ao executor limitado fora das threads de leitu
 Falhas internas são convertidas a status públicos estáveis (`NOT_FOUND`, `AMBIGUOUS`, `TIMEOUT`, `TRANSPORT_FAILED`, `AUTH_FAILED`, `VALIDATION_FAILED`, `PROTOCOL_NOT_ELIGIBLE`, `PROPOSAL_EXPIRED`, `CONFIG_CHANGED`, `BUSY`, `ADOPTED` e demais terminais definidos pelo protocolo). Mensagens de exceção, traceback, dados TinyTuya e detalhes privados não entram em stdout, respostas ou diagnósticos. No EOF, a instância fecha e invalida suas propostas, cancela estágios ainda pendentes conforme os contratos internos e drena operações já iniciadas e respostas aceitas antes de parar o writer.
 
 Os testes da integração usam recovery services/providers fakes; testes internos cobrem token expirado/replay/owner, ambiguidade, falha de autenticação, shutdown e adoção com readback falho. Nenhum teste usa LAN ou hardware real. D.3.B não adiciona Tauri/React, recuperação automática, TOML, escrita DPS ou acesso a hardware.
+
+## Bridge Rust/Tauri de recuperação — D.4.A
+
+O bridge registra somente os handlers tipados `bridge_recovery_prepare(deviceId)` e `bridge_recovery_confirm(proposalId)`. Eles chamam, respectivamente, `recovery.prepare` com `{deviceId}` e `recovery.confirm` com `{proposalId}` pelo `BridgeClient` existente. A WebView não escolhe endereço, Local Key, DPS, parâmetros de conexão, nome de comando ou JSONL; o bridge não cria subprocesso adicional e mantém os gates MOCK/FIXTURE/REAL.
+
+Prepare usa enum de status allowlisted; `PROPOSAL_READY` exige token Base64URL de 43 caracteres, candidato IPv4 e TTL finito `>= 0`. Confirm usa `recovery.status` independente de `readback`: somente `ADOPTED` inclui objeto irmão de readback (`SUCCEEDED`, `FAILED` ou `SUPERSEDED`), e `SUCCEEDED` pode defensivamente não carregar `device`. Falhas de domínio não carregam readback. DTOs rejeitam campos desconhecidos e o `DeviceStatus` aninhado também é estrito.
+
+O timeout de 30 segundos do bridge encerra a espera correlacionada e não cancela uma operação já enviada ao backend; após timeout de confirm o backend ainda pode adotar. Não há retry automático. FIXTURE expõe perfis fixos de recovery 3.5/3.3 e endereços TEST-NET reservados para documentação, sem rede, TinyTuya ou hardware. A admissão de prepare/confirm usa um slot global não enfileirável; propostas aguardando confirmação não ocupam esse slot. O store em memória permite no máximo uma proposta pendente por Device ID e quatro por processo, com TTL monotônico original de 60 segundos. Expiração e claim de confirmação liberam capacidade; BUSY antes da admissão não consome o token. Relógio e slot ativo são injetáveis nos testes.
+
+| Perfil FIXTURE | Resultado determinístico |
+|---|---|
+| `fixture-tuya35`, `fixture-tuya35-alt` | Elegível, candidato válido, adoção e readback sucedido; propostas isoladas por dispositivo. |
+| `fixture-tuya33` | `PROTOCOL_NOT_ELIGIBLE`. |
+| `fixture-recovery-ambiguous`, `fixture-recovery-not-found`, `fixture-recovery-auth-failed`, `fixture-recovery-transport-failed`, `fixture-recovery-busy`, `fixture-recovery-config-changed`, `fixture-recovery-timeout` | Status de recusa/falha de prepare correspondente. |
+| `fixture-recovery-readback-failed`, `fixture-recovery-readback-superseded` | Adoção com readback `FAILED` ou `SUPERSEDED`. |
+| `fixture-recovery-confirm-auth-failed`, `fixture-recovery-confirm-transport-failed`, `fixture-recovery-confirm-config-changed`, `fixture-recovery-confirm-timeout` | Falha terminal de confirmação sem readback; o token é consumido após a admissão, conforme o backend. |
+| `fixture-recovery-capacity` | Perfil elegível adicional para testar a capacidade global de propostas. |
+
+Tokens desconhecidos, expirados ou já consumidos retornam `PROPOSAL_EXPIRED`. BUSY de admissão global no confirm é retornado antes do acesso/claim do token, que continua disponível. O teste Rust de correlação usa processo falso que responde em ordem inversa; não depende de atraso artificial da FIXTURE. A fixture invalida seu estado ao encerrar o processo.
