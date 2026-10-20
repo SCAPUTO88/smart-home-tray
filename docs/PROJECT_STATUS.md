@@ -394,3 +394,15 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Regressões:** clock fake para expiração entre publicação e coleta; teste de retração sem apagar token mais novo; duas instâncias concorrentes com validação bloqueada por Events; expiração de owner e manutenção de propostas de outra instância.
 - **Verificação:** testes focados `test_recovery_proposals.py` e `test_recovery_prepare.py` — 25 passed; suíte backend — 356 passed; compileall e diff-check aprovados.
 - **Resumo para revisão arquitetural:** fechamento é por instância, pois não há lifecycle global da aplicação neste store; a coleta tardia é compensada por remoção exata e idempotente. Nenhuma adoção ou confirmação pública foi adicionada.
+
+## F2E.D.3.A — confirmação interna e adoção atômica (2026-10-19)
+
+- **Base/worktree:** `feature/f2e-d3a-adoption`, criada em worktree dedicado a partir de `origin/develop` no merge `abab02c` da PR #39. Implementação permanece local e sem commit/push/merge para revisão.
+- **Contrato:** `confirm_internal()` aceita apenas token. O claim verifica owner sob mutex antes de consumir e carrega `expires_at` original. A admissão revalida lifecycle após o slot global; `CONFIRM_RECOVERY` é uma barreira FIFO tipada, discreta e sem coalescing.
+- **Adoção:** uma lease compara revisão/endereço/protocolo/TTL/deadline/shutdown, executa segunda validação read-only 3.5, fecha adapter pelo `TuyaAdapter.close()` e faz commit sob lock ID → lifecycle. O helper incrementa revisão uma vez e preserva identidade/configuração privada/capacidades/pending; `update_address()` lineariza pelo mesmo lock.
+- **Readback:** a lease é liberada antes do readback normal, que readquire o lock e confere a revisão do commit antes de I/O. Readback `SUCCEEDED`, `FAILED` ou `SUPERSEDED` permanece separado de `ADOPTED`; após commit, deadline/shutdown/falha não revertem adoção.
+- **Cleanup:** TinyTuya 1.20.0 recebe `persist=False`; o adapter encapsula o socket exposto, torna falha sanitizada e inutiliza instância em cleanup parcial. Não há garantia de prazo rígido contra travamento nativo/kernel nem promessa de rollback físico; cleanup incerto aborta commit.
+- **Regressões:** ownership/replay concorrente, validade original de TTL, expiração em fila e durante validação, deadline pendente/iniciado, lifecycle após slot, A→B→A, shutdown antes/depois do commit, alteração entre commit/readback, falha de auth/cleanup/readback, FIFO e progresso independente, invalidação de knowledge e preservação de pending.
+- **Verificação:** suite focada — 148 passed; backend — 379 passed; `rtk py -m compileall -q backend/src backend/tests` passou; `rtk git diff --check` passou (aviso Git LF→CRLF no documento novo).
+- **Escopo:** sem JSONL/IPC/Tauri/UI, TOML, escrita DPS, cloud, LAN real ou hardware. D-018/D-019 preservados.
+- **Resumo para code review:** revisar atomicidade do claim/commit, cleanup observável e readback condicionado à revisão. Sem commit funcional até aprovação do review.

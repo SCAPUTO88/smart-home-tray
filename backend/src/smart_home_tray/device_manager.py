@@ -231,30 +231,31 @@ class DeviceManager:
         if not isinstance(address, str):
             raise BackendError(ErrorCode.INVALID_INPUT, "Device address must be a string")
         with self._locks[device_id]:
-            current_config = self._configs[device_id]
-            try:
-                updated_config = replace(current_config, address=address)
-            except (TypeError, ValueError):
-                raise BackendError(ErrorCode.INVALID_INPUT, "Device address is invalid") from None
+            return self._replace_address_unlocked(device_id, address)
 
-            self._configs[device_id] = updated_config
-            self._config_revisions[device_id] += 1
-            self._proposal_store.invalidate_older(
-                device_id, self._config_revisions[device_id]
-            )
-            self._adapters[device_id] = None
-            current = self._states[device_id]
-            quality = (
-                DeviceStateQuality.PENDING
-                if self._has_pending(device_id)
-                else DeviceStateQuality.UNKNOWN
-            )
-            self._states[device_id] = self._make_status(
-                updated_config,
-                ConnectionStatus.UNKNOWN,
-                replace(current.state, quality=quality, knowledge=DeviceKnowledge()),
-            )
-            return self._states[device_id]
+    def _replace_address_unlocked(self, device_id: str, address: str) -> DeviceStatus:
+        """Replace address while the caller owns this device's non-reentrant lock."""
+        current_config = self._configs[device_id]
+        try:
+            updated_config = replace(current_config, address=address)
+        except (TypeError, ValueError):
+            raise BackendError(ErrorCode.INVALID_INPUT, "Device address is invalid") from None
+        new_revision = self._config_revisions[device_id] + 1
+        current = self._states[device_id]
+        quality = DeviceStateQuality.PENDING if self._has_pending(device_id) else DeviceStateQuality.UNKNOWN
+        updated_status = self._make_status(
+            updated_config,
+            ConnectionStatus.UNKNOWN,
+            replace(current.state, quality=quality, knowledge=DeviceKnowledge()),
+        )
+        self._proposal_store.invalidate_older(device_id, new_revision)
+        # This assignment is the address commit point. All values and store
+        # invalidation are prepared first; the remaining dict writes cannot fail.
+        self._configs[device_id] = updated_config
+        self._config_revisions[device_id] = new_revision
+        self._adapters[device_id] = None
+        self._states[device_id] = updated_status
+        return self._states[device_id]
 
     def _recovery_snapshot(self, device_id: str, *, deadline: float) -> _PrivateRecoverySnapshot | None:
         device_id = self._validate_device_id(device_id)
@@ -354,6 +355,174 @@ class DeviceManager:
                 return ValidationPublicationResult(
                     ValidationResult(ValidationStatus.INTERNAL_ERROR)
                 )
+
+    def _confirm_recovery_candidate(
+        self,
+        device_id: str,
+        binding: ProposalBinding,
+        expires_at: float,
+        owner: object,
+        *,
+        deadline: float,
+        cancellation: threading.Event,
+        lifecycle_lock: object,
+    ):
+        """Revalidate and commit one claimed proposal, then read back separately."""
+        from smart_home_tray.recovery import (
+            ConfirmationResult,
+            ConfirmationStatus,
+            ReadbackStatus,
+            RecoveryCandidate,
+        )
+        from smart_home_tray.recovery_validation import CandidateValidator, ValidationStatus
+
+        if not isinstance(binding, ProposalBinding):
+            return ConfirmationResult(ConfirmationStatus.INVALID_REQUEST)
+        if binding.device_id != device_id:
+            return ConfirmationResult(ConfirmationStatus.CONFIG_CHANGED)
+        try:
+            self._validate_device_id(device_id)
+        except BackendError:
+            return ConfirmationResult(ConfirmationStatus.INVALID_REQUEST)
+
+        if cancellation.is_set():
+            return ConfirmationResult(ConfirmationStatus.CLOSED)
+        if self._recovery_clock() >= deadline:
+            return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+        if self._recovery_clock() >= expires_at:
+            return ConfirmationResult(ConfirmationStatus.PROPOSAL_EXPIRED)
+
+        lease = self._recovery_lease(device_id, binding.revision, deadline=deadline)
+        with lease:
+            if not lease._acquired:
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            if self._recovery_clock() >= deadline:
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            if lease.config is None:
+                return ConfirmationResult(ConfirmationStatus.CONFIG_CHANGED)
+            config = lease.config
+            if config.address != binding.original_address:
+                return ConfirmationResult(ConfirmationStatus.CONFIG_CHANGED)
+            if config.protocol_version != binding.protocol_version or config.protocol_version != 3.5:
+                return ConfirmationResult(ConfirmationStatus.PROTOCOL_NOT_ELIGIBLE)
+            if config.device_id != device_id:
+                return ConfirmationResult(ConfirmationStatus.CONFIG_CHANGED)
+            if self._recovery_clock() >= expires_at:
+                return ConfirmationResult(ConfirmationStatus.PROPOSAL_EXPIRED)
+            if cancellation.is_set():
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+
+            candidate = RecoveryCandidate(
+                device_id, binding.candidate_address, ("3.5",)
+            )
+            try:
+                validation = CandidateValidator().validate(config, candidate, deadline=deadline)
+            except Exception:
+                return ConfirmationResult(ConfirmationStatus.VALIDATION_FAILED)
+            if validation.status is not ValidationStatus.KEY_AUTHENTICATED_READ:
+                mapped = {
+                    ValidationStatus.TIMEOUT: ConfirmationStatus.TIMEOUT,
+                    ValidationStatus.CLOSED: ConfirmationStatus.CLOSED,
+                    ValidationStatus.CONFIG_CHANGED: ConfirmationStatus.CONFIG_CHANGED,
+                    ValidationStatus.PROTOCOL_NOT_ELIGIBLE: ConfirmationStatus.PROTOCOL_NOT_ELIGIBLE,
+                    ValidationStatus.AUTH_FAILED: ConfirmationStatus.AUTH_FAILED,
+                    ValidationStatus.CLEANUP_FAILED: ConfirmationStatus.CLEANUP_FAILED,
+                }.get(validation.status, ConfirmationStatus.VALIDATION_FAILED)
+                return ConfirmationResult(mapped, validation_status=validation.status.value)
+
+            if self._recovery_clock() >= deadline:
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            if self._recovery_clock() >= expires_at:
+                return ConfirmationResult(ConfirmationStatus.PROPOSAL_EXPIRED)
+            if cancellation.is_set():
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+
+            active_adapter = self._adapters[device_id]
+            if active_adapter is not None:
+                close = getattr(active_adapter, "close", None)
+                if not callable(close):
+                    return ConfirmationResult(ConfirmationStatus.CLEANUP_FAILED)
+                try:
+                    close()
+                except Exception:
+                    return ConfirmationResult(ConfirmationStatus.CLEANUP_FAILED)
+                self._adapters[device_id] = None
+
+            # Device ID lock is still held. This short lock gives close() a
+            # linearization point without holding the scheduler mutex or I/O.
+            try:
+                with lifecycle_lock:
+                    if cancellation.is_set():
+                        return ConfirmationResult(ConfirmationStatus.CLOSED)
+                    if self._recovery_clock() >= deadline:
+                        return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+                    if self._recovery_clock() >= expires_at:
+                        return ConfirmationResult(ConfirmationStatus.PROPOSAL_EXPIRED)
+                    if self._config_revisions[device_id] != binding.revision:
+                        return ConfirmationResult(ConfirmationStatus.CONFIG_CHANGED)
+                    current_config = self._configs[device_id]
+                    if current_config.address != binding.original_address:
+                        return ConfirmationResult(ConfirmationStatus.CONFIG_CHANGED)
+                    if (
+                        current_config.protocol_version != binding.protocol_version
+                        or current_config.protocol_version != 3.5
+                    ):
+                        return ConfirmationResult(ConfirmationStatus.PROTOCOL_NOT_ELIGIBLE)
+                    if self._recovery_clock() >= deadline:
+                        return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+                    if self._recovery_clock() >= expires_at:
+                        return ConfirmationResult(ConfirmationStatus.PROPOSAL_EXPIRED)
+                    if cancellation.is_set():
+                        return ConfirmationResult(ConfirmationStatus.CLOSED)
+                    self._replace_address_unlocked(
+                        device_id, str(binding.candidate_address)
+                    )
+                    committed_revision = self._config_revisions[device_id]
+            except Exception:
+                return ConfirmationResult(ConfirmationStatus.INTERNAL_ERROR)
+
+        # The lease is released before this normal, revision-guarded readback.
+        try:
+            status = self._read_state_for_recovery_revision(device_id, committed_revision)
+        except BackendError as error:
+            return ConfirmationResult(
+                ConfirmationStatus.ADOPTED,
+                readback_status=ReadbackStatus.FAILED,
+                readback_error=error.code,
+            )
+        except Exception:
+            return ConfirmationResult(
+                ConfirmationStatus.ADOPTED,
+                readback_status=ReadbackStatus.FAILED,
+                readback_error=ErrorCode.DEVICE_ERROR,
+            )
+        if status is None:
+            return ConfirmationResult(
+                ConfirmationStatus.ADOPTED,
+                readback_status=ReadbackStatus.SUPERSEDED,
+            )
+        return ConfirmationResult(
+            ConfirmationStatus.ADOPTED,
+            readback_status=ReadbackStatus.SUCCEEDED,
+            readback=status,
+        )
+
+    def _read_state_for_recovery_revision(
+        self, device_id: str, expected_revision: int
+    ) -> DeviceStatus | None:
+        """Read normally only if no later address replacement won the lock."""
+        with self._locks[device_id]:
+            if self._config_revisions[device_id] != expected_revision:
+                return None
+            try:
+                return self._read_state_unlocked(device_id)
+            except BackendError as error:
+                self._record_failure(device_id, error, read_failure=True)
+                raise
+            except Exception:
+                error = BackendError(ErrorCode.DEVICE_ERROR, "Device status could not be read")
+                self._record_failure(device_id, error, read_failure=True)
+                raise error from None
 
     def set_white_brightness(self, device_id: str, percent: object) -> DeviceStatus:
         return self._set_ranged_control(device_id, "white_brightness", percent, "white")
