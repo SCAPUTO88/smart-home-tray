@@ -1,6 +1,8 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import type { DeviceController } from './types'
-import { createMockDeviceController } from '../../mock/MockDeviceController'
+import { createMockDeviceIntegration } from '../../mock/createMockDeviceIntegration'
+import { TauriManualRecoveryController } from '../recovery/TauriManualRecoveryController'
+import type { RecoveryIntegration } from '../recovery/reconciliation'
 import { TauriDeviceController, type BridgeApi } from './TauriDeviceController'
 import type { PublicDeviceStatus } from './publicDeviceMapper'
 
@@ -27,10 +29,18 @@ const bridgeApi: BridgeApi = {
   },
 }
 
-export async function resolveDeviceController(): Promise<DeviceController> {
-  if (!isTauri()) return createMockDeviceController()
+export interface DeviceIntegration { lighting: DeviceController; recovery: RecoveryIntegration }
+
+export async function resolveDeviceIntegration(): Promise<DeviceIntegration> {
+  if (!isTauri()) return createMockDeviceIntegration()
   const info = await invoke<BridgeInfo>('bridge_info')
-  if (info.mode === 'mock') return createMockDeviceController()
+  if (info.mode === 'mock') return createMockDeviceIntegration()
   if (!info.available) throw info.error ?? { code: 'DEVICE_ERROR' }
-  return new TauriDeviceController(bridgeApi, info.mode)
+  if (info.mode !== 'fixture' && info.mode !== 'real') throw { code: 'DEVICE_ERROR' }
+  const lighting = new TauriDeviceController(bridgeApi, info.mode)
+  return { lighting, recovery: { controller: new TauriManualRecoveryController(invoke), reconciliation: lighting } }
+}
+
+export async function resolveDeviceController(): Promise<DeviceController> {
+  return (await resolveDeviceIntegration()).lighting
 }
