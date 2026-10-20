@@ -2,9 +2,9 @@
 
 ## Estado atual
 
-- **Fase:** 2 — F2D.1 (Luz Mesa) e F2D.2 (Fita LED) homologadas manualmente pelo mantenedor em modo REAL; F2D.3 (Luz Escritório) pendente de investigação ou substituição. PRs #19–22 integradas em `develop` e `main` (conforme handoff do mantenedor).
+- **Fase:** 2 — F2D.1 (Luz Mesa) e F2D.2 (Fita LED) homologadas manualmente pelo mantenedor em modo REAL; F2D.3 (Luz Escritório) pendente de investigação ou substituição. PRs #19–22 integradas em `develop` e `main` (conforme handoff do mantenedor). PR #44 está aberta com desenho documental F2E.D.4.0; não há implementação D.4.
 - **Objetivo:** Backend local-first para dispositivos LAN e frontend React/Tauri com MOCK por padrão, FIXTURE sem rede e modo REAL local sob opt-in.
-- **Progresso:** PRs #19–22 integraram F2C.1/F2C.2, incluindo knowledge por campo, refresh manual e CR-28–31. A validação automatizada de CI e a homologação física manual são evidências distintas: Luz Mesa e Fita LED passaram pelos controles registrados abaixo; a Luz Escritório segue pendente. Uma mudança de DHCP durante a homologação motivou o refinamento proposto em `docs/LAN_IP_REDISCOVERY_PLAN.md`. Nenhuma credencial ou endereço doméstico é registrado aqui. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
+- **Progresso:** PRs #19–22 integraram F2C.1/F2C.2, incluindo knowledge por campo, refresh manual e CR-28–31. PR #43 integrou F2E.D.3.B; PR #44 publica o refinamento documental D.4.0 e aguarda merge/review corretivo CR-44. A validação automatizada de CI e a homologação física manual são evidências distintas: Luz Mesa e Fita LED passaram pelos controles registrados abaixo; a Luz Escritório segue pendente. Uma mudança de DHCP durante a homologação motivou o refinamento proposto em `docs/LAN_IP_REDISCOVERY_PLAN.md`. Nenhuma credencial ou endereço doméstico é registrado aqui. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -406,3 +406,33 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificação:** suite focada — 148 passed; backend — 379 passed; `rtk py -m compileall -q backend/src backend/tests` passou; `rtk git diff --check` passou (aviso Git LF→CRLF no documento novo).
 - **Escopo:** sem JSONL/IPC/Tauri/UI, TOML, escrita DPS, cloud, LAN real ou hardware. D-018/D-019 preservados.
 - **Resumo para code review:** revisar atomicidade do claim/commit, cleanup observável e readback condicionado à revisão. Sem commit funcional até aprovação do review.
+
+## F2E.D.3.B — integração JSON Lines (2026-10-19)
+
+- **Base/worktree:** branch isolada `feature/f2e-d3b-jsonl`, sobre `origin/develop` em `c8bf7ce` (merge da PR #41).
+- **Integração:** `serve` instancia `RecoveryService`, catálogo do `DeviceManager` e provider TinyTuya sem iniciar descoberta até `recovery.prepare`. `recovery.prepare` aceita somente `{deviceId}`; `recovery.confirm`, somente `{proposalId}`. Os dois executam no executor limitado, preservando requestId, writer único, concorrência e respostas terminais.
+- **Fronteira pública:** serializers explícitos permitem status estáveis; prepare de sucesso retorna proposalId, IP candidato e TTL restante. Confirm separa `ADOPTED` do status de readback. Credenciais, owner, binding, DPS, exceções e traceback não são serializados.
+- **Lifecycle e cobertura:** EOF fecha a instância, invalida propostas próprias, cancela estágios pendentes pelos contratos existentes e drena executor/writer para respostas aceitas. Regressões cobrem contratos JSONL, status de falha, ordem de conclusão, shutdown e dados sensíveis; os testes internos cobrem replay/expiração/owner, ambiguidade, autenticação e readback falho após adoção.
+- **Verificação:** focados (`test_protocol.py`, `test_cli.py`, `test_recovery.py`, `test_recovery_prepare.py`, `test_recovery_confirm.py`) — **109 passed**; suíte backend — **391 passed**; `python -m compileall -q src tests` e `git diff --check` concluídos sem erros. Somente fakes/streams em memória; sem LAN, cloud ou hardware.
+- **Escopo preservado:** sem Tauri/React, recuperação automática, TOML, escrita DPS ou acesso a hardware.
+- **Resumo para revisão arquitetural:** a composição D.3.A agora está exposta somente por dois comandos JSONL fixos. Confirmar sobretudo os nomes/campos dos status públicos e o encerramento do serviço antes da integração Tauri.
+
+### CR-43.1 — integração end-to-end prepare/confirm/replay
+
+- Adicionado teste numa única sessão JSONL usando `RecoveryService`, `ProposalStore`, `DeviceManager` e `CommandScheduler` reais, com provider, validator e adapter fake. O teste lê o token da resposta prepare, espera cada resposta terminal antes do próximo comando, confirma adoção em memória, valida replay bloqueado e `ADOPTED` com readback `FAILED`.
+- `JsonLinesServer` aceita clock monotônico injetável e o serializer de prepare usa esse mesmo clock para calcular TTL. O teste fixa o clock em valor não relacionado ao relógio real e verifica TTL restante de 60 segundos.
+- A saída da regressão verifica os três requestIds, exatamente três respostas e um único thread escritor. EOF só ocorre após a resposta do replay.
+- **Verificação CR-43.1:** testes focados (`test_protocol.py`, `test_recovery_prepare.py`, `test_recovery_confirm.py`) — **77 passed**; suíte backend — **392 passed**; `compileall` e `git diff --check` passaram. Commit publicado na branch rastreada pela PR #43; sem merge.
+
+## F2E.D.4.0 — desenho documental e CR-44 (2026-10-19)
+
+- **PR/branch:** PR #44 está aberta/publicada e contém o commit `5fe23ce` (`ux docs`), na branch `feature/f2e-d3b-jsonl`, base `develop` em `e5cdd157dd4d4d3e7934187a454419d421e921bd`. Verificação REST da PR retornou estado `open`, head `5fe23ce` e a base acima. Correções CR-44 estão locais nesta mesma branch, sem rebase ou alteração do histórico existente.
+- **Entregável:** [F2E_D4_TAURI_UX_DESIGN.md](F2E_D4_TAURI_UX_DESIGN.md) documenta contratos reais de `recovery.prepare`/`recovery.confirm`, statuses de domínio/transporte, bridge Rust, DTOs TypeScript, invalidação/reconciliação de estado, state machine/UX, MOCK/FIXTURE e plano D.4.A–D.4.C.
+- **CR-44.1:** corrigida a formatação que armazenava separadores literais barra+n: arquivo convertido para Markdown multilinha com newline final. Estrutura, tabelas e diagramas preservados para renderização GFM.
+- **CR-44.2:** `ttlSeconds` agora é descrito como finito `>= 0`; zero desabilita confirmação; margem visual de 2 s aprovada; nunca estender TTL; backend segue autoridade e a margem não altera o protocolo.
+- **CR-44.3:** protocolo detalhado para invalidar `knownPublic`/`confirmedBase` por Device ID após `ADOPTED`, preservar valores históricos marcados stale, reconciliar snapshots e rejeitar respostas atrasadas/fora de ordem com comandos/refreshes concorrentes. Valores não observados não habilitam controles que dependem de baseline observado.
+- **CR-44.4:** timeout de domínio em `result` separado do `error.code=TIMEOUT` do envelope e do timeout local de 30 s. Como bridge não distingue as duas últimas origens, timeout após enviar confirm é indeterminado sem evidência terminal inequívoca de domínio; sem retry automático, cancelamento fictício ou falha definitiva.
+- **CR-44.5/decisões:** registradas no desenho as cinco decisões indicadas no review (controller separado; elegibilidade do catálogo público em DTO sem comando JSONL; TTL/margem 2 s; perfil FIXTURE 3.5 sintético com IPs reservados e identificação clara; readback `SUCCEEDED` sem `device` defensivo, nunca confirmação visual, backend fora do escopo). D-015 a D-019 não foram alteradas.
+- **Estado:** D.4.0 continua exclusivamente documental. Nenhum handler, componente ou lógica funcional foi implementado nesta PR. Merge permanece pendente. Estado Git deste checkout: branch `feature/f2e-d3b-jsonl`; commit base da PR `5fe23ce`; alterações corretivas documentais ainda locais nesta etapa.
+- **Verificação:** contratos conferidos em `protocol.py`, `recovery.py`, `device_manager.py`, `bridge.rs`, `TauriDeviceController.ts` e `useLightingSession.ts`. GitHub Markdown API em modo GFM renderizou o documento com título, seis tabelas e dois blocos Mermaid; três links locais foram resolvidos, fences/tabelas/newline final foram validados e `git diff --check` passou. Nenhum teste funcional, compileall, acesso a dispositivo/LAN doméstica, cloud ou credencial foi usado.
+- **Checkpoint para novo review:** correções documentais prontas; revisar principalmente guards de revisão/estado observado e semântica conservadora dos timeouts.
