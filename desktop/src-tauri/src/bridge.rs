@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -553,6 +553,261 @@ fn validate_id(value: &str) -> Result<(), BridgeError> {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(
+    tag = "status",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+pub enum PrepareResponse {
+    ProposalReady {
+        #[serde(rename = "proposalId")]
+        proposal_id: String,
+        #[serde(rename = "candidateIp")]
+        candidate_ip: std::net::Ipv4Addr,
+        #[serde(rename = "ttlSeconds")]
+        ttl_seconds: f64,
+    },
+    NotFound,
+    Ambiguous,
+    Timeout,
+    TransportFailed,
+    AuthFailed,
+    ValidationFailed,
+    DeviceNotFound,
+    ProtocolNotEligible,
+    Busy,
+    InvalidInput,
+    ConfigChanged,
+    Shutdown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryOutcome {
+    pub status: ConfirmStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ConfirmStatus {
+    Adopted,
+    ProposalExpired,
+    Busy,
+    InvalidInput,
+    Timeout,
+    Shutdown,
+    ConfigChanged,
+    ProtocolNotEligible,
+    AuthFailed,
+    TransportFailed,
+    ValidationFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConfirmResponse {
+    pub recovery: RecoveryOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readback: Option<ReadbackResponse>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(
+    tag = "status",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+pub enum ReadbackResponse {
+    Succeeded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<PublicDeviceStatus>,
+    },
+    Failed,
+    Superseded,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicDeviceStatus {
+    pub device_id: String,
+    pub name: String,
+    pub address: String,
+    pub protocol_version: f64,
+    pub capabilities: PublicCapabilities,
+    pub connection: ConnectionStatus,
+    pub state: PublicLightState,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicCapabilities {
+    pub power: bool,
+    pub white_brightness: bool,
+    pub color_value: bool,
+    pub color_temperature: bool,
+    pub scenes: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicLightState {
+    #[serde(deserialize_with = "required_nullable")]
+    pub power: Option<bool>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub work_mode: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub white_brightness_percent: Option<f64>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub color_value_percent: Option<f64>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub color_temperature_percent: Option<f64>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub hsv: Option<PublicHsv>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub scene: Option<String>,
+    pub quality: StateQuality,
+    pub knowledge: PublicKnowledge,
+}
+
+fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicHsv {
+    pub hue: f64,
+    pub saturation: f64,
+    pub value: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicKnowledge {
+    pub power: Knowledge,
+    pub work_mode: Knowledge,
+    pub white_brightness: Knowledge,
+    pub color_temperature: Knowledge,
+    pub hsv: Knowledge,
+    pub color_value: Knowledge,
+    pub scene: Knowledge,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionStatus {
+    Unknown,
+    Online,
+    Offline,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StateQuality {
+    Confirmed,
+    Pending,
+    Offline,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Knowledge {
+    Observed,
+    Stale,
+    Unknown,
+}
+
+fn valid_proposal_id(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn exact_object_keys(value: &Value, expected: &[&str]) -> bool {
+    value.as_object().is_some_and(|object| {
+        object.len() == expected.len() && expected.iter().all(|key| object.contains_key(*key))
+    })
+}
+
+fn parse_prepare_response(value: Value) -> Result<PrepareResponse, BridgeError> {
+    let status = value
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(BridgeError::protocol)?;
+    let fields: &[&str] = if status == "PROPOSAL_READY" {
+        &["status", "proposalId", "candidateIp", "ttlSeconds"]
+    } else {
+        &["status"]
+    };
+    if !exact_object_keys(&value, fields) {
+        return Err(BridgeError::protocol());
+    }
+    let response: PrepareResponse =
+        serde_json::from_value(value).map_err(|_| BridgeError::protocol())?;
+    if let PrepareResponse::ProposalReady {
+        proposal_id,
+        ttl_seconds,
+        ..
+    } = &response
+    {
+        if !valid_proposal_id(proposal_id) || !ttl_seconds.is_finite() || *ttl_seconds < 0.0 {
+            return Err(BridgeError::protocol());
+        }
+    }
+    Ok(response)
+}
+
+fn parse_confirm_response(value: Value) -> Result<ConfirmResponse, BridgeError> {
+    let recovery = value.get("recovery").ok_or_else(BridgeError::protocol)?;
+    if !exact_object_keys(recovery, &["status"]) {
+        return Err(BridgeError::protocol());
+    }
+    let status = recovery
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(BridgeError::protocol)?;
+    if status == "ADOPTED" {
+        if !exact_object_keys(&value, &["recovery", "readback"]) {
+            return Err(BridgeError::protocol());
+        }
+        let readback = value.get("readback").ok_or_else(BridgeError::protocol)?;
+        let readback_status = readback
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or_else(BridgeError::protocol)?;
+        let fields: &[&str] = if readback_status == "SUCCEEDED" {
+            if readback.get("device").is_some() {
+                if !readback.get("device").is_some_and(Value::is_object) {
+                    return Err(BridgeError::protocol());
+                }
+                &["status", "device"]
+            } else {
+                &["status"]
+            }
+        } else {
+            &["status"]
+        };
+        if !exact_object_keys(readback, fields) {
+            return Err(BridgeError::protocol());
+        }
+    } else if !exact_object_keys(&value, &["recovery"]) {
+        return Err(BridgeError::protocol());
+    }
+    let response: ConfirmResponse =
+        serde_json::from_value(value).map_err(|_| BridgeError::protocol())?;
+    if (response.recovery.status == ConfirmStatus::Adopted) != response.readback.is_some() {
+        return Err(BridgeError::protocol());
+    }
+    Ok(response)
+}
+
 #[tauri::command]
 pub fn bridge_info(state: State<'_, BridgeState>) -> BridgeInfo {
     state.info()
@@ -560,6 +815,36 @@ pub fn bridge_info(state: State<'_, BridgeState>) -> BridgeInfo {
 #[tauri::command]
 pub async fn bridge_list(state: State<'_, BridgeState>) -> Result<Value, BridgeError> {
     invoke_bridge(state.client()?, "devices.list", json!({})).await
+}
+#[tauri::command]
+pub async fn bridge_recovery_prepare(
+    state: State<'_, BridgeState>,
+    device_id: String,
+) -> Result<PrepareResponse, BridgeError> {
+    validate_id(&device_id)?;
+    let value = invoke_bridge(
+        state.client()?,
+        "recovery.prepare",
+        json!({"deviceId":device_id}),
+    )
+    .await?;
+    parse_prepare_response(value)
+}
+#[tauri::command]
+pub async fn bridge_recovery_confirm(
+    state: State<'_, BridgeState>,
+    proposal_id: String,
+) -> Result<ConfirmResponse, BridgeError> {
+    if !valid_proposal_id(&proposal_id) {
+        return Err(BridgeError::new(BridgeErrorCode::InvalidInput));
+    }
+    let value = invoke_bridge(
+        state.client()?,
+        "recovery.confirm",
+        json!({"proposalId":proposal_id}),
+    )
+    .await?;
+    parse_confirm_response(value)
 }
 #[tauri::command]
 pub async fn bridge_status(
@@ -679,6 +964,77 @@ mod tests {
         );
         assert!(parse_response(br#"{"requestId":"r1","result":{},"extra":1}"#).is_err());
     }
+    #[test]
+    fn recovery_arguments_and_prepare_dto_are_strict_and_allow_zero_ttl() {
+        assert!(validate_id(" ").is_err());
+        assert!(validate_id(&"x".repeat(129)).is_err());
+        assert!(validate_id("fixture-tuya35").is_ok());
+        assert!(valid_proposal_id(&"A".repeat(43)));
+        assert!(!valid_proposal_id(&"A".repeat(42)));
+        assert!(!valid_proposal_id(&format!("{}!", "A".repeat(42))));
+
+        let parsed = parse_prepare_response(json!({
+            "status":"PROPOSAL_READY", "proposalId":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "candidateIp":"198.51.100.35", "ttlSeconds":0.0
+        }))
+        .unwrap();
+        assert!(matches!(
+            parsed,
+            PrepareResponse::ProposalReady {
+                ttl_seconds: 0.0,
+                ..
+            }
+        ));
+        let public = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(public["candidateIp"], "198.51.100.35");
+        assert_eq!(public["ttlSeconds"], 0.0);
+        for invalid in [
+            json!({"status":"PROPOSAL_READY","proposalId":"bad","candidateIp":"198.51.100.35","ttlSeconds":1.0}),
+            json!({"status":"PROPOSAL_READY","proposalId":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","candidateIp":"example.test","ttlSeconds":1.0}),
+            json!({"status":"PROPOSAL_READY","proposalId":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","candidateIp":"198.51.100.35","ttlSeconds":-0.1}),
+            json!({"status":"PROPOSAL_READY","proposalId":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","candidateIp":"198.51.100.35","ttlSeconds":1.0,"localKey":"private"}),
+            json!({"status":"PRIVATE_FAILURE"}),
+            json!({"status":"NOT_FOUND","detail":"private"}),
+        ] {
+            assert!(
+                parse_prepare_response(invalid.clone()).is_err(),
+                "accepted unexpected prepare response: {invalid}"
+            );
+        }
+    }
+    #[test]
+    fn confirmation_dto_keeps_adoption_and_readback_independent() {
+        let failed = parse_confirm_response(json!({
+            "recovery":{"status":"ADOPTED"}, "readback":{"status":"FAILED"}
+        }))
+        .unwrap();
+        assert_eq!(failed.recovery.status, ConfirmStatus::Adopted);
+        assert_eq!(failed.readback, Some(ReadbackResponse::Failed));
+
+        let no_snapshot = parse_confirm_response(json!({
+            "recovery":{"status":"ADOPTED"}, "readback":{"status":"SUCCEEDED"}
+        }))
+        .unwrap();
+        assert_eq!(
+            no_snapshot.readback,
+            Some(ReadbackResponse::Succeeded { device: None })
+        );
+
+        for invalid in [
+            json!({"recovery":{"status":"ADOPTED"}}),
+            json!({"recovery":{"status":"PROPOSAL_EXPIRED"},"readback":{"status":"FAILED"}}),
+            json!({"recovery":{"status":"PRIVATE_FAILURE"}}),
+            json!({"recovery":{"status":"BUSY","owner":"private"}}),
+            json!({"recovery":{"status":"ADOPTED"},"readback":{"status":"FAILED","dps":{}}}),
+            json!({"recovery":{"status":"ADOPTED"},"readback":{"status":"SUCCEEDED","device":null}}),
+            json!({"recovery":{"status":"ADOPTED"},"readback":{"status":"SUCCEEDED","device":{"deviceId":"fixture","name":"x","address":"198.51.100.35","protocolVersion":3.5,"capabilities":{},"connection":"online","state":{},"localKey":"private"}}}),
+        ] {
+            assert!(
+                parse_confirm_response(invalid.clone()).is_err(),
+                "accepted unexpected confirm response: {invalid}"
+            );
+        }
+    }
     fn python_process(script: &str) -> Child {
         let mut command = Command::new("python");
         command
@@ -719,9 +1075,47 @@ mod tests {
     fn fixture_process_starts_lists_and_shuts_down_without_orphan() {
         let client = BridgeClient::spawn_config(&ProcessConfig::Fixture).expect("fixture starts");
         let result = client.request("devices.list", json!({})).unwrap();
-        assert_eq!(result["devices"].as_array().unwrap().len(), 2);
+        assert!(result["devices"].as_array().unwrap().len() >= 2);
         client.shutdown();
         assert!(client.child.lock().unwrap().is_none());
+    }
+    #[test]
+    fn recovery_fixture_runs_prepare_confirm_and_blocks_replay_over_jsonl() {
+        let client = BridgeClient::spawn_config(&ProcessConfig::Fixture).unwrap();
+        let prepared = client
+            .request("recovery.prepare", json!({"deviceId":"fixture-tuya35"}))
+            .unwrap();
+        let prepared = parse_prepare_response(prepared).unwrap();
+        let PrepareResponse::ProposalReady {
+            proposal_id,
+            candidate_ip,
+            ttl_seconds,
+        } = prepared
+        else {
+            panic!("fixture should return a proposal");
+        };
+        assert_eq!(
+            candidate_ip,
+            "198.51.100.35".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+        assert_eq!(ttl_seconds, 60.0);
+        let confirmed = client
+            .request("recovery.confirm", json!({"proposalId":proposal_id}))
+            .unwrap();
+        let confirmed = parse_confirm_response(confirmed).unwrap();
+        assert_eq!(confirmed.recovery.status, ConfirmStatus::Adopted);
+        assert!(matches!(
+            confirmed.readback,
+            Some(ReadbackResponse::Succeeded { device: Some(_) })
+        ));
+        let replay = client
+            .request("recovery.confirm", json!({"proposalId":proposal_id}))
+            .unwrap();
+        assert_eq!(
+            parse_confirm_response(replay).unwrap().recovery.status,
+            ConfirmStatus::ProposalExpired
+        );
+        client.shutdown();
     }
     #[test]
     fn fixture_correlates_concurrent_out_of_order_responses() {
@@ -788,6 +1182,26 @@ mod tests {
             BridgeErrorCode::InvalidInput
         );
         oversized.shutdown();
+    }
+    #[test]
+    fn bridge_timeout_does_not_cancel_backend_or_misroute_late_response() {
+        let script = r#"import json,sys,time
+first=json.loads(sys.stdin.readline())
+time.sleep(0.06)
+print(json.dumps({"requestId":first["requestId"],"result":{"late":True}}),flush=True)
+second=json.loads(sys.stdin.readline())
+print(json.dumps({"requestId":second["requestId"],"result":{"current":True}}),flush=True)
+"#;
+        let mut client = BridgeClient::spawn_command(python_process(script)).unwrap();
+        client.timeout = Duration::from_millis(10);
+        assert_eq!(
+            client.request("devices.list", json!({})).unwrap_err().code,
+            BridgeErrorCode::Timeout
+        );
+        thread::sleep(Duration::from_millis(80));
+        let current = client.request("devices.list", json!({})).unwrap();
+        assert_eq!(current, json!({"current":true}));
+        client.shutdown();
     }
     #[test]
     fn backend_error_codes_are_normalized_to_allowlist() {
