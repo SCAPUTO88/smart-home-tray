@@ -188,7 +188,7 @@ Todos os itens acima aguardam aprovação explícita e não alteram D-018, que j
 - Local Key é lida/usada somente no backend a partir da configuração já carregada. Nunca integra announcement, candidate, validation DTO, `DeviceStatus`, `BackendError`, JSONL, Rust, Tauri, frontend, argumentos ou logs.
 - Nunca retornar bytes UDP, objeto TinyTuya, resposta DPS bruta, MAC, `DeviceConfig`, exceção original ou texto/traceback da biblioteca. Logs contêm somente código/categoria e contadores não identificadores.
 - A WebView não fornece IP de adoção. `recovery.prepare` aceita somente Device ID existente; confirmação aceita somente token de proposta emitido pelo backend. O resultado de proposta pode mostrar o IP já descoberto/validado para a pessoa revisar; esse IP não é reutilizado como input de adoção.
-- JSONL acrescenta apenas comandos allowlisted, sugeridos: `device.recovery.prepare` com `{deviceId}` e `device.recovery.confirm` com `{proposalId}`. Campos extras são recusados. Usar requestId existente e resultado discriminado. Nenhum `status`, `set_value`, CLI livre, texto JSON genérico ou caminho de config vindo da WebView.
+- JSONL acrescenta apenas os comandos allowlisted `recovery.prepare` com `{deviceId}` e `recovery.confirm` com `{proposalId}`. Campos extras são recusados. Usar requestId existente e resultado discriminado. Nenhum `status`, `set_value`, CLI livre, texto JSON genérico ou caminho de config vindo da WebView.
 - Rust/Tauri fornece dois handlers fixos e payloads tipados correspondentes; só encaminha para backend REAL após os gates já aprovados. FIXTURE/MOCK usam respostas sintéticas e não carregam TinyTuya nem rede.
 - Nenhuma escrita de iluminação ocorre no recovery. Nenhuma mudança em TOML ou outro armazenamento; endereço fica em memória até reinício. Sem recuperação automática.
 - Mensagens ao usuário distinguem candidato, endpoint que aceitou chave e adoção manual com ressalva. Não usar “identidade verificada”, “dispositivo provado” ou linguagem equivalente.
@@ -272,3 +272,9 @@ Todos os itens acima aguardam aprovação explícita e não alteram D-018, que j
 7. Confirmar semântica efetiva de autenticação, timeout/cancelamento e lifecycle `close()` na versão TinyTuya distribuída; definir texto/UX de consentimento sem alegar identidade criptográfica comprovada.
 
 Não há aprovação para recuperação automática, atualização de TOML, scanning no startup, seleção por confiança/ordem, 3.3 adoption, novos comandos de iluminação ou testes físicos. Validação REAL exige autorização explícita separada.
+
+## G. Registro de implementação D.3.B
+
+Implementação concluída em `feature/f2e-d3b-jsonl`, baseada no merge `c8bf7ce` da PR #41. O modo `serve` compõe `RecoveryService`, `DeviceManagerRecoveryCatalog` e `TinyTuyaLanDiscoveryProvider`; a criação do provider não inicia scan. Apenas `recovery.prepare`/`{deviceId}` e `recovery.confirm`/`{proposalId}` são aceitos. Prepare e confirm rodam fora da thread de stdin e do writer, e seus resultados são reduzidos a campos/status allowlisted. O confirm expõe adoção e readback em objetos separados.
+
+No EOF, o serviço fecha e remove suas próprias propostas; tarefas já aceitas são drenadas pelo executor e writer, enquanto trabalhos ainda pendentes seguem cancelamento/lifecycle dos contratos internos. Testes JSONL com fakes cobrem schema, serialização, dados sensíveis, concorrência fora de ordem e shutdown; testes de recuperação cobrem expiry/replay/owner, ambiguidade, autenticação e falha de readback após adoção. Nenhum teste usa LAN ou hardware real. Evidência local do checkpoint: **391 testes backend passaram**, `compileall` e `git diff --check` concluídos sem erros. D.4 (Tauri/UI) permanece fora deste escopo.

@@ -406,3 +406,20 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificação:** suite focada — 148 passed; backend — 379 passed; `rtk py -m compileall -q backend/src backend/tests` passou; `rtk git diff --check` passou (aviso Git LF→CRLF no documento novo).
 - **Escopo:** sem JSONL/IPC/Tauri/UI, TOML, escrita DPS, cloud, LAN real ou hardware. D-018/D-019 preservados.
 - **Resumo para code review:** revisar atomicidade do claim/commit, cleanup observável e readback condicionado à revisão. Sem commit funcional até aprovação do review.
+
+## F2E.D.3.B — integração JSON Lines (2026-10-19)
+
+- **Base/worktree:** branch isolada `feature/f2e-d3b-jsonl`, sobre `origin/develop` em `c8bf7ce` (merge da PR #41).
+- **Integração:** `serve` instancia `RecoveryService`, catálogo do `DeviceManager` e provider TinyTuya sem iniciar descoberta até `recovery.prepare`. `recovery.prepare` aceita somente `{deviceId}`; `recovery.confirm`, somente `{proposalId}`. Os dois executam no executor limitado, preservando requestId, writer único, concorrência e respostas terminais.
+- **Fronteira pública:** serializers explícitos permitem status estáveis; prepare de sucesso retorna proposalId, IP candidato e TTL restante. Confirm separa `ADOPTED` do status de readback. Credenciais, owner, binding, DPS, exceções e traceback não são serializados.
+- **Lifecycle e cobertura:** EOF fecha a instância, invalida propostas próprias, cancela estágios pendentes pelos contratos existentes e drena executor/writer para respostas aceitas. Regressões cobrem contratos JSONL, status de falha, ordem de conclusão, shutdown e dados sensíveis; os testes internos cobrem replay/expiração/owner, ambiguidade, autenticação e readback falho após adoção.
+- **Verificação:** focados (`test_protocol.py`, `test_cli.py`, `test_recovery.py`, `test_recovery_prepare.py`, `test_recovery_confirm.py`) — **109 passed**; suíte backend — **391 passed**; `python -m compileall -q src tests` e `git diff --check` concluídos sem erros. Somente fakes/streams em memória; sem LAN, cloud ou hardware.
+- **Escopo preservado:** sem Tauri/React, recuperação automática, TOML, escrita DPS ou acesso a hardware.
+- **Resumo para revisão arquitetural:** a composição D.3.A agora está exposta somente por dois comandos JSONL fixos. Confirmar sobretudo os nomes/campos dos status públicos e o encerramento do serviço antes da integração Tauri.
+
+### CR-43.1 — integração end-to-end prepare/confirm/replay
+
+- Adicionado teste numa única sessão JSONL usando `RecoveryService`, `ProposalStore`, `DeviceManager` e `CommandScheduler` reais, com provider, validator e adapter fake. O teste lê o token da resposta prepare, espera cada resposta terminal antes do próximo comando, confirma adoção em memória, valida replay bloqueado e `ADOPTED` com readback `FAILED`.
+- `JsonLinesServer` aceita clock monotônico injetável e o serializer de prepare usa esse mesmo clock para calcular TTL. O teste fixa o clock em valor não relacionado ao relógio real e verifica TTL restante de 60 segundos.
+- A saída da regressão verifica os três requestIds, exatamente três respostas e um único thread escritor. EOF só ocorre após a resposta do replay.
+- **Verificação CR-43.1:** testes focados (`test_protocol.py`, `test_recovery_prepare.py`, `test_recovery_confirm.py`) — **77 passed**; suíte backend — **392 passed**; `compileall` e `git diff --check` passaram. Commit publicado na branch rastreada pela PR #43; sem merge.

@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import json
 import queue
+import re
 import threading
+import time
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import BinaryIO, Callable, TextIO
@@ -54,9 +56,28 @@ class _DiscardingStdout:
 class JsonLinesServer:
     """Read requests continuously and publish terminal responses on one writer."""
 
-    def __init__(self, device_manager: object, command_scheduler: object) -> None:
+    def __init__(
+        self,
+        device_manager: object,
+        command_scheduler: object,
+        recovery_service: object | None = None,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not callable(monotonic):
+            raise TypeError("monotonic clock must be callable")
         self._manager = device_manager
         self._scheduler = command_scheduler
+        self._monotonic = monotonic
+        if recovery_service is None:
+            from smart_home_tray.lan_discovery import TinyTuyaLanDiscoveryProvider
+            from smart_home_tray.recovery import DeviceManagerRecoveryCatalog, RecoveryService
+
+            recovery_service = RecoveryService(
+                catalog=DeviceManagerRecoveryCatalog(device_manager),
+                provider=TinyTuyaLanDiscoveryProvider(),
+            )
+        self._recovery = recovery_service
         self._events: queue.Queue[object] = queue.Queue()
         self._condition = threading.Condition()
         self._active_ids: set[str] = set()
@@ -97,6 +118,12 @@ class JsonLinesServer:
                     continue
                 self._accept_line(raw_line, executor, error_stream)
         finally:
+            # Closing cancels not-yet-started recovery stages and retracts only
+            # proposals owned by this serve instance. Active work is then drained.
+            try:
+                self._recovery.close(timeout_seconds=0.0)
+            except Exception:
+                pass
             # Repeated bounded waits permit an already-started LAN operation to finish.
             if self._scheduler_started:
                 while not self._scheduler.stop(timeout_seconds=10.0):
@@ -191,6 +218,8 @@ class JsonLinesServer:
             "device.colorTemperature": {"deviceId", "percent"},
             "device.hsv": {"deviceId", "hue", "saturation", "value"},
             "device.colorBrightness": {"deviceId", "percent"},
+            "recovery.prepare": {"deviceId"},
+            "recovery.confirm": {"proposalId"},
         }
         if command not in schemas:
             raise BackendError(ErrorCode.INVALID_INPUT, "Unknown command")
@@ -199,6 +228,28 @@ class JsonLinesServer:
         if command == "devices.list":
             future = executor.submit(self._manager.list_devices)
             self._attach_future(request_id, future, self._public_devices)
+            return
+
+        if command == "recovery.prepare":
+            device_id = payload["deviceId"]
+            if not isinstance(device_id, str) or not device_id.strip():
+                raise BackendError(ErrorCode.INVALID_INPUT, "deviceId is invalid")
+            self._ensure_scheduler_started()
+            future = executor.submit(self._recovery.prepare_internal, device_id, self._scheduler)
+            self._attach_future(
+                request_id,
+                future,
+                lambda outcome: self._public_preparation(outcome, monotonic=self._monotonic),
+            )
+            return
+
+        if command == "recovery.confirm":
+            proposal_id = payload["proposalId"]
+            if not isinstance(proposal_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{43}", proposal_id) is None:
+                raise BackendError(ErrorCode.INVALID_INPUT, "proposalId is invalid")
+            self._ensure_scheduler_started()
+            future = executor.submit(self._recovery.confirm_internal, proposal_id, self._scheduler)
+            self._attach_future(request_id, future, self._public_confirmation)
             return
 
         device_id = payload["deviceId"]
@@ -266,6 +317,87 @@ class JsonLinesServer:
         if not isinstance(statuses, (tuple, list)):
             raise BackendError(ErrorCode.DEVICE_ERROR, "Device catalog returned an invalid result")
         return {"devices": [cls._public_status(status) for status in statuses]}
+
+    @staticmethod
+    def _public_preparation(
+        outcome: object, *, monotonic: Callable[[], float] = time.monotonic
+    ) -> dict[str, object]:
+        from smart_home_tray.recovery import PreparationStatus
+
+        if not hasattr(outcome, "status"):
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Recovery returned an invalid result")
+        status = outcome.status
+        validation = getattr(outcome, "validation_status", None)
+        if status is PreparationStatus.PROPOSAL_READY_INTERNAL:
+            proposal = outcome.proposal
+            return {
+                "status": "PROPOSAL_READY",
+                "proposalId": proposal.token,
+                "candidateIp": str(proposal.candidate_address),
+                "ttlSeconds": round(max(0.0, proposal.expires_at - monotonic()), 3),
+            }
+        if status is PreparationStatus.VALIDATION_FAILED:
+            public = {
+                "auth_failed": "AUTH_FAILED",
+                "transport_failed": "TRANSPORT_FAILED",
+                "timeout": "TIMEOUT",
+            }.get(validation, "VALIDATION_FAILED")
+        else:
+            public = {
+                PreparationStatus.NOT_FOUND: "NOT_FOUND",
+                PreparationStatus.AMBIGUOUS: "AMBIGUOUS",
+                PreparationStatus.TIMEOUT: "TIMEOUT",
+                PreparationStatus.DISCOVERY_FAILED: "TRANSPORT_FAILED",
+                PreparationStatus.CATALOG_FAILED: "VALIDATION_FAILED",
+                PreparationStatus.DEVICE_NOT_FOUND: "DEVICE_NOT_FOUND",
+                PreparationStatus.PROTOCOL_NOT_ELIGIBLE: "PROTOCOL_NOT_ELIGIBLE",
+                PreparationStatus.BUSY: "BUSY",
+                PreparationStatus.INVALID_REQUEST: "INVALID_INPUT",
+                PreparationStatus.CONFIG_CHANGED: "CONFIG_CHANGED",
+                PreparationStatus.CLOSED: "SHUTDOWN",
+                PreparationStatus.PROPOSAL_CAPACITY: "BUSY",
+                PreparationStatus.PROPOSAL_PENDING: "BUSY",
+                PreparationStatus.TOKEN_COLLISION: "VALIDATION_FAILED",
+                PreparationStatus.INTERNAL_ERROR: "VALIDATION_FAILED",
+            }.get(status, "VALIDATION_FAILED")
+        return {"status": public}
+
+    @classmethod
+    def _public_confirmation(cls, outcome: object) -> dict[str, object]:
+        from smart_home_tray.recovery import ConfirmationStatus
+
+        if not hasattr(outcome, "status"):
+            raise BackendError(ErrorCode.DEVICE_ERROR, "Recovery returned an invalid result")
+        if outcome.status is not ConfirmationStatus.ADOPTED:
+            validation = getattr(outcome, "validation_status", None)
+            public = {
+                ConfirmationStatus.PROPOSAL_UNAVAILABLE: "PROPOSAL_EXPIRED",
+                ConfirmationStatus.PROPOSAL_EXPIRED: "PROPOSAL_EXPIRED",
+                ConfirmationStatus.BUSY: "BUSY",
+                ConfirmationStatus.INVALID_REQUEST: "INVALID_INPUT",
+                ConfirmationStatus.TIMEOUT: "TIMEOUT",
+                ConfirmationStatus.CLOSED: "SHUTDOWN",
+                ConfirmationStatus.CONFIG_CHANGED: "CONFIG_CHANGED",
+                ConfirmationStatus.PROTOCOL_NOT_ELIGIBLE: "PROTOCOL_NOT_ELIGIBLE",
+                ConfirmationStatus.AUTH_FAILED: "AUTH_FAILED",
+                ConfirmationStatus.VALIDATION_FAILED: "VALIDATION_FAILED",
+                ConfirmationStatus.CLEANUP_FAILED: "VALIDATION_FAILED",
+                ConfirmationStatus.INTERNAL_ERROR: "VALIDATION_FAILED",
+            }.get(outcome.status, "VALIDATION_FAILED")
+            if validation == "transport_failed":
+                public = "TRANSPORT_FAILED"
+            elif validation == "timeout":
+                public = "TIMEOUT"
+            return {"recovery": {"status": public}}
+        readback_status = {
+            "succeeded": "SUCCEEDED",
+            "failed": "FAILED",
+            "superseded": "SUPERSEDED",
+        }.get(getattr(outcome.readback_status, "value", ""), "FAILED")
+        readback: dict[str, object] = {"status": readback_status}
+        if readback_status == "SUCCEEDED" and outcome.readback is not None:
+            readback["device"] = cls._public_status(outcome.readback)
+        return {"recovery": {"status": "ADOPTED"}, "readback": readback}
 
     def _attach_future(
         self,
