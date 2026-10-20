@@ -1,6 +1,8 @@
 import type { DeviceController, DeviceId, HsvColor, LightingDevice, LightingPatch, OperationScenario } from './types'
 import { OperationError } from './types'
 import { mapPublicDevice, parseBridgeError, type PublicDeviceStatus } from './publicDeviceMapper'
+import { recoveryEligibility, type RecoveryCheckpoint, type RecoveryReconciler } from '../recovery/reconciliation'
+import type { ReadbackResult } from '../recovery/contracts'
 
 export type BridgeRequest =
   | { command: 'devices.list'; payload: Record<string, never> }
@@ -11,7 +13,7 @@ export type BridgeRequest =
 export interface BridgeApi {
   list(): Promise<PublicDeviceStatus[]>
   status(deviceId: DeviceId): Promise<PublicDeviceStatus>
-  command(request: Exclude<BridgeRequest, { command: 'devices.list' }>): Promise<PublicDeviceStatus>
+  command(request: Exclude<BridgeRequest, { command: 'devices.list' }>, scenario?: OperationScenario): Promise<PublicDeviceStatus>
 }
 
 const hsvChannels = ['hue', 'saturation', 'value'] as const
@@ -25,8 +27,13 @@ function offlineStatus(status: PublicDeviceStatus): PublicDeviceStatus {
   return { ...status, connection: 'offline', state: { ...status.state, quality: 'offline', knowledge } }
 }
 
-export class TauriDeviceController implements DeviceController {
-  readonly mode: 'fixture' | 'real'
+export class TauriDeviceController implements DeviceController, RecoveryReconciler {
+  readonly mode: 'mock' | 'fixture' | 'real'
+  private catalogEpoch = 0
+  private readonly recoveryGeneration = new Map<DeviceId, number>()
+  private readonly recoveryCommandFloor = new Map<DeviceId, number>()
+  private readonly recoveryRefreshFloor = new Map<DeviceId, number>()
+  private readonly recoveryTokens = new WeakSet<RecoveryCheckpoint>()
   private readonly known = new Map<DeviceId, LightingDevice>()
   private readonly knownPublic = new Map<DeviceId, PublicDeviceStatus>()
   private readonly confirmedBase = new Map<DeviceId, PublicDeviceStatus>()
@@ -41,9 +48,57 @@ export class TauriDeviceController implements DeviceController {
   private readonly latestAppliedRefresh = new Map<DeviceId, number>()
   private readonly bridge: BridgeApi
 
-  constructor(bridge: BridgeApi, mode: 'fixture' | 'real' = 'fixture') { this.bridge = bridge; this.mode = mode }
+  constructor(bridge: BridgeApi, mode: 'mock' | 'fixture' | 'real' = 'fixture') { this.bridge = bridge; this.mode = mode }
+
+  eligibility(deviceId: DeviceId) { return recoveryEligibility(this.knownPublic.get(deviceId)) }
+
+  beginRecoveryConfirmation(deviceId: DeviceId): RecoveryCheckpoint {
+    if (!this.knownPublic.has(deviceId)) throw new OperationError('INVALID_INPUT')
+    const generation = (this.recoveryGeneration.get(deviceId) ?? 0) + 1
+    this.recoveryGeneration.set(deviceId, generation)
+    const token = Object.freeze({
+      deviceId, generation, catalog: this.catalogEpoch,
+      command: this.latestIssuedCommand.get(deviceId) ?? 0,
+      refresh: this.refreshSequence.get(deviceId) ?? 0,
+      state: this.stateRevision.get(deviceId) ?? 0,
+      snapshot: this.snapshotRevision.get(deviceId) ?? 0,
+    })
+    this.recoveryTokens.add(token)
+    return token
+  }
+
+  reconcileRecovery(token: RecoveryCheckpoint, readback?: ReadbackResult): LightingDevice | undefined {
+    if (!this.recoveryTokens.delete(token) || token.catalog !== this.catalogEpoch) return
+    const isLatestRecovery = token.generation === this.recoveryGeneration.get(token.deviceId)
+    const id = token.deviceId
+    this.recoveryCommandFloor.set(id, Math.max(this.recoveryCommandFloor.get(id) ?? 0, token.command))
+    this.recoveryRefreshFloor.set(id, Math.max(this.recoveryRefreshFloor.get(id) ?? 0, token.refresh))
+    for (const pendingId of this.pendingHsv.get(id)?.keys() ?? []) {
+      if (pendingId <= token.command) this.settlePendingHsv(id, pendingId)
+    }
+    if (token.state !== this.stateRevision.get(id) || token.snapshot !== this.snapshotRevision.get(id)) return
+    const current = this.knownPublic.get(id)
+    if (!current) return
+    this.confirmedBase.delete(id)
+    const knowledge = Object.fromEntries(Object.entries(current.state.knowledge).map(([key, value]) => [key, value === 'observed' ? 'stale' : value])) as PublicDeviceStatus['state']['knowledge']
+    let status: PublicDeviceStatus = { ...current, state: { ...current.state, quality: 'unknown', knowledge } }
+    const compatible = (this.latestIssuedCommand.get(id) ?? 0) === token.command
+      && (this.refreshSequence.get(id) ?? 0) === token.refresh
+      && (this.pendingCommands.get(id)?.size ?? 0) === 0
+    if (isLatestRecovery && compatible && readback?.status === 'SUCCEEDED' && readback.device?.deviceId === id) {
+      status = readback.device
+      if (hasObservedReadback(status)) this.confirmedBase.set(id, status)
+      this.snapshotRevision.set(id, token.snapshot + 1)
+    }
+    this.stateRevision.set(id, token.state + 1)
+    const device = mapPublicDevice(status)
+    this.knownPublic.set(id, status)
+    this.known.set(id, device)
+    return device
+  }
 
   async list(): Promise<LightingDevice[]> {
+    const epoch = ++this.catalogEpoch
     const catalog = await this.bridge.list()
     const statuses = this.mode === 'real'
       ? await Promise.all(catalog.map(async (entry) => {
@@ -61,6 +116,10 @@ export class TauriDeviceController implements DeviceController {
       }))
       : catalog
 
+    if (epoch !== this.catalogEpoch) throw new OperationError('COMMAND_CANCELED')
+    this.recoveryGeneration.clear()
+    this.recoveryCommandFloor.clear()
+    this.recoveryRefreshFloor.clear()
     this.known.clear()
     this.knownPublic.clear()
     this.confirmedBase.clear()
@@ -90,6 +149,7 @@ export class TauriDeviceController implements DeviceController {
   }
 
   async refresh(deviceId: DeviceId): Promise<LightingDevice> {
+    const epoch = this.catalogEpoch
     if ((this.pendingCommands.get(deviceId)?.size ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
     const current = this.knownPublic.get(deviceId)
     if (!current) throw new OperationError('DEVICE_ERROR')
@@ -100,11 +160,12 @@ export class TauriDeviceController implements DeviceController {
     this.refreshSequence.set(deviceId, refreshId)
     try {
       const status = await this.bridge.status(deviceId)
+      if (epoch !== this.catalogEpoch || refreshId <= (this.recoveryRefreshFloor.get(deviceId) ?? 0)) throw new OperationError('COMMAND_CANCELED')
       if (status.deviceId !== deviceId || (this.latestIssuedCommand.get(deviceId) ?? 0) !== issuedVersion || (this.snapshotRevision.get(deviceId) ?? 0) !== snapshotVersion || refreshId <= (this.latestAppliedRefresh.get(deviceId) ?? 0) || (this.pendingCommands.get(deviceId)?.size ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
       const mapped = mapPublicDevice(status)
       this.knownPublic.set(deviceId, status)
       this.known.set(deviceId, mapped)
-      if (status.connection === 'online') this.confirmedBase.set(deviceId, status)
+      if (hasObservedReadback(status)) this.confirmedBase.set(deviceId, status)
       else this.confirmedBase.delete(deviceId)
       this.latestAppliedRefresh.set(deviceId, refreshId)
       this.snapshotRevision.set(deviceId, snapshotVersion + 1)
@@ -113,7 +174,7 @@ export class TauriDeviceController implements DeviceController {
     } catch (error) {
       const normalized = parseBridgeError(error)
       const isTransportFailure = normalized.code === 'DEVICE_OFFLINE' || normalized.code === 'TIMEOUT' || normalized.code === 'AUTH_FAILED'
-      const isCurrent = (this.latestIssuedCommand.get(deviceId) ?? 0) === issuedVersion
+      const isCurrent = epoch === this.catalogEpoch && (this.latestIssuedCommand.get(deviceId) ?? 0) === issuedVersion
         && this.stateRevision.get(deviceId) === stateVersion
         && this.refreshSequence.get(deviceId) === refreshId
         && (this.snapshotRevision.get(deviceId) ?? 0) === snapshotVersion
@@ -132,6 +193,7 @@ export class TauriDeviceController implements DeviceController {
   }
 
   async command(deviceId: DeviceId, patch: LightingPatch, _scenario?: OperationScenario): Promise<LightingDevice> {
+    const epoch = this.catalogEpoch
     const device = this.known.get(deviceId)
     const publicStatus = this.knownPublic.get(deviceId)
     if (!device || !publicStatus) throw new OperationError('DEVICE_ERROR')
@@ -157,7 +219,7 @@ export class TauriDeviceController implements DeviceController {
       const pending = this.pendingHsv.get(deviceId)
       const latestPending = pending && [...pending.entries()].sort(([left], [right]) => right - left)[0]?.[1]
       const base = this.confirmedBase.get(deviceId)
-      const current = latestPending ?? (base?.state.hsv && base.state.knowledge.hsv === 'observed' ? { ...base.state.hsv } : undefined)
+      const current = base?.state.hsv && base.state.knowledge.hsv === 'observed' ? latestPending ?? { ...base.state.hsv } : undefined
       if (!current || hsvChannels.some((channel) => !Number.isFinite(current[channel]))) throw new OperationError('DEVICE_ERROR')
       const hsv: HsvColor = { ...current }
       for (const channel of hsvChannels) {
@@ -176,14 +238,15 @@ export class TauriDeviceController implements DeviceController {
     this.latestIssuedCommand.set(deviceId, id)
     const stateVersion = this.stateRevision.get(deviceId) ?? 0
     try {
-      const status = await this.bridge.command(request)
+      const status = await (this.mode === 'mock' ? this.bridge.command(request, _scenario) : this.bridge.command(request))
+      if (epoch !== this.catalogEpoch || id <= (this.recoveryCommandFloor.get(deviceId) ?? 0)) throw new OperationError('COMMAND_CANCELED')
       if (status.deviceId !== deviceId) throw new OperationError('DEVICE_ERROR')
       const response = mapPublicDevice(status)
       const isApplicable = id > (this.latestAppliedCommand.get(deviceId) ?? 0)
       if (isApplicable) {
         this.known.set(deviceId, response)
         this.knownPublic.set(deviceId, status)
-        if (status.connection === 'online') this.confirmedBase.set(deviceId, status)
+        if (hasObservedReadback(status)) this.confirmedBase.set(deviceId, status)
         else this.confirmedBase.delete(deviceId)
         this.latestAppliedCommand.set(deviceId, id)
         this.snapshotRevision.set(deviceId, (this.snapshotRevision.get(deviceId) ?? 0) + 1)
@@ -195,7 +258,7 @@ export class TauriDeviceController implements DeviceController {
       const normalized = parseBridgeError(error)
       if (normalized.code === 'DEVICE_OFFLINE' || normalized.code === 'TIMEOUT' || normalized.code === 'AUTH_FAILED') {
         const current = this.knownPublic.get(deviceId)
-        const isCurrent = this.stateRevision.get(deviceId) === stateVersion
+        const isCurrent = epoch === this.catalogEpoch && this.stateRevision.get(deviceId) === stateVersion
         if (current && isCurrent) {
           const offline = offlineStatus(current)
           this.knownPublic.set(deviceId, offline)
