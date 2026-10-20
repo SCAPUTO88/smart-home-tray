@@ -261,6 +261,59 @@ def test_other_device_worker_progresses_during_recovery_validation():
     assert scheduler.stop(timeout_seconds=1)
 
 
+def test_recovery_confirmation_is_typed_fifo_barrier_and_never_coalesced():
+    import ipaddress
+    from smart_home_tray.command_scheduler import CommandScheduler
+    from smart_home_tray.recovery_proposals import ProposalBinding
+
+    calls = []
+    timeline = []
+
+    class Manager(FakeDeviceManager):
+        def set_white_brightness(self, device_id, percent):
+            timeline.append("control")
+            return super().set_white_brightness(device_id, percent)
+
+        def _confirm_recovery_candidate(self, device_id, binding, expires_at, owner, **kwargs):
+            calls.append(("confirm", device_id, binding.candidate_address, expires_at, owner))
+            timeline.append("confirm")
+            return "adopted"
+
+    clock = FakeClock()
+    manager = Manager()
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0, clock=clock)
+    scheduler.start()
+    binding = ProposalBinding(
+        "lamp-a", ipaddress.IPv4Address("192.0.2.20"), 3.5, 1, "192.0.2.10"
+    )
+    owner = object()
+    cancellation = threading.Event()
+    lifecycle_lock = threading.Lock()
+    try:
+        before = scheduler.submit_white_brightness("lamp-a", 30)
+        confirm = scheduler.submit_recovery_confirmation(
+            "lamp-a", binding, 70.0, owner,
+            deadline=90.0, cancellation=cancellation, lifecycle_lock=lifecycle_lock,
+        )
+        second_confirm = scheduler.submit_recovery_confirmation(
+            "lamp-a", binding, 70.0, owner,
+            deadline=90.0, cancellation=cancellation, lifecycle_lock=lifecycle_lock,
+        )
+        after = scheduler.submit_white_brightness("lamp-a", 40)
+
+        assert before.result(timeout=1) == ("lamp-a", "white_brightness", (30,))
+        assert confirm.result(timeout=1) == "adopted"
+        assert second_confirm.result(timeout=1) == "adopted"
+        assert after.result(timeout=1) == ("lamp-a", "white_brightness", (40,))
+        assert [call[0] for call in calls] == ["confirm", "confirm"]
+        assert timeline == ["control", "confirm", "confirm", "control"]
+        assert [call[1] for call in manager.calls] == [
+            "white_brightness", "white_brightness"
+        ]
+    finally:
+        scheduler.stop(timeout_seconds=1)
+
+
 def test_continuous_drag_sends_periodic_latest_values_without_waiting_for_release():
     from smart_home_tray.command_scheduler import CommandScheduler
 

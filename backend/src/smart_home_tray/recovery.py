@@ -1,7 +1,7 @@
-"""Manual IP recovery discovery orchestration (D.1 only).
+"""Manual recovery discovery, proposal preparation, and internal confirmation.
 
-Every returned address is an unverified UDP announcement. This module does not
-validate identity, create a confirmation proposal, or mutate device state.
+Discovery results remain unverified until the internal prepare/confirm stages
+complete their dedicated authenticated read-only validation.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from concurrent.futures import CancelledError, TimeoutError as FutureTimeoutErro
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Callable, Protocol
+
+from .models import DeviceStatus, ErrorCode
 
 from .device_manager import DeviceManager
 from .discovery import (
@@ -31,6 +33,7 @@ from .recovery_proposals import (
 MAX_RECOVERY_DISCOVERY_SECONDS = 3.0
 MAX_RECOVERY_VALIDATION_SECONDS = 2.5
 MAX_RECOVERY_PREPARE_SECONDS = 5.5
+MAX_RECOVERY_CONFIRM_SECONDS = MAX_RECOVERY_VALIDATION_SECONDS
 RECOVERY_FUTURE_POLL_SECONDS = 0.05
 _PROCESS_RECOVERY_LOCK = threading.Lock()
 
@@ -106,6 +109,47 @@ class PreparationResult:
     def __post_init__(self) -> None:
         if (self.status is PreparationStatus.PROPOSAL_READY_INTERNAL) != (self.proposal is not None):
             raise ValueError("only an internally ready proposal carries a descriptor")
+
+
+class ConfirmationStatus(StrEnum):
+    ADOPTED = "adopted"
+    PROPOSAL_UNAVAILABLE = "proposal_unavailable"
+    PROPOSAL_EXPIRED = "proposal_expired"
+    BUSY = "busy"
+    INVALID_REQUEST = "invalid_request"
+    TIMEOUT = "timeout"
+    CLOSED = "closed"
+    CONFIG_CHANGED = "config_changed"
+    PROTOCOL_NOT_ELIGIBLE = "protocol_not_eligible"
+    AUTH_FAILED = "auth_failed"
+    VALIDATION_FAILED = "validation_failed"
+    CLEANUP_FAILED = "cleanup_failed"
+    INTERNAL_ERROR = "internal_error"
+
+
+class ReadbackStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SUPERSEDED = "superseded"
+
+
+@dataclass(frozen=True)
+class ConfirmationResult:
+    """Internal adoption outcome with an independent post-commit readback."""
+
+    status: ConfirmationStatus
+    readback_status: ReadbackStatus | None = None
+    readback: DeviceStatus | None = None
+    readback_error: ErrorCode | None = None
+    validation_status: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.status is ConfirmationStatus.ADOPTED) != (self.readback_status is not None):
+            raise ValueError("adopted results must carry a separate readback result")
+        if self.readback is not None and self.readback_status is not ReadbackStatus.SUCCEEDED:
+            raise ValueError("only a successful readback carries device status")
+        if self.readback_error is not None and self.readback_status is not ReadbackStatus.FAILED:
+            raise ValueError("readback errors require a failed readback")
 
 
 @dataclass(frozen=True)
@@ -351,6 +395,117 @@ class RecoveryService:
             return PreparationResult(PreparationStatus.INTERNAL_ERROR)
         finally:
             _PROCESS_RECOVERY_LOCK.release()
+
+    def confirm_internal(
+        self, token: str, scheduler: object, *,
+        timeout_seconds: float = MAX_RECOVERY_CONFIRM_SECONDS,
+    ) -> ConfirmationResult:
+        """Consume and confirm one internally issued proposal by token only."""
+        if (
+            self._device_manager is None
+            or not isinstance(token, str)
+            or isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            return ConfirmationResult(ConfirmationStatus.INVALID_REQUEST)
+        if scheduler._is_worker_thread():
+            return ConfirmationResult(ConfirmationStatus.INVALID_REQUEST)
+        with self._lifecycle_lock:
+            if self._closed:
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+        deadline = self._clock() + min(
+            float(timeout_seconds), MAX_RECOVERY_CONFIRM_SECONDS
+        )
+        if not _PROCESS_RECOVERY_LOCK.acquire(blocking=False):
+            return ConfirmationResult(ConfirmationStatus.BUSY)
+        try:
+            # Admission linearizes against close after the global slot is owned.
+            with self._lifecycle_lock:
+                if self._closed:
+                    return ConfirmationResult(ConfirmationStatus.CLOSED)
+            if self._clock() >= deadline:
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            claimed = self._proposal_store.claim(token, owner=self._proposal_owner)
+            if claimed.status is ProposalStoreStatus.EXPIRED:
+                return ConfirmationResult(ConfirmationStatus.PROPOSAL_EXPIRED)
+            if claimed.status is not ProposalStoreStatus.CLAIMED:
+                return ConfirmationResult(ConfirmationStatus.PROPOSAL_UNAVAILABLE)
+            if (
+                claimed.binding is None
+                or claimed.expires_at is None
+                or claimed.owner is not self._proposal_owner
+            ):
+                return ConfirmationResult(ConfirmationStatus.INTERNAL_ERROR)
+            if self._closing_event.is_set():
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+            if self._clock() >= deadline:
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            try:
+                future = scheduler.submit_recovery_confirmation(
+                    claimed.binding.device_id,
+                    claimed.binding,
+                    claimed.expires_at,
+                    claimed.owner,
+                    deadline=deadline,
+                    cancellation=self._closing_event,
+                    lifecycle_lock=self._lifecycle_lock,
+                )
+            except RuntimeError:
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+            return self._await_confirmation_future(future, deadline)
+        except CancelledError:
+            return ConfirmationResult(ConfirmationStatus.CLOSED)
+        except Exception:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return ConfirmationResult(ConfirmationStatus.CLOSED)
+            return ConfirmationResult(ConfirmationStatus.INTERNAL_ERROR)
+        finally:
+            _PROCESS_RECOVERY_LOCK.release()
+
+    def _await_confirmation_future(self, future, deadline: float) -> ConfirmationResult:
+        while True:
+            if self._closing_event.is_set():
+                if future.cancel():
+                    return ConfirmationResult(ConfirmationStatus.CLOSED)
+                raw = future.result()
+                if isinstance(raw, ConfirmationResult) and raw.status is ConfirmationStatus.ADOPTED:
+                    return raw
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+            remaining = deadline - self._clock()
+            try:
+                raw = future.result(
+                    timeout=min(max(remaining, 0.0), RECOVERY_FUTURE_POLL_SECONDS)
+                )
+            except FutureTimeoutError:
+                if self._clock() < deadline:
+                    continue
+                if future.cancel():
+                    return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+                raw = future.result()  # An active validation/readback still owns the slot.
+                if isinstance(raw, ConfirmationResult) and raw.status is ConfirmationStatus.ADOPTED:
+                    return raw
+                if self._closing_event.is_set():
+                    return ConfirmationResult(ConfirmationStatus.CLOSED)
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            except CancelledError:
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+
+            if not isinstance(raw, ConfirmationResult):
+                if self._closing_event.is_set():
+                    return ConfirmationResult(ConfirmationStatus.CLOSED)
+                if self._clock() >= deadline:
+                    return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+                return ConfirmationResult(ConfirmationStatus.INTERNAL_ERROR)
+            if raw.status is ConfirmationStatus.ADOPTED:
+                return raw
+            if self._closing_event.is_set():
+                return ConfirmationResult(ConfirmationStatus.CLOSED)
+            if self._clock() >= deadline:
+                return ConfirmationResult(ConfirmationStatus.TIMEOUT)
+            return raw
 
     def _discover_with_held_slot(self, device_id: str, *, deadline: float) -> RecoveryResult:
         """D.1 classification for a caller that already owns the process slot."""

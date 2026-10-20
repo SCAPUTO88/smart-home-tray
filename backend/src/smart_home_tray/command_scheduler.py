@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 from smart_home_tray.models import BackendError, DeviceStatus, ErrorCode
 from smart_home_tray.recovery import RecoveryCandidate
 from smart_home_tray.recovery_validation import ValidationResult
+from smart_home_tray.recovery_proposals import ProposalBinding
 
 DEFAULT_COALESCING_WINDOW_SECONDS = 0.150
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10.0
@@ -40,6 +41,7 @@ class _CommandKind(Enum):
     COLOR_BRIGHTNESS = "color_brightness"
     POWER = "power"
     VALIDATE_RECOVERY = "validate_recovery"
+    CONFIRM_RECOVERY = "confirm_recovery"
 
     @property
     def continuous(self) -> bool:
@@ -58,6 +60,7 @@ class _QueuedCommand:
     ready_at: float
     bypass_window: bool = False
     recovery_request: "_RecoveryValidationRequest | None" = None
+    confirmation_request: "_RecoveryConfirmationRequest | None" = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,17 @@ class _RecoveryValidationRequest:
     cancellation: threading.Event | None = None
     publish_proposal: bool = False
     proposal_owner: object | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True)
+class _RecoveryConfirmationRequest:
+    device_id: str
+    binding: ProposalBinding
+    expires_at: float
+    owner: object = field(repr=False, compare=False)
+    deadline: float = 0.0
+    cancellation: threading.Event | None = None
+    lifecycle_lock: object = field(repr=False, compare=False, default=None)
 
 
 class CommandScheduler:
@@ -212,6 +226,35 @@ class CommandScheduler:
             self._condition.notify_all()
         return future
 
+    def submit_recovery_confirmation(
+        self, device_id: str, binding: ProposalBinding, expires_at: float,
+        owner: object, *, deadline: float, cancellation: threading.Event,
+        lifecycle_lock: object,
+    ) -> Future[object]:
+        """Queue a discrete, typed confirmation and adoption barrier."""
+        future: Future[object] = Future()
+        with self._condition:
+            if not self._started or self._closed:
+                raise RuntimeError("command scheduler is unavailable")
+            queue = self._queues.get(device_id) if isinstance(device_id, str) else None
+            if queue is None:
+                raise BackendError(ErrorCode.INVALID_INPUT, "Unknown device ID")
+            request = _RecoveryConfirmationRequest(
+                device_id, binding, expires_at, owner, deadline, cancellation,
+                lifecycle_lock,
+            )
+            now = self._clock()
+            for previous in queue:
+                if previous.kind.continuous:
+                    previous.ready_at = min(previous.ready_at, now)
+                    previous.bypass_window = True
+            queue.append(_QueuedCommand(
+                _CommandKind.CONFIRM_RECOVERY, device_id, (), future, now,
+                confirmation_request=request,
+            ))
+            self._condition.notify_all()
+        return future
+
     def _is_worker_thread(self) -> bool:
         current = threading.current_thread()
         with self._condition:
@@ -297,6 +340,19 @@ class CommandScheduler:
 
     def _execute(self, command: _QueuedCommand):
         manager = self._device_manager
+        if command.kind is _CommandKind.CONFIRM_RECOVERY:
+            request = command.confirmation_request
+            if request is None:
+                return None
+            try:
+                return manager._confirm_recovery_candidate(
+                    request.device_id, request.binding, request.expires_at,
+                    request.owner, deadline=request.deadline,
+                    cancellation=request.cancellation,
+                    lifecycle_lock=request.lifecycle_lock,
+                )
+            except Exception:
+                return None
         if command.kind is _CommandKind.VALIDATE_RECOVERY:
             request = command.recovery_request
             if request is None:
