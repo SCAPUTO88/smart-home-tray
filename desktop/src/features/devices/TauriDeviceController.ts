@@ -170,9 +170,9 @@ export class TauriDeviceController implements DeviceController, RecoveryReconcil
       if (epoch !== this.catalogEpoch) throw new OperationError('COMMAND_CANCELED')
       if (status.deviceId !== deviceId) throw new OperationError('DEVICE_ERROR')
       if (causalEpoch !== (this.observationEpoch.get(deviceId) ?? 0)) {
-        const hasLaterObservation = (this.latestAppliedCommand.get(deviceId) ?? 0) > (this.recoveryCommandFloor.get(deviceId) ?? 0)
-          || (this.latestAppliedRefresh.get(deviceId) ?? 0) > (this.recoveryRefreshFloor.get(deviceId) ?? 0)
-        if (!hasLaterObservation) return this.invalidateCurrent(deviceId) ?? mapPublicDevice(status)
+        // A refresh is read-only. If it crossed the recovery barrier, its observation
+        // may predate the adoption, so discard it and retain the controller's current
+        // authoritative readback (or already-stale state when no readback was available).
         return this.known.get(deviceId) ?? mapPublicDevice(status)
       }
       if ((this.latestIssuedCommand.get(deviceId) ?? 0) !== issuedVersion || (this.snapshotRevision.get(deviceId) ?? 0) !== snapshotVersion || refreshId <= (this.latestAppliedRefresh.get(deviceId) ?? 0) || (this.pendingCommands.get(deviceId)?.size ?? 0) > 0) throw new OperationError('COMMAND_CANCELED')
@@ -261,10 +261,12 @@ export class TauriDeviceController implements DeviceController, RecoveryReconcil
           || (this.latestAppliedRefresh.get(deviceId) ?? 0) > (this.recoveryRefreshFloor.get(deviceId) ?? 0)
         this.settlePendingHsv(deviceId, id)
         if (hasLaterObservation || id <= (this.latestAppliedCommand.get(deviceId) ?? 0)) return this.known.get(deviceId) ?? mapPublicDevice(status)
+        // White, temperature and HSV writes can first change work_mode in the
+        // backend. Power writes do not, so keep their invalidation narrow.
         const fields = request.command === 'device.power' ? ['power'] as const
-          : request.command === 'device.whiteBrightness' ? ['whiteBrightness'] as const
-            : request.command === 'device.colorTemperature' ? ['colorTemperature'] as const
-              : ['hsv', 'colorValue'] as const
+          : request.command === 'device.whiteBrightness' ? ['whiteBrightness', 'workMode'] as const
+            : request.command === 'device.colorTemperature' ? ['colorTemperature', 'workMode'] as const
+              : ['hsv', 'colorValue', 'workMode'] as const
         return this.invalidateCurrent(deviceId, fields) ?? mapPublicDevice(status)
       }
       const response = mapPublicDevice(status)

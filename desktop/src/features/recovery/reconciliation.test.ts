@@ -70,6 +70,37 @@ describe('recovery reconciliation', () => {
     expect(late.state.knowledge.whiteBrightness).toBe('stale')
     await controller.command('lamp', { hsv: { hue: 20 } })
   })
+  it.each([
+    { name: 'whiteBrightness', patch: { whiteBrightness: 80 }, blockedPatch: { mode: 'white' }, stale: ['whiteBrightness', 'workMode'], unavailable: 'colorTemperature' },
+    { name: 'colorTemperature', patch: { whiteTemperature: 80 }, blockedPatch: { mode: 'white' }, stale: ['colorTemperature', 'workMode'], unavailable: 'whiteBrightness' },
+    { name: 'HSV', patch: { hsv: { hue: 200 } }, blockedPatch: { hsv: { saturation: 10 } }, stale: ['hsv', 'colorValue', 'workMode'] },
+    { name: 'power', patch: { enabled: false }, blockedPatch: { enabled: true }, stale: ['power'] },
+  ] as const)('invalidates only physical fields affected by a late $name command', async ({ patch, stale, blockedPatch, unavailable }) => {
+    const { controller, bridge } = await setup()
+    const pending = deferred<PublicDeviceStatus>()
+    bridge.command = vi.fn(() => pending.promise)
+    const token = controller.beginRecoveryConfirmation('lamp')
+    const command = controller.command('lamp', patch)
+    const recovered = publicDevice()
+    recovered.state.workMode = 'white'
+    recovered.state.whiteBrightnessPercent = 67
+    recovered.state.colorTemperaturePercent = 33
+    recovered.state.hsv = { hue: 240, saturation: 50, value: 40 }
+    recovered.state.colorValuePercent = 40
+    if (unavailable === 'colorTemperature') recovered.state.knowledge.colorTemperature = 'unknown'
+    if (unavailable === 'whiteBrightness') recovered.state.knowledge.whiteBrightness = 'unknown'
+    controller.reconcileRecovery(token, { status: 'SUCCEEDED', device: recovered })
+
+    pending.resolve(publicDevice())
+    const status = (await command).state.knowledge
+    for (const field of stale) expect(status[field]).toBe('stale')
+    const staleFields = new Set<string>(stale)
+    for (const field of ['power', 'workMode', 'whiteBrightness', 'colorTemperature', 'hsv', 'colorValue'] as const) {
+      if (field === unavailable) expect(status[field]).toBe('unknown')
+      else if (!staleFields.has(field)) expect(status[field]).toBe('observed')
+    }
+    await expect(controller.command('lamp', blockedPatch)).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
+  })
   it('invalidates command or refresh snapshots that completed after the checkpoint but before adoption', async () => {
     for (const operation of ['command', 'refresh']) {
       const { controller } = await setup()
@@ -91,6 +122,23 @@ describe('recovery reconciliation', () => {
     const result = await refresh
     expect(result.state.knowledge.power).toBe('stale')
     await expect(controller.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
+  })
+  it('discards an old refresh response after applying an authoritative recovery readback', async () => {
+    const { controller, bridge } = await setup()
+    const pending = deferred<PublicDeviceStatus>()
+    bridge.status = vi.fn(() => pending.promise)
+    const refresh = controller.refresh('lamp')
+    const recovered = publicDevice()
+    recovered.state.hsv = { hue: 312, saturation: 21, value: 43 }
+    recovered.state.whiteBrightnessPercent = 76
+    const token = controller.beginRecoveryConfirmation('lamp')
+    controller.reconcileRecovery(token, { status: 'SUCCEEDED', device: recovered })
+    pending.resolve(publicDevice())
+    const result = await refresh
+    expect(result.state.hsv.hue).toBe(312)
+    expect(result.state.whiteBrightness).toBe(76)
+    expect(result.state.knowledge.hsv).toBe('observed')
+    await controller.command('lamp', { hsv: { saturation: 22 } })
   })
   it('keeps a pre-confirm refresh response non-authoritative after ADOPTED and permits a later fresh refresh', async () => {
     const { controller, bridge } = await setup()

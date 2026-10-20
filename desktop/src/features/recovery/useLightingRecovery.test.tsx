@@ -62,6 +62,27 @@ describe('lighting recovery session', () => {
     expect(s.result.current.selectedView?.pendingOperations).toHaveLength(0)
     await expect(s.lighting.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
   })
+  it.each([
+    { name: 'whiteBrightness', patch: { whiteBrightness: 81 }, field: 'whiteBrightness' as const },
+    { name: 'colorTemperature', patch: { whiteTemperature: 81 }, field: 'colorTemperature' as const },
+    { name: 'HSV', patch: { hsv: { hue: 81 } }, field: 'hsv' as const },
+  ])('projects $name command side effects as stale after its late result', async ({ patch, field }) => {
+    const s = await setup()
+    const pending = deferred<PublicDeviceStatus>()
+    s.bridge.command = vi.fn(() => pending.promise)
+    let confirmation!: Promise<ConfirmOutcome>
+    act(() => { confirmation = s.result.current.confirmRecovery(proposal.proposalId); s.result.current.issue('lamp', patch, 'success') })
+    const recovered = publicDevice()
+    recovered.state.workMode = 'white'
+    recovered.state.hsv = { hue: 242, saturation: 52, value: 42 }
+    await act(async () => { s.confirm.resolve(adopted({ status: 'SUCCEEDED', device: recovered })); await confirmation })
+    expect(s.result.current.selectedView?.confirmed.knowledge.workMode).toBe('observed')
+    await act(async () => { pending.resolve(publicDevice()) })
+    expect(s.result.current.selectedView?.confirmed.knowledge[field]).toBe('stale')
+    expect(s.result.current.selectedView?.confirmed.knowledge.workMode).toBe('stale')
+    expect(s.result.current.selectedView?.preview.knowledge.workMode).toBe('stale')
+    expect(s.result.current.selectedView?.pendingOperations).toHaveLength(0)
+  })
   it('settles an older command without resurrecting the invalid baseline', async () => {
     const s = await setup()
     const pending = deferred<PublicDeviceStatus>()
@@ -145,6 +166,25 @@ describe('lighting recovery session', () => {
     await act(async () => { await s.result.current.refreshDevice('lamp') })
     await act(async () => { s.confirm.resolve(adopted({ status: 'SUCCEEDED', device: publicDevice() })); await confirmation })
     expect(s.result.current.selectedView?.confirmed.hsv.hue).toBe(120)
+  })
+  it('discards a refresh response that arrives after the authoritative recovery readback', async () => {
+    const s = await setup()
+    const oldRefresh = deferred<PublicDeviceStatus>()
+    s.bridge.status = vi.fn(() => oldRefresh.promise)
+    let confirmation!: Promise<ConfirmOutcome>
+    let refresh!: Promise<void>
+    act(() => { refresh = s.result.current.refreshDevice('lamp'); confirmation = s.result.current.confirmRecovery(proposal.proposalId) })
+    const recovered = publicDevice()
+    recovered.state.hsv = { hue: 316, saturation: 29, value: 46 }
+    recovered.state.whiteBrightnessPercent = 73
+    await act(async () => { s.confirm.resolve(adopted({ status: 'SUCCEEDED', device: recovered })); await confirmation })
+    expect(s.result.current.selectedView?.confirmed.hsv.hue).toBe(316)
+    oldRefresh.resolve(publicDevice())
+    await act(async () => { await refresh })
+    expect(s.result.current.selectedView?.confirmed.hsv.hue).toBe(316)
+    expect(s.result.current.selectedView?.confirmed.whiteBrightness).toBe(73)
+    expect(s.result.current.selectedView?.confirmed.knowledge.hsv).toBe('observed')
+    expect(s.result.current.selectedView?.preview.hsv.hue).toBe(316)
   })
   it('reports ambiguous transport as indeterminate, invalidates baseline and never retries', async () => {
     const s = await setup()

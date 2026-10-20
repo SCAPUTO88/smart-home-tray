@@ -37,6 +37,12 @@ function fieldsOf(patch: LightingPatch): LightingField[] {
   return fields
 }
 
+function readbackFieldsOf(patch: LightingPatch, accepted: LightingField[], latest: LatestByField, operationId: number): LightingField[] {
+  const mayChangeMode = patch.whiteBrightness !== undefined || patch.whiteTemperature !== undefined || patch.hsv !== undefined
+  const modeStillOwned = (latest.mode ?? 0) <= operationId
+  return mayChangeMode && modeStillOwned && !accepted.includes('mode') ? [...accepted, 'mode'] : accepted
+}
+
 function fieldValue(patch: LightingPatch, field: LightingField): unknown {
   if (field.startsWith('hsv.')) return patch.hsv?.[field.slice(4) as 'hue' | 'saturation' | 'value']
   switch (field) {
@@ -185,7 +191,7 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
         if (item.deviceId !== deviceId) return item
         const acceptedFields = fieldsOf(patch).filter((field) => latestByField.current[deviceId]?.[field] === operationId)
         if (!acceptedFields.length) return item
-        const state = mergeReadback(initialView(item).confirmed, device, acceptedFields)
+        const state = mergeReadback(initialView(item).confirmed, device, readbackFieldsOf(patch, acceptedFields, latestByField.current[deviceId] ?? {}, operationId))
         return { ...item, connection: device.connection, state }
       }))
       setViews((current) => {
@@ -193,7 +199,8 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
         if (!view) return current
         const pendingOperations = view.pendingOperations.filter((item) => item.operationId !== operationId)
         const acceptedFields = fieldsOf(patch).filter((field) => latestByField.current[deviceId]?.[field] === operationId)
-        const confirmed = acceptedFields.length ? mergeReadback(view.confirmed, device, acceptedFields) : view.confirmed
+        const readbackFields = readbackFieldsOf(patch, acceptedFields, latestByField.current[deviceId] ?? {}, operationId)
+        const confirmed = acceptedFields.length ? mergeReadback(view.confirmed, device, readbackFields) : view.confirmed
         const active = activeOperations(pendingOperations, latestByField.current[deviceId] ?? {})
         const outcome = latestOutcomeByDevice.current[deviceId]
         const status = active.length ? 'pending' : outcome?.status ?? view.status
