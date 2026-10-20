@@ -18,10 +18,8 @@ export interface RecoveryCheckpoint {
   readonly deviceId: string
   readonly catalog: number
   readonly generation: number
-  readonly command: number
-  readonly refresh: number
-  readonly state: number
-  readonly snapshot: number
+  /** Causal observation epoch captured when confirm was sent. */
+  readonly observationEpoch: number
 }
 
 export interface RecoveryReconciler {

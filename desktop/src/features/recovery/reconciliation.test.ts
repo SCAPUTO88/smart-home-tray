@@ -45,62 +45,110 @@ describe('recovery reconciliation', () => {
     await expect(controller.command('lamp', { hsv: { hue: 10 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
     await expect(controller.command('lamp', { enabled: true })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
   })
-  it('rejects an older in-flight command and its pending HSV baseline after adoption', async () => {
+  it('settles an older in-flight command stale and blocks HSV composition after adoption', async () => {
     const { controller, bridge } = await setup()
     const pending = deferred<PublicDeviceStatus>()
     bridge.command = vi.fn(() => pending.promise)
     const command = controller.command('lamp', { hsv: { hue: 200 } })
-    const rejected = expect(command).rejects.toMatchObject({ code: 'COMMAND_CANCELED' })
+    const settled = expect(command).resolves.toMatchObject({ state: { knowledge: { hsv: 'stale' } } })
     controller.reconcileRecovery(controller.beginRecoveryConfirmation('lamp'), { status: 'FAILED' })
     await expect(controller.command('lamp', { hsv: { saturation: 10 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
     pending.resolve(publicDevice())
-    await rejected
+    await settled
     await expect(controller.command('lamp', { enabled: false })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
   })
-  it('preserves a newer pending command and discards recovery readback', async () => {
+  it('applies authoritative recovery readback despite an in-flight command, then makes that command response stale', async () => {
     const { controller, bridge } = await setup()
     const token = controller.beginRecoveryConfirmation('lamp')
     const pending = deferred<PublicDeviceStatus>()
     bridge.command = vi.fn(() => pending.promise)
     const command = controller.command('lamp', { whiteBrightness: 80 })
-    expect(controller.reconcileRecovery(token, { status: 'SUCCEEDED', device: publicDevice() })?.state.knowledge.power).toBe('stale')
+    const recovered = publicDevice(); recovered.state.hsv!.hue = 301
+    expect(controller.reconcileRecovery(token, { status: 'SUCCEEDED', device: recovered })?.state.hsv.hue).toBe(301)
     pending.resolve(publicDevice())
-    await command
-    await controller.command('lamp', { enabled: false })
+    const late = await command
+    expect(late.state.knowledge.whiteBrightness).toBe('stale')
+    await controller.command('lamp', { hsv: { hue: 20 } })
   })
-  it('preserves snapshots already applied by newer commands or refreshes', async () => {
+  it('invalidates command or refresh snapshots that completed after the checkpoint but before adoption', async () => {
     for (const operation of ['command', 'refresh']) {
       const { controller } = await setup()
       const token = controller.beginRecoveryConfirmation('lamp')
       if (operation === 'command') await controller.command('lamp', { enabled: false })
       else await controller.refresh('lamp')
-      expect(controller.reconcileRecovery(token, { status: 'FAILED' })).toBeUndefined()
-      await controller.command('lamp', { enabled: true })
+      expect(controller.reconcileRecovery(token, { status: 'FAILED' })?.state.knowledge.power).toBe('stale')
+      await expect(controller.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
     }
   })
-  it('rejects refresh started before capture but lets a newer pending refresh complete', async () => {
-    for (const newer of [false, true]) {
-      const { controller, bridge } = await setup()
-      const pending = deferred<PublicDeviceStatus>()
-      bridge.status = vi.fn(() => pending.promise)
-      const before = newer ? controller.beginRecoveryConfirmation('lamp') : undefined
-      const refresh = controller.refresh('lamp')
-      const checked = newer ? expect(refresh).resolves.toMatchObject({ deviceId: 'lamp' }) : expect(refresh).rejects.toMatchObject({ code: 'COMMAND_CANCELED' })
-      controller.reconcileRecovery(before ?? controller.beginRecoveryConfirmation('lamp'), { status: 'FAILED' })
-      pending.resolve(publicDevice())
-      await checked
-    }
+  it.each<ReadbackResult>([{ status: 'FAILED' }, { status: 'SUPERSEDED' }, { status: 'SUCCEEDED' }])('does not let a refresh in flight across %s restore a baseline', async (readback) => {
+    const { controller, bridge } = await setup()
+    const token = controller.beginRecoveryConfirmation('lamp')
+    const pending = deferred<PublicDeviceStatus>()
+    bridge.status = vi.fn(() => pending.promise)
+    const refresh = controller.refresh('lamp')
+    controller.reconcileRecovery(token, readback)
+    pending.resolve(publicDevice())
+    const result = await refresh
+    expect(result.state.knowledge.power).toBe('stale')
+    await expect(controller.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
   })
-  it('invalidates late adoption without applying its readback, and rejects mismatched Device ID and previous catalog generation', async () => {
+  it('keeps a pre-confirm refresh response non-authoritative after ADOPTED and permits a later fresh refresh', async () => {
+    const { controller, bridge } = await setup()
+    const pending = deferred<PublicDeviceStatus>()
+    bridge.status = vi.fn(() => pending.promise)
+    const refresh = controller.refresh('lamp')
+    const token = controller.beginRecoveryConfirmation('lamp')
+    controller.reconcileRecovery(token, { status: 'FAILED' })
+    pending.resolve(publicDevice())
+    expect((await refresh).state.knowledge.power).toBe('stale')
+    await expect(controller.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
+    bridge.status = vi.fn(async () => publicDevice())
+    expect((await controller.refresh('lamp')).state.knowledge.hsv).toBe('observed')
+    await controller.command('lamp', { hsv: { hue: 20 } })
+  })
+  it('indeterminate creates the same causal barrier without treating adoption as failed', async () => {
+    const { controller, bridge } = await setup()
+    const token = controller.beginRecoveryConfirmation('lamp')
+    const pending = deferred<PublicDeviceStatus>()
+    bridge.status = vi.fn(() => pending.promise)
+    const refresh = controller.refresh('lamp')
+    controller.reconcileRecovery(token)
+    pending.resolve(publicDevice())
+    expect((await refresh).state.knowledge.power).toBe('stale')
+    await expect(controller.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
+  })
+  it('keeps causal barriers independent per device', async () => {
+    const { controller } = await setup()
+    controller.reconcileRecovery(controller.beginRecoveryConfirmation('lamp'), { status: 'FAILED' })
+    await expect(controller.command('lamp', { hsv: { hue: 20 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
+    await controller.command('other', { enabled: false })
+  })
+  it('does not let a pre-barrier command overwrite a command proven applied after the barrier', async () => {
+    const { controller, bridge } = await setup()
+    const old = deferred<PublicDeviceStatus>()
+    const newer = deferred<PublicDeviceStatus>()
+    bridge.command = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(newer.promise).mockResolvedValue(publicDevice())
+    const oldCommand = controller.command('lamp', { whiteBrightness: 20 })
+    controller.reconcileRecovery(controller.beginRecoveryConfirmation('lamp'), { status: 'FAILED' })
+    const newCommand = controller.command('lamp', { whiteBrightness: 90 })
+    const latest = publicDevice(); latest.state.whiteBrightnessPercent = 90
+    newer.resolve(latest)
+    await newCommand
+    old.resolve(publicDevice())
+    expect((await oldCommand).state.whiteBrightness).toBe(90)
+    expect((await controller.command('lamp', { mode: 'white' })).state.knowledge.whiteBrightness).toBe('observed')
+  })
+  it('accepts an earlier terminal recovery while a newer one is pending, then orders already-reconciled generations and catalogs', async () => {
     const { controller } = await setup()
     const old = controller.beginRecoveryConfirmation('lamp')
     const current = controller.beginRecoveryConfirmation('lamp')
     const stale = controller.reconcileRecovery(old, { status: 'SUCCEEDED', device: publicDevice() })
-    expect(stale?.state.knowledge.power).toBe('stale')
+    expect(stale?.state.knowledge.power).toBe('observed')
     expect(stale?.state.enabled).toBe(true)
-    expect(controller.reconcileRecovery(current, { status: 'SUCCEEDED', device: publicDevice('other') })).toBeUndefined()
-    const fresh = controller.beginRecoveryConfirmation('lamp')
-    expect(controller.reconcileRecovery(fresh, { status: 'SUCCEEDED', device: publicDevice('other') })?.state.knowledge.power).toBe('stale')
+    const latest = publicDevice(); latest.state.hsv!.hue = 250
+    expect(controller.reconcileRecovery(current, { status: 'SUCCEEDED', device: latest })?.state.hsv.hue).toBe(250)
+    expect(controller.reconcileRecovery(old, { status: 'FAILED' })).toBeUndefined()
+    await controller.command('lamp', { hsv: { saturation: 10 } })
     const previousCatalog = controller.beginRecoveryConfirmation('lamp')
     await controller.list()
     expect(controller.reconcileRecovery(previousCatalog, { status: 'FAILED' })).toBeUndefined()
