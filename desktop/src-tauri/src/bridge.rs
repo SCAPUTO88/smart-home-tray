@@ -1119,7 +1119,13 @@ mod tests {
     }
     #[test]
     fn fixture_correlates_concurrent_out_of_order_responses() {
-        let client = BridgeClient::spawn_config(&ProcessConfig::Fixture).unwrap();
+        let script = r#"import json,sys
+first=json.loads(sys.stdin.readline())
+second=json.loads(sys.stdin.readline())
+for request in (second,first):
+ print(json.dumps({"requestId":request["requestId"],"result":{"deviceId":request["payload"]["deviceId"]}}),flush=True)
+"#;
+        let client = BridgeClient::spawn_command(python_process(script)).unwrap();
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let slow_client = client.clone();
         let slow_barrier = barrier.clone();
@@ -1185,20 +1191,18 @@ mod tests {
     }
     #[test]
     fn bridge_timeout_does_not_cancel_backend_or_misroute_late_response() {
-        let script = r#"import json,sys,time
+        let script = r#"import json,sys
 first=json.loads(sys.stdin.readline())
-time.sleep(0.06)
-print(json.dumps({"requestId":first["requestId"],"result":{"late":True}}),flush=True)
 second=json.loads(sys.stdin.readline())
+print(json.dumps({"requestId":first["requestId"],"result":{"late":True}}),flush=True)
 print(json.dumps({"requestId":second["requestId"],"result":{"current":True}}),flush=True)
 "#;
         let mut client = BridgeClient::spawn_command(python_process(script)).unwrap();
-        client.timeout = Duration::from_millis(10);
+        client.timeout = Duration::from_millis(100);
         assert_eq!(
             client.request("devices.list", json!({})).unwrap_err().code,
             BridgeErrorCode::Timeout
         );
-        thread::sleep(Duration::from_millis(80));
         let current = client.request("devices.list", json!({})).unwrap();
         assert_eq!(current, json!({"current":true}));
         client.shutdown();

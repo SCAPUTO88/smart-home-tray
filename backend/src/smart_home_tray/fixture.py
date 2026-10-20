@@ -15,6 +15,8 @@ from typing import Callable
 LIMIT = 65_536
 LOCK = threading.RLock()
 TTL_SECONDS = 60.0
+MAX_PENDING_PROPOSALS = 4
+_RECOVERY_ACTIVE_SLOT = threading.Lock()
 
 
 def _device(device_id: str, name: str, protocol: float, address: str) -> dict[str, object]:
@@ -61,10 +63,9 @@ _RECOVERY_PROFILES: dict[str, tuple[float, str, str]] = {
     "fixture-recovery-readback-superseded": (3.5, "PROPOSAL_READY", "198.51.100.46"),
     "fixture-recovery-confirm-auth-failed": (3.5, "PROPOSAL_READY", "198.51.100.47"),
     "fixture-recovery-confirm-transport-failed": (3.5, "PROPOSAL_READY", "198.51.100.48"),
-    "fixture-recovery-confirm-busy": (3.5, "PROPOSAL_READY", "198.51.100.49"),
+    "fixture-recovery-capacity": (3.5, "PROPOSAL_READY", "198.51.100.49"),
     "fixture-recovery-confirm-config-changed": (3.5, "PROPOSAL_READY", "198.51.100.50"),
     "fixture-recovery-confirm-timeout": (3.5, "PROPOSAL_READY", "198.51.100.51"),
-    "fixture-recovery-slow": (3.5, "PROPOSAL_READY", "198.51.100.52"),
 }
 for _device_id, (_version, _status, _address) in _RECOVERY_PROFILES.items():
     DEVICES[_device_id] = _device(
@@ -85,13 +86,23 @@ class _Proposal:
 class RecoveryFixture:
     """In-memory deterministic stand-in for the recovery service."""
 
-    def __init__(self, monotonic: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        monotonic: Callable[[], float] = time.monotonic,
+        *,
+        active_slot: object | None = None,
+    ) -> None:
         self._monotonic = monotonic
+        self._active_slot = _RECOVERY_ACTIVE_SLOT if active_slot is None else active_slot
         self._lock = threading.RLock()
         self._devices = copy.deepcopy(DEVICES)
         self._next_token = 0
         self._proposals: dict[str, _Proposal] = {}
-        self._used: set[str] = set()
+
+    def _purge_expired(self, now: float) -> None:
+        for token, proposal in tuple(self._proposals.items()):
+            if now >= proposal.expires_at:
+                del self._proposals[token]
 
     def catalog(self) -> list[dict[str, object]]:
         with self._lock, LOCK:
@@ -103,48 +114,61 @@ class RecoveryFixture:
     def prepare(self, device_id: str) -> dict[str, object]:
         if not isinstance(device_id, str) or not device_id.strip():
             return {"result": {"status": "INVALID_INPUT"}}
-        profile = _RECOVERY_PROFILES.get(device_id)
-        if profile is None:
-            return {"result": {"status": "DEVICE_NOT_FOUND"}}
-        _protocol, status, address = profile
-        if device_id == "fixture-recovery-slow":
-            time.sleep(0.08)  # short ordering fixture; never models a protocol deadline
-        if status != "PROPOSAL_READY":
-            return {"result": {"status": status}}
-        with self._lock:
-            self._next_token += 1
-            raw = hashlib.sha256(f"fixture-proposal-{self._next_token}-{device_id}".encode()).digest()
-            token = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-            self._proposals[token] = _Proposal(device_id, address, self._monotonic() + TTL_SECONDS)
-        return {"result": {"status": "PROPOSAL_READY", "proposalId": token, "candidateIp": address, "ttlSeconds": TTL_SECONDS}}
+        if not self._active_slot.acquire(blocking=False):
+            return {"result": {"status": "BUSY"}}
+        try:
+            profile = _RECOVERY_PROFILES.get(device_id)
+            if profile is None:
+                return {"result": {"status": "DEVICE_NOT_FOUND"}}
+            _protocol, status, address = profile
+            if status != "PROPOSAL_READY":
+                return {"result": {"status": status}}
+            with self._lock:
+                now = self._monotonic()
+                self._purge_expired(now)
+                if any(item.device_id == device_id for item in self._proposals.values()):
+                    return {"result": {"status": "BUSY"}}
+                if len(self._proposals) >= MAX_PENDING_PROPOSALS:
+                    return {"result": {"status": "BUSY"}}
+                self._next_token += 1
+                raw = hashlib.sha256(f"fixture-proposal-{self._next_token}-{device_id}".encode()).digest()
+                token = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+                self._proposals[token] = _Proposal(device_id, address, now + TTL_SECONDS)
+            return {"result": {"status": "PROPOSAL_READY", "proposalId": token, "candidateIp": address, "ttlSeconds": TTL_SECONDS}}
+        finally:
+            self._active_slot.release()
 
     def confirm(self, proposal_id: str) -> dict[str, object]:
-        with self._lock:
-            proposal = self._proposals.get(proposal_id)
-            if proposal is None or proposal_id in self._used or self._monotonic() >= proposal.expires_at:
-                return {"result": {"recovery": {"status": "PROPOSAL_EXPIRED"}}}
-            self._used.add(proposal_id)
-        device_id = proposal.device_id
-        confirm_status = {
-            "fixture-recovery-confirm-auth-failed": "AUTH_FAILED",
-            "fixture-recovery-confirm-transport-failed": "TRANSPORT_FAILED",
-            "fixture-recovery-confirm-busy": "BUSY",
-            "fixture-recovery-confirm-config-changed": "CONFIG_CHANGED",
-            "fixture-recovery-confirm-timeout": "TIMEOUT",
-        }.get(device_id)
-        if confirm_status:
-            return {"result": {"recovery": {"status": confirm_status}}}
-        with self._lock, LOCK:
-            self._devices[device_id]["address"] = proposal.candidate_ip
-        readback_status = {
-            "fixture-recovery-readback-failed": "FAILED",
-            "fixture-recovery-readback-superseded": "SUPERSEDED",
-        }.get(device_id, "SUCCEEDED")
-        readback: dict[str, object] = {"status": readback_status}
-        if readback_status == "SUCCEEDED":
+        if not self._active_slot.acquire(blocking=False):
+            return {"result": {"recovery": {"status": "BUSY"}}}
+        try:
             with self._lock:
-                readback["device"] = json.loads(json.dumps(self._devices[device_id]))
-        return {"result": {"recovery": {"status": "ADOPTED"}, "readback": readback}}
+                self._purge_expired(self._monotonic())
+                proposal = self._proposals.pop(proposal_id, None)
+                if proposal is None:
+                    return {"result": {"recovery": {"status": "PROPOSAL_EXPIRED"}}}
+            device_id = proposal.device_id
+            confirm_status = {
+                "fixture-recovery-confirm-auth-failed": "AUTH_FAILED",
+                "fixture-recovery-confirm-transport-failed": "TRANSPORT_FAILED",
+                "fixture-recovery-confirm-config-changed": "CONFIG_CHANGED",
+                "fixture-recovery-confirm-timeout": "TIMEOUT",
+            }.get(device_id)
+            if confirm_status:
+                return {"result": {"recovery": {"status": confirm_status}}}
+            with self._lock, LOCK:
+                self._devices[device_id]["address"] = proposal.candidate_ip
+            readback_status = {
+                "fixture-recovery-readback-failed": "FAILED",
+                "fixture-recovery-readback-superseded": "SUPERSEDED",
+            }.get(device_id, "SUCCEEDED")
+            readback: dict[str, object] = {"status": readback_status}
+            if readback_status == "SUCCEEDED":
+                with self._lock:
+                    readback["device"] = json.loads(json.dumps(self._devices[device_id]))
+            return {"result": {"recovery": {"status": "ADOPTED"}, "readback": readback}}
+        finally:
+            self._active_slot.release()
 
 
 RECOVERY = RecoveryFixture()
@@ -191,8 +215,6 @@ def handle(request: object, recovery: RecoveryFixture = RECOVERY) -> None:
     if recovery.device(device_id) is None:
         respond({"requestId": request_id, "error": {"code": "DEVICE_OFFLINE", "message": "Device is unreachable"}})
         return
-    if command == "device.status" and device_id == "fixture-desk-lamp":
-        time.sleep(0.08)
     with LOCK:
         device = recovery.device(device_id)
         state = device["state"]

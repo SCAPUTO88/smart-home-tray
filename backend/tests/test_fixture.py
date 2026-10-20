@@ -43,23 +43,6 @@ def test_fixture_supports_existing_hsv_and_power_commands():
         process.stdin.close()
         assert process.wait(timeout=3) == 0
 
-def test_fixture_allows_out_of_order_status_responses():
-    process = start_fixture()
-    try:
-        requests = [
-            {"requestId":"slow", "command":"device.status", "payload":{"deviceId":"fixture-desk-lamp"}},
-            {"requestId":"fast", "command":"device.status", "payload":{"deviceId":"fixture-led-strip"}},
-        ]
-        process.stdin.write(b"".join(json.dumps(item).encode() + b"\n" for item in requests))
-        process.stdin.flush()
-        first = json.loads(process.stdout.readline())
-        second = json.loads(process.stdout.readline())
-        assert first["requestId"] == "fast"
-        assert second["requestId"] == "slow"
-    finally:
-        process.stdin.close()
-        assert process.wait(timeout=3) == 0
-
 def test_fixture_recovery_prepare_confirm_and_replay_in_same_process():
     process = start_fixture()
     try:
@@ -96,6 +79,74 @@ def test_recovery_fixture_uses_injected_monotonic_clock_for_expiry():
     now[0] += 60.0
     assert recovery.confirm(proposal["proposalId"]) == {"result":{"recovery":{"status":"PROPOSAL_EXPIRED"}}}
 
+
+def test_recovery_busy_admission_does_not_consume_pending_proposal():
+    import threading
+    from smart_home_tray.fixture import RecoveryFixture
+
+    now = [100.0]
+    slot = threading.Lock()
+    recovery = RecoveryFixture(monotonic=lambda: now[0], active_slot=slot)
+    proposal = recovery.prepare("fixture-tuya35")["result"]["proposalId"]
+
+    assert slot.acquire(blocking=False)
+    try:
+        assert recovery.confirm(proposal) == {"result":{"recovery":{"status":"BUSY"}}}
+    finally:
+        slot.release()
+
+    now[0] += 1.0
+    assert recovery.confirm(proposal)["result"]["recovery"]["status"] == "ADOPTED"
+    assert recovery.confirm(proposal) == {"result":{"recovery":{"status":"PROPOSAL_EXPIRED"}}}
+
+
+def test_recovery_fixture_enforces_pending_proposal_limits_and_releases_capacity():
+    from smart_home_tray.fixture import RecoveryFixture
+
+    now = [20.0]
+    recovery = RecoveryFixture(monotonic=lambda: now[0])
+    first = recovery.prepare("fixture-tuya35")["result"]["proposalId"]
+    assert recovery.prepare("fixture-tuya35") == {"result":{"status":"BUSY"}}
+
+    device_ids = [
+        "fixture-tuya35-alt",
+        "fixture-recovery-readback-failed",
+        "fixture-recovery-readback-superseded",
+    ]
+    proposals = [recovery.prepare(device_id)["result"]["proposalId"] for device_id in device_ids]
+    fifth = recovery.prepare("fixture-recovery-capacity")
+    assert fifth == {"result":{"status":"BUSY"}}
+
+    assert recovery.confirm(first)["result"]["recovery"]["status"] == "ADOPTED"
+    new_proposal = recovery.prepare("fixture-recovery-capacity")["result"]["proposalId"]
+    assert recovery.confirm(first) == {"result":{"recovery":{"status":"PROPOSAL_EXPIRED"}}}
+    assert all(recovery.confirm(token)["result"]["recovery"]["status"] == "ADOPTED" for token in proposals)
+    assert recovery.confirm(new_proposal)["result"]["recovery"]["status"] == "ADOPTED"
+
+    pending = recovery.prepare("fixture-tuya35")["result"]["proposalId"]
+    now[0] += 60.0
+    assert recovery.prepare("fixture-tuya35")["result"]["status"] == "PROPOSAL_READY"
+    assert recovery.confirm(pending) == {"result":{"recovery":{"status":"PROPOSAL_EXPIRED"}}}
+
+    for device_id in device_ids[:3]:
+        assert recovery.prepare(device_id)["result"]["status"] == "PROPOSAL_READY"
+    assert recovery.prepare("fixture-recovery-capacity") == {"result":{"status":"BUSY"}}
+    now[0] += 60.0
+    assert recovery.prepare("fixture-recovery-capacity")["result"]["status"] == "PROPOSAL_READY"
+
+
+def test_pending_human_proposals_do_not_hold_global_recovery_slot():
+    import threading
+    from smart_home_tray.fixture import RecoveryFixture
+
+    slot = threading.Lock()
+    recovery = RecoveryFixture(monotonic=lambda: 0.0, active_slot=slot)
+    first = recovery.prepare("fixture-tuya35")["result"]["proposalId"]
+    second = recovery.prepare("fixture-tuya35-alt")["result"]["proposalId"]
+    assert first != second
+    assert slot.acquire(blocking=False)
+    slot.release()
+
 def test_recovery_fixture_has_deterministic_domain_and_readback_outcomes():
     from smart_home_tray.fixture import RecoveryFixture
 
@@ -127,7 +178,6 @@ def test_recovery_fixture_has_deterministic_domain_and_readback_outcomes():
     for device_id, status in [
         ("fixture-recovery-confirm-auth-failed", "AUTH_FAILED"),
         ("fixture-recovery-confirm-transport-failed", "TRANSPORT_FAILED"),
-        ("fixture-recovery-confirm-busy", "BUSY"),
         ("fixture-recovery-confirm-config-changed", "CONFIG_CHANGED"),
         ("fixture-recovery-confirm-timeout", "TIMEOUT"),
     ]:
@@ -165,19 +215,16 @@ def test_fixture_recovery_rejects_extra_fields_and_unknown_tokens_as_domain_expi
         process.stdin.close()
         assert process.wait(timeout=3) == 0
 
-def test_fixture_recovery_responses_can_complete_out_of_order():
-    process = start_fixture()
+def test_recovery_fixture_rejects_new_operations_while_global_slot_is_active():
+    import threading
+    from smart_home_tray.fixture import RecoveryFixture
+
+    slot = threading.Lock()
+    recovery = RecoveryFixture(monotonic=lambda: 10.0, active_slot=slot)
+    assert slot.acquire(blocking=False)
     try:
-        requests = [
-            {"requestId":"slow-recovery", "command":"recovery.prepare", "payload":{"deviceId":"fixture-recovery-slow"}},
-            {"requestId":"fast-recovery", "command":"recovery.prepare", "payload":{"deviceId":"fixture-tuya35"}},
-        ]
-        process.stdin.write(b"".join(json.dumps(item).encode() + b"\n" for item in requests))
-        process.stdin.flush()
-        first = json.loads(process.stdout.readline())
-        second = json.loads(process.stdout.readline())
-        assert [first["requestId"], second["requestId"]] == ["fast-recovery", "slow-recovery"]
-        assert first["result"]["status"] == second["result"]["status"] == "PROPOSAL_READY"
+        assert recovery.prepare("fixture-tuya35") == {"result":{"status":"BUSY"}}
+        assert recovery.confirm("A" * 43) == {"result":{"recovery":{"status":"BUSY"}}}
     finally:
-        process.stdin.close()
-        assert process.wait(timeout=3) == 0
+        slot.release()
+    assert recovery.prepare("fixture-tuya35")["result"]["status"] == "PROPOSAL_READY"

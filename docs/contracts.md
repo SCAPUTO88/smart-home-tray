@@ -209,7 +209,7 @@ O bridge registra somente os handlers tipados `bridge_recovery_prepare(deviceId)
 
 Prepare usa enum de status allowlisted; `PROPOSAL_READY` exige token Base64URL de 43 caracteres, candidato IPv4 e TTL finito `>= 0`. Confirm usa `recovery.status` independente de `readback`: somente `ADOPTED` inclui objeto irmão de readback (`SUCCEEDED`, `FAILED` ou `SUPERSEDED`), e `SUCCEEDED` pode defensivamente não carregar `device`. Falhas de domínio não carregam readback. DTOs rejeitam campos desconhecidos e o `DeviceStatus` aninhado também é estrito.
 
-O timeout de 30 segundos do bridge encerra a espera correlacionada e não cancela uma operação já enviada ao backend; após timeout de confirm o backend ainda pode adotar. Não há retry automático. FIXTURE expõe perfis fixos de recovery 3.5/3.3 e endereços TEST-NET reservados para documentação, sem rede, TinyTuya ou hardware; o relógio monotônico pode ser injetado no store de testes.
+O timeout de 30 segundos do bridge encerra a espera correlacionada e não cancela uma operação já enviada ao backend; após timeout de confirm o backend ainda pode adotar. Não há retry automático. FIXTURE expõe perfis fixos de recovery 3.5/3.3 e endereços TEST-NET reservados para documentação, sem rede, TinyTuya ou hardware. A admissão de prepare/confirm usa um slot global não enfileirável; propostas aguardando confirmação não ocupam esse slot. O store em memória permite no máximo uma proposta pendente por Device ID e quatro por processo, com TTL monotônico original de 60 segundos. Expiração e claim de confirmação liberam capacidade; BUSY antes da admissão não consome o token. Relógio e slot ativo são injetáveis nos testes.
 
 | Perfil FIXTURE | Resultado determinístico |
 |---|---|
@@ -217,7 +217,7 @@ O timeout de 30 segundos do bridge encerra a espera correlacionada e não cancel
 | `fixture-tuya33` | `PROTOCOL_NOT_ELIGIBLE`. |
 | `fixture-recovery-ambiguous`, `fixture-recovery-not-found`, `fixture-recovery-auth-failed`, `fixture-recovery-transport-failed`, `fixture-recovery-busy`, `fixture-recovery-config-changed`, `fixture-recovery-timeout` | Status de recusa/falha de prepare correspondente. |
 | `fixture-recovery-readback-failed`, `fixture-recovery-readback-superseded` | Adoção com readback `FAILED` ou `SUPERSEDED`. |
-| `fixture-recovery-confirm-auth-failed`, `fixture-recovery-confirm-transport-failed`, `fixture-recovery-confirm-busy`, `fixture-recovery-confirm-config-changed`, `fixture-recovery-confirm-timeout` | Falha terminal de confirmação sem readback. |
-| `fixture-recovery-slow` | Atraso curto e determinístico para validar correlação de respostas fora de ordem. |
+| `fixture-recovery-confirm-auth-failed`, `fixture-recovery-confirm-transport-failed`, `fixture-recovery-confirm-config-changed`, `fixture-recovery-confirm-timeout` | Falha terminal de confirmação sem readback; o token é consumido após a admissão, conforme o backend. |
+| `fixture-recovery-capacity` | Perfil elegível adicional para testar a capacidade global de propostas. |
 
-Tokens desconhecidos, expirados ou já consumidos retornam `PROPOSAL_EXPIRED`. O store FIXTURE usa relógio monotônico injetável nos testes e invalida seu estado ao encerrar o processo.
+Tokens desconhecidos, expirados ou já consumidos retornam `PROPOSAL_EXPIRED`. BUSY de admissão global no confirm é retornado antes do acesso/claim do token, que continua disponível. O teste Rust de correlação usa processo falso que responde em ordem inversa; não depende de atraso artificial da FIXTURE. A fixture invalida seu estado ao encerrar o processo.

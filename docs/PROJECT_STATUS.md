@@ -450,3 +450,15 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **PR/estado:** [PR #46](https://github.com/SCAPUTO88/smart-home-tray/pull/46), direcionada a `develop`, publicada sem merge; branch `feature/f2e-d4a-tauri-fixture`. Commits de implementação `a07a883` e cobertura corretiva `6604c62`; checkpoint desta publicação segue nesta branch.
 - **Review interno:** nenhuma issue crítica/importante; cobertura de prepare `TIMEOUT` foi adicionada após apontamento menor e passou novamente.
 - **Checkpoint:** entrega publicada e parada para code review humano. Não iniciar D.4.B sem revisão.
+
+### CR-46.1–CR-46.3 — admissão e propostas na FIXTURE (2026-10-20)
+
+- **Base/branch:** correções sobre o head `90d2c3a` da branch `feature/f2e-d4a-tauri-fixture`, PR #46 para `develop`.
+- **CR-46.1:** a fixture tenta adquirir o slot global antes de olhar/consumir a proposta. BUSY pré-admissão preserva token e TTL; teste injeta relógio monotônico e lock, libera o slot e confirma antes de expirar, seguido de replay bloqueado.
+- **CR-46.2:** FIXTURE mantém no máximo uma proposta por Device ID e quatro por instância/processo, TTL monotônico original de 60 segundos; purge expirado e claim liberam capacidade. Prepare repetido retorna BUSY sem renovar proposta. Não há armazenamento de segredo nem réplica interna de RecoveryService/ProposalStore.
+- **CR-46.3:** prepare e confirm disputam um slot global não enfileirável. O slot é liberado no retorno de prepare, portanto propostas esperando confirmação humana não bloqueiam outra operação. Testes de admissão usam lock injetado; o teste Rust de correlação agora usa subprocesso falso que envia duas respostas em ordem inversa, sem depender de atrasos da fixture. Removidos os perfis e sleeps artificiais usados para ordenar respostas.
+- **Arquivos alterados:** `backend/src/smart_home_tray/fixture.py`, `backend/tests/test_fixture.py`, `desktop/src-tauri/src/bridge.rs` (somente testes), `docs/contracts.md` e este checkpoint. Código de produção Rust/JSONL, handlers, MOCK/REAL e D-015 a D-019 não foram alterados.
+- **Verificações locais:** `pytest backend/tests/test_fixture.py` — 11 passed; suíte backend — **400 passed**; `python -m compileall -q src tests` passou; `cargo fmt --check` passou; `cargo test` — **28 passed**; `git diff --check` passou.
+- **CI da PR antes da correção:** head anterior tinha Frontend e Python 3.12/3.14 aprovados, mas Tauri/Rust Windows falhou. A leitura do log de artifacts expirou por falha TLS no host de logs; causa exata não confirmada. Conferir os checks do novo head depois do push.
+- **Limites/riscos:** concorrência, TTL e resultados são simulação local determinística; não demonstram comportamento TinyTuya nem homologação REAL/física. Nenhuma rede, LAN, cloud, credencial ou hardware foi acessado. O slot não modela duração real: serve apenas para admissão não enfileirável.
+- **Estado:** correção CR pronta para publicação na PR #46 existente, sem merge. Parar para code review; não iniciar D.4.B.
