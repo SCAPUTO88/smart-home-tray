@@ -607,3 +607,198 @@ def test_request_id_over_128_characters_is_rejected_with_null_id():
     )
     assert responses[0]["requestId"] is None
     assert responses[0]["error"]["code"] == "INVALID_INPUT"
+
+
+class FakeRecovery:
+    def __init__(self, prepare_result=None, confirm_result=None):
+        self.prepare_result = prepare_result
+        self.confirm_result = confirm_result
+        self.closed = False
+        self.calls = []
+
+    def prepare_internal(self, device_id, scheduler):
+        self.calls.append(("prepare", device_id, scheduler))
+        return self.prepare_result
+
+    def confirm_internal(self, proposal_id, scheduler):
+        self.calls.append(("confirm", proposal_id, scheduler))
+        return self.confirm_result
+
+    def close(self, **kwargs):
+        self.closed = True
+        return True
+
+
+def test_recovery_prepare_runs_asynchronously_and_emits_allowlisted_proposal():
+    import ipaddress
+    import time
+    from types import SimpleNamespace
+    from smart_home_tray.recovery import PreparationResult, PreparationStatus
+
+    fake = FakeRecovery(PreparationResult(
+        PreparationStatus.PROPOSAL_READY_INTERNAL,
+        proposal=SimpleNamespace(token="opaque-id", candidate_address=ipaddress.IPv4Address("192.168.1.9"), expires_at=time.monotonic()+30),
+    ))
+    output = io.BytesIO()
+    JsonLinesServer(FakeManager(), FakeScheduler(), fake).run(
+        io.BytesIO(b'{"requestId":"prep","command":"recovery.prepare","payload":{"deviceId":"lamp-a"}}\n'), output, io.StringIO()
+    )
+    response = json.loads(output.getvalue())
+    assert response["requestId"] == "prep"
+    assert response["result"]["status"] == "PROPOSAL_READY"
+    assert response["result"]["proposalId"] == "opaque-id"
+    assert response["result"]["candidateIp"] == "192.168.1.9"
+    assert 0 < response["result"]["ttlSeconds"] <= 30
+    assert fake.calls[0][0:2] == ("prepare", "lamp-a")
+    assert fake.closed
+
+
+def test_recovery_confirm_serializes_adoption_and_readback_separately():
+    from smart_home_tray.recovery import ConfirmationResult, ConfirmationStatus, ReadbackStatus
+
+    fake = FakeRecovery(confirm_result=ConfirmationResult(
+        ConfirmationStatus.ADOPTED, readback_status=ReadbackStatus.FAILED
+    ))
+    output = io.BytesIO()
+    proposal_id = "A" * 43
+    JsonLinesServer(FakeManager(), FakeScheduler(), fake).run(
+        io.BytesIO((json.dumps({"requestId": "confirm", "command": "recovery.confirm", "payload": {"proposalId": proposal_id}}) + "\n").encode()), output, io.StringIO()
+    )
+    response = json.loads(output.getvalue())
+    assert response["result"] == {"recovery": {"status": "ADOPTED"}, "readback": {"status": "FAILED"}}
+    assert fake.calls[0][0:2] == ("confirm", proposal_id)
+
+
+@pytest.mark.parametrize("command,payload", [
+    ("recovery.prepare", {"deviceId": "lamp-a", "ip": "192.168.1.9"}),
+    ("recovery.confirm", {"proposalId": "bad token", "deviceId": "lamp-a"}),
+])
+def test_recovery_rejects_extra_fields_before_dispatch(command, payload):
+    fake = FakeRecovery()
+    raw = json.dumps({"requestId": "bad", "command": command, "payload": payload}).encode()+b"\n"
+    output = io.BytesIO()
+    JsonLinesServer(FakeManager(), FakeScheduler(), fake).run(io.BytesIO(raw), output, io.StringIO())
+    response = json.loads(output.getvalue())
+    assert response["error"]["code"] == "INVALID_INPUT"
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    "internal,public",
+    [
+        ("auth_failed", "AUTH_FAILED"),
+        ("transport_failed", "TRANSPORT_FAILED"),
+        ("timeout", "TIMEOUT"),
+        ("expired", "PROPOSAL_EXPIRED"),
+        ("ambiguous", "AMBIGUOUS"),
+    ],
+)
+def test_recovery_failures_use_stable_public_statuses_without_private_details(internal, public):
+    from types import SimpleNamespace
+    from smart_home_tray.recovery import PreparationResult, PreparationStatus, ConfirmationResult, ConfirmationStatus
+
+    secret = "local-key-owner-dps-traceback-tinytuya-private"
+    if internal in {"auth_failed", "transport_failed", "timeout"}:
+        outcome = PreparationResult(PreparationStatus.VALIDATION_FAILED, validation_status=internal)
+        mapper = JsonLinesServer._public_preparation
+    elif internal == "ambiguous":
+        outcome = PreparationResult(PreparationStatus.AMBIGUOUS)
+        mapper = JsonLinesServer._public_preparation
+    else:
+        outcome = ConfirmationResult(ConfirmationStatus.PROPOSAL_UNAVAILABLE)
+        mapper = JsonLinesServer._public_confirmation
+    outcome = SimpleNamespace(**outcome.__dict__, local_key=secret, owner=secret, dps=secret, traceback=secret, exception=secret)
+    serialized = json.dumps(mapper(outcome))
+    assert public in serialized
+    assert secret not in serialized
+
+
+def test_recovery_operations_can_finish_out_of_order_and_keep_request_ids():
+    entered_first = threading.Event()
+    release_first = threading.Event()
+    second_done = threading.Event()
+
+    class Recovery(FakeRecovery):
+        def prepare_internal(self, device_id, scheduler):
+            if device_id == "first":
+                entered_first.set()
+                assert release_first.wait(timeout=2)
+            else:
+                second_done.set()
+            from smart_home_tray.recovery import PreparationResult, PreparationStatus
+            return PreparationResult(PreparationStatus.NOT_FOUND)
+
+    lines = (
+        b'{"requestId":"one","command":"recovery.prepare","payload":{"deviceId":"first"}}\n'
+        b'{"requestId":"two","command":"recovery.prepare","payload":{"deviceId":"second"}}\n'
+    )
+
+    class GatedEof(io.BytesIO):
+        def readline(self, size=-1):
+            line = super().readline(size)
+            if not line:
+                assert entered_first.wait(timeout=2)
+                assert second_done.wait(timeout=2)
+                release_first.set()
+            return line
+
+    output = io.BytesIO()
+    JsonLinesServer(FakeManager(), FakeScheduler(), Recovery()).run(GatedEof(lines), output, io.StringIO())
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [item["requestId"] for item in responses] == ["two", "one"]
+    assert all(item["result"]["status"] == "NOT_FOUND" for item in responses)
+
+
+def test_recovery_shutdown_drains_accepted_request_with_terminal_response():
+    entered = threading.Event()
+    release = threading.Event()
+
+    class Recovery(FakeRecovery):
+        def prepare_internal(self, device_id, scheduler):
+            entered.set()
+            assert release.wait(timeout=2)
+            from smart_home_tray.recovery import PreparationResult, PreparationStatus
+            return PreparationResult(PreparationStatus.CLOSED)
+
+        def close(self, **kwargs):
+            super().close(**kwargs)
+            release.set()
+            return True
+
+    recovery = Recovery()
+    output = io.BytesIO()
+    JsonLinesServer(FakeManager(), FakeScheduler(), recovery).run(
+        io.BytesIO(b'{"requestId":"accepted","command":"recovery.prepare","payload":{"deviceId":"lamp-a"}}\n'),
+        output,
+        io.StringIO(),
+    )
+    response = json.loads(output.getvalue())
+    assert entered.is_set() and recovery.closed
+    assert response == {"requestId": "accepted", "result": {"status": "SHUTDOWN"}}
+
+
+def test_serve_builds_recovery_catalog_and_provider_without_starting_discovery(monkeypatch):
+    from smart_home_tray import lan_discovery, recovery
+
+    created = {}
+
+    class Provider:
+        def __init__(self):
+            created["provider"] = self
+
+        def discover(self, *args, **kwargs):
+            raise AssertionError("discovery must be request-driven")
+
+    class Service:
+        def __init__(self, *, catalog, provider):
+            created["catalog"] = catalog
+            created["injected_provider"] = provider
+
+        def close(self, **kwargs):
+            return True
+
+    monkeypatch.setattr(lan_discovery, "TinyTuyaLanDiscoveryProvider", Provider)
+    monkeypatch.setattr(recovery, "RecoveryService", Service)
+    JsonLinesServer(FakeManager(), FakeScheduler())
+    assert isinstance(created["catalog"], recovery.DeviceManagerRecoveryCatalog)
+    assert created["provider"] is created["injected_provider"]
