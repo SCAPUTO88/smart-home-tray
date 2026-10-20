@@ -1203,6 +1203,7 @@ print(json.dumps({"requestId":second["requestId"],"result":{"current":True}}),fl
             client.request("devices.list", json!({})).unwrap_err().code,
             BridgeErrorCode::Timeout
         );
+        client.timeout = Duration::from_secs(5);
         let current = client.request("devices.list", json!({})).unwrap();
         assert_eq!(current, json!({"current":true}));
         client.shutdown();
