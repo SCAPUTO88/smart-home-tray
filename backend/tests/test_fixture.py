@@ -108,6 +108,7 @@ def test_recovery_fixture_has_deterministic_domain_and_readback_outcomes():
         ("fixture-recovery-transport-failed", "TRANSPORT_FAILED"),
         ("fixture-recovery-busy", "BUSY"),
         ("fixture-recovery-config-changed", "CONFIG_CHANGED"),
+        ("fixture-recovery-timeout", "TIMEOUT"),
         ("unknown-device", "DEVICE_NOT_FOUND"),
     ]:
         assert recovery.prepare(device_id) == {"result":{"status":status}}
