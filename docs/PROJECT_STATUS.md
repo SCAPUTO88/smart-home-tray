@@ -423,3 +423,13 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - `JsonLinesServer` aceita clock monotônico injetável e o serializer de prepare usa esse mesmo clock para calcular TTL. O teste fixa o clock em valor não relacionado ao relógio real e verifica TTL restante de 60 segundos.
 - A saída da regressão verifica os três requestIds, exatamente três respostas e um único thread escritor. EOF só ocorre após a resposta do replay.
 - **Verificação CR-43.1:** testes focados (`test_protocol.py`, `test_recovery_prepare.py`, `test_recovery_confirm.py`) — **77 passed**; suíte backend — **392 passed**; `compileall` e `git diff --check` passaram. Commit publicado na branch rastreada pela PR #43; sem merge.
+
+## F2E.D.4.0 — refinamento arquitetural Tauri e UX (2026-10-19)
+
+- **Base auditada:** `origin/develop` após merge da PR #43 (`e5cdd157dd4d4d3e7934187a454419d421e921bd`). O checkout de trabalho (`6fa59f52`) é ancestral e contém a mesma implementação funcional da PR integrada.
+- **Entregável:** [F2E_D4_TAURI_UX_DESIGN.md](F2E_D4_TAURI_UX_DESIGN.md) descreve contratos reais de `recovery.prepare`/`recovery.confirm`, status de domínio e transporte, bridge Rust tipada, DTOs TypeScript, reconciliação, state machine/UX, cenários MOCK/FIXTURE e plano D.4.A–D.4.C.
+- **Achados centrais:** a ponte Rust usa timeout local de 30 s sem cancelar o backend; timeout de confirmação pode ocultar uma adoção posterior e deve produzir estado indeterminado. O contrato interno permite `ADOPTED` + readback `SUCCEEDED` sem snapshot `device`; o desenho propõe tratar essa lacuna com refresh explícito.
+- **Decisões:** D-015 a D-019 foram preservadas. Nenhum item novo foi registrado como aprovado. Capability de recovery separada, canal de elegibilidade, margem de TTL visual, formato do perfil sintético FIXTURE 3.5 e sincronização dos textos históricos aguardam review.
+- **Escopo:** auditoria/desenho documental apenas; sem handlers, UI ou lógica funcional. Sem rede, LAN, dispositivo, credenciais, Tuya Cloud, commit, push ou merge. D.4 permanece não implementada.
+- **Verificação:** inspeção dos contratos reais e estado documental; links relativos do desenho e consistência de status foram verificados; `git diff --check` executado. Testes de implementação e compileall não foram executados porque não houve alteração de código.
+- **Checkpoint para review arquitetural:** contratos e riscos estão consolidados no novo documento; decisões pendentes devem ser resolvidas antes da D.4.A.
