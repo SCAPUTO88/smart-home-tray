@@ -154,3 +154,17 @@
 .topbar button { cursor: pointer; }
 
 .refresh-action{display:flex;align-items:center;gap:5px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.04);color:#cbd5e1;padding:6px 8px;font:inherit;font-size:11px;cursor:pointer}.refresh-action:disabled{opacity:.55;cursor:default}
+
+.recovery-panel { margin-top: 12px; padding: 12px; border: 1px solid #283444; border-radius: 12px; background: #0e151f; color: #b6c3d3; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.recovery-panel p { margin: 9px 0; }
+.recovery-panel button { min-height: 34px; padding: 7px 10px; border: 1px solid #38516a; border-radius: 8px; background: #192939; color: #e0efff; font: inherit; cursor: pointer; }
+.recovery-panel button:disabled { opacity: .55; cursor: default; }
+.recovery-panel button:focus-visible, .recovery-panel h3:focus { outline: 2px solid #86d6ff; outline-offset: 3px; }
+.recovery-panel .recovery-toggle { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent; text-align: left; }
+.recovery-panel h3 { font-size: 12px; color: #e3eef9; }
+.recovery-panel .recovery-simulation { color: #f1d492; }
+.recovery-proposal { margin: 12px 0; padding: 10px; border: 1px solid #324457; border-radius: 8px; }
+.recovery-proposal dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+.recovery-proposal dd { margin: 0; color: #e0efff; font-variant-numeric: tabular-nums; }
+.recovery-trust { padding-left: 9px; border-left: 2px solid #d6b879; color: #e9d9b7; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }

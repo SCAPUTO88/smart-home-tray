@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { DeviceController, LightingPatch, OperationScenario } from '../features/devices/types'
 import { useLightingSession } from '../features/devices/useLightingSession'
-import { resolveDeviceController } from '../features/devices/platformController'
+import { resolveDeviceIntegration, type DeviceIntegration } from '../features/devices/platformController'
+import type { RecoveryIntegration } from '../features/recovery/reconciliation'
+import { ManualRecoveryPanel } from '../features/recovery/ManualRecoveryPanel'
+import { recoveryPresentationFor } from '../features/recovery/recoveryPresentation'
 import { lightingIntensity, selectedLightingColor } from '../lib/lightingVisuals'
 import { DeviceArtwork } from '../components/lighting/DeviceArtwork'
 import { PowerButton } from '../components/controls/PowerButton'
@@ -15,6 +18,7 @@ import './LightingApp.css'
 
 interface LightingAppProps {
   controller?: DeviceController
+  integration?: DeviceIntegration
 }
 
 const scenarioNames: Record<OperationScenario, string> = {
@@ -30,25 +34,26 @@ function operationLabel(status: string): string {
   return 'Pronto para controlar'
 }
 
-export default function LightingApp({ controller: suppliedController }: LightingAppProps) {
-  const [controller, setController] = useState<DeviceController | null>(null)
+export default function LightingApp({ controller: suppliedController, integration: suppliedIntegration }: LightingAppProps) {
+  const [integration, setIntegration] = useState<DeviceIntegration | null>(null)
   const [startupError, setStartupError] = useState<string | null>(null)
   useEffect(() => {
-    if (suppliedController) return
+    if (suppliedController || suppliedIntegration) return
     let active = true
-    void resolveDeviceController().then((resolved) => { if (active) setController(resolved) }).catch(() => {
+    void resolveDeviceIntegration().then((resolved) => { if (active) setIntegration(resolved) }).catch(() => {
       if (active) setStartupError('Não foi possível iniciar a integração selecionada')
     })
     return () => { active = false }
-  }, [suppliedController])
-  const activeController = suppliedController ?? controller
+  }, [suppliedController, suppliedIntegration])
+  const activeIntegration = suppliedIntegration ?? (suppliedController ? null : integration)
+  const activeController = activeIntegration?.lighting ?? suppliedController
   if (startupError) return <main className="app-shell app-shell--loading"><Brand /><p role="alert">{startupError}</p></main>
   if (!activeController) return <main className="app-shell app-shell--loading"><Brand /><div className="loading-card" role="status">Iniciando Smart Home Tray…</div></main>
-  return <LightingPanel controller={activeController} />
+  return <LightingPanel controller={activeController} recovery={activeIntegration?.recovery} />
 }
 
-function LightingPanel({ controller }: { controller: DeviceController }) {
-  const session = useLightingSession(controller)
+function LightingPanel({ controller, recovery }: { controller: DeviceController; recovery?: RecoveryIntegration }) {
+  const session = useLightingSession(controller, recovery)
   const [scenario, setScenario] = useState<OperationScenario>('success')
   const { devices, selectedDevice: device, selectedView: view, issue, loadError, refreshDevice, refreshing, refreshError } = session
 
@@ -199,6 +204,18 @@ function LightingPanel({ controller }: { controller: DeviceController }) {
           {refreshError && <p className="error-detail" role="alert">{refreshError}</p>}
           {view.error && <p className="error-detail" role="alert">{view.error}</p>}
         </motion.section>
+
+        {recovery && <ManualRecoveryPanel
+          deviceId={device.deviceId}
+          deviceName={device.name}
+          eligibility={session.recoveryEligibility(device.deviceId)}
+          store={recoveryPresentationFor(recovery.controller)}
+          prepareRecovery={session.prepareRecovery}
+          confirmRecovery={session.confirmRecovery}
+          refreshDevice={controller.refresh ? refreshDevice : undefined}
+          refreshDisabled={Boolean(refreshing[device.deviceId]) || view.pendingOperations.length > 0}
+          simulation={controller.mode === 'mock' || controller.mode === 'fixture'}
+        />}
 
         <footer className="prototype-note"><span className="mock-mark" /> {controller.mode === 'mock' ? 'Protótipo visual · dispositivos simulados' : controller.mode === 'fixture' ? 'Processo fixture · dados simulados' : 'Controle local'}</footer>
       </main>
