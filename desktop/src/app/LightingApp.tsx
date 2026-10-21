@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useApplicationSession } from './ApplicationSessionContext'
+import { ApplicationSessionHost } from './ApplicationSessionHost'
+import type { useLightingSession } from '../features/devices/useLightingSession'
 import type { CSSProperties } from 'react'
 import type { DeviceController, LightingPatch, OperationScenario } from '../features/devices/types'
-import { useLightingSession } from '../features/devices/useLightingSession'
-import { resolveDeviceIntegration, type DeviceIntegration } from '../features/devices/platformController'
-import type { RecoveryIntegration } from '../features/recovery/reconciliation'
+import type { DeviceIntegration } from '../features/devices/platformController'
 import { ManualRecoveryPanel } from '../features/recovery/ManualRecoveryPanel'
-import { recoveryPresentationFor } from '../features/recovery/recoveryPresentation'
+import type { RecoveryIntegration } from '../features/recovery/reconciliation'
+import type { RecoveryPresentation } from '../features/recovery/recoveryPresentation'
 import { lightingIntensity, selectedLightingColor } from '../lib/lightingVisuals'
 import { DeviceArtwork } from '../components/lighting/DeviceArtwork'
 import { PowerButton } from '../components/controls/PowerButton'
@@ -35,25 +37,19 @@ function operationLabel(status: string): string {
 }
 
 export default function LightingApp({ controller: suppliedController, integration: suppliedIntegration }: LightingAppProps) {
-  const [integration, setIntegration] = useState<DeviceIntegration | null>(null)
-  const [startupError, setStartupError] = useState<string | null>(null)
-  useEffect(() => {
-    if (suppliedController || suppliedIntegration) return
-    let active = true
-    void resolveDeviceIntegration().then((resolved) => { if (active) setIntegration(resolved) }).catch(() => {
-      if (active) setStartupError('Não foi possível iniciar a integração selecionada')
-    })
-    return () => { active = false }
-  }, [suppliedController, suppliedIntegration])
-  const activeIntegration = suppliedIntegration ?? (suppliedController ? null : integration)
-  const activeController = activeIntegration?.lighting ?? suppliedController
-  if (startupError) return <main className="app-shell app-shell--loading"><Brand /><p role="alert">{startupError}</p></main>
-  if (!activeController) return <main className="app-shell app-shell--loading"><Brand /><div className="loading-card" role="status">Iniciando Smart Home Tray…</div></main>
-  return <LightingPanel controller={activeController} recovery={activeIntegration?.recovery} />
+  const inherited = useApplicationSession()
+  if (!suppliedController && !suppliedIntegration && inherited) return <LightingAppContent />
+  return <ApplicationSessionHost controller={suppliedController} integration={suppliedIntegration}><LightingAppContent /></ApplicationSessionHost>
 }
 
-function LightingPanel({ controller, recovery }: { controller: DeviceController; recovery?: RecoveryIntegration }) {
-  const session = useLightingSession(controller, recovery)
+export function LightingAppContent() {
+  const application = useApplicationSession()
+  if (!application || application.status === 'loading') return <main className="app-shell app-shell--loading"><Brand /><div className="loading-card" role="status">Iniciando Smart Home Tray…</div></main>
+  if (application.status === 'error') return <main className="app-shell app-shell--loading"><Brand /><p role="alert">{application.message}</p></main>
+  return <LightingPanel controller={application.controller} recovery={application.recovery} presentation={application.presentation} session={application.session} />
+}
+
+function LightingPanel({ controller, recovery, presentation, session }: { controller: DeviceController; recovery?: RecoveryIntegration; presentation?: RecoveryPresentation; session: ReturnType<typeof useLightingSession> }) {
   const [scenario, setScenario] = useState<OperationScenario>('success')
   const { devices, selectedDevice: device, selectedView: view, issue, loadError, refreshDevice, refreshing, refreshError } = session
 
@@ -209,7 +205,7 @@ function LightingPanel({ controller, recovery }: { controller: DeviceController;
           deviceId={device.deviceId}
           deviceName={device.name}
           eligibility={session.recoveryEligibility(device.deviceId)}
-          store={recoveryPresentationFor(recovery.controller)}
+          store={presentation!}
           prepareRecovery={session.prepareRecovery}
           confirmRecovery={session.confirmRecovery}
           refreshDevice={controller.refresh ? refreshDevice : undefined}

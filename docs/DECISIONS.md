@@ -155,6 +155,13 @@
 - **Motivo:** manter buscas curtas e concorrência limitada sem manter bloqueios durante a confirmação humana; revalidar a proposta antes de qualquer mudança de endereço.
 - **Trade-offs:** uma proposta pode expirar durante a confirmação e exigir novo prepare. O limite TCP ainda não é garantia de tempo real enquanto o comportamento efetivo do TinyTuya não for demonstrado. Esses parâmetros não autorizam validação, token, barreira ou adoção na D.1.
 
+### D-020 — Ciclo de vida da sessão de recuperação na UI F2E.D.4.C
+
+- **Estado:** aprovada pelo mantenedor em 2026-10-20 para CR-49.1.
+- **Decisão:** um proprietário estável por runtime ativo da aplicação mantém `DeviceIntegration`, `TauriDeviceController`, sessão de iluminação/recuperação, mapa de propostas e confirmações, apresentação de recuperação e os checkpoints/gerações existentes acima da árvore visual de `LightingApp`. Remontagens visuais no mesmo runtime não repetem a listagem nem reinicializam estado transacional. Integrações/controller injetados permanecem isolados por identidade; o bootstrap padrão e a listagem são idempotentes sob React StrictMode.
+- **Limites:** a garantia termina quando o runtime ativo é destruído, incluindo reload/destruição da WebView ou encerramento do aplicativo/processo Python. Estado não é persistido em disco; após novo runtime a UI inicia conservadoramente e não afirma cancelamento, adoção ou rollback de operação anterior.
+- **Trade-offs:** o host e o estado de sessão existem enquanto o runtime raiz permanece montado, mesmo quando a árvore da janela é ocultada/remontada. Isso mantém operações locais rastreáveis, mas não permite recuperar mapas de proposta/checkpoint depois da perda do runtime JavaScript.
+
 ## Registro de homologação F2D
 
 Em 2026-10-15, o mantenedor confirmou manualmente a homologação REAL da Luz Mesa e da Fita LED, conforme evidência e limitações em `docs/PROJECT_STATUS.md`. A Luz Escritório permanece pendente após resposta 904 e comportamento físico intermitente; não foi determinada uma causa. Este registro é evidência de validação do produto, não uma decisão que altera a arquitetura aprovada. A política de confiança de recuperação manual foi aprovada em D-018; o restante do desenho de implementação em `docs/F2E_D_RECOVERY_ARCHITECTURE.md` continua refinamento, não aprovação de código ou orçamento.

@@ -70,6 +70,7 @@ describe('recovery integrated with LightingApp/session/controllers', () => {
     const integration = { ...s.integration, recovery: { ...s.integration.recovery, controller: new TauriManualRecoveryController(invoke) } }
     s.rerender(<App integration={integration} />)
     await screen.findByRole('heading', { name: 'Luz Mesa' })
+    await s.user.click(screen.getByRole('button', { name: /Recuperar IP/ }))
     await s.adopt()
     expect(screen.getByText(/adoção pode ter ocorrido/)).toBeVisible()
     expect(screen.getByRole('slider', { name: 'Matiz' })).toBeDisabled()

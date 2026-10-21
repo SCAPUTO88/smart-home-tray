@@ -2,7 +2,7 @@
 
 **Goal:** entregar a interface de recuperação manual sobre D.4.A/B, sem alterar contratos ou reconciliação.
 **Spec:** `docs/F2E_D4_TAURI_UX_DESIGN.md` e requisitos D.4.C do mantenedor.
-**Architecture:** apresentação discriminada por Device ID, mantida em memória durante remontagem do painel; sessão existente executa prepare/confirm/refresh e reconcilia. Integração resolvida uma vez por montagem, preservando injeção de iluminação.
+**Architecture:** um `ApplicationSessionHost` estável por runtime ativo mantém integração, controller, `useLightingSession`, propostas/confirmações e `RecoveryPresentation` acima da árvore visual. Remontar `LightingApp` não relista nem destrói estado transacional; integrações injetadas ficam isoladas por identidade.
 **Tech Stack:** React, TypeScript, Vitest, Testing Library/userEvent; dependências existentes.
 
 ## Restrições
@@ -12,6 +12,7 @@
 - UNKNOWN não autoriza prepare; indeterminate não autoriza repetir confirm.
 - Não modificar D-015–D-019, backend, protocolos ou LightingDevice.
 - Sem hardware/REAL, merge ou nova fase.
+- A sessão existe somente em memória durante o runtime ativo; reload/destruição da WebView ou encerramento do aplicativo/processo não promete cancelar, adotar ou reverter operação.
 
 ## Tarefas
 
@@ -26,6 +27,12 @@
 - Retorno de janela oculta reavalia deadline, sem renovar TTL ou cancelar backend.
 - Refresh manual não representa confirmação retroativa de adoção incerta.
 - Descartar proposta não cancela token backend; explicar possível BUSY até expiração.
+
+## CR-49.1 — host estável do runtime
+
+O `ApplicationSessionHost` da raiz do runtime possui a integração e mantém o hook de sessão montado enquanto a árvore visual pode sair e voltar. O bootstrap e `controller.list()` são idempotentes sob StrictMode. A apresentação é criada para a identidade desse host, e suas injeções não compartilham estado. A sessão não grava em disco nem replica epochs, knowledge, base confirmada ou reconciliação do controller.
+
+Regressões obrigatórias: proposta confirmável após remount; `ADOPTED + FAILED` e `ADOPTED + SUCCEEDED` durante desmontagem; resultado indeterminado sem retry; TTL expirado sem renovação; intenção de iluminação pendente; troca de dispositivo durante confirm; StrictMode; listagem/checkpoints sem reinicialização; e isolamento de identidades injetadas. Usar promises deferred e relógio injetado, sem sleeps ou rede.
 
 ## Baseline
 
