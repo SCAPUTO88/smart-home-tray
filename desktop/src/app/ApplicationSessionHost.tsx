@@ -19,6 +19,7 @@ interface ApplicationSessionHostProps {
 export function ApplicationSessionHost({ children, controller: suppliedController, integration: suppliedIntegration, now }: ApplicationSessionHostProps) {
   const [resolvedIntegration, setResolvedIntegration] = useState<DeviceIntegration | null>(null)
   const [startupError, setStartupError] = useState(false)
+  const [retainedSources, setRetainedSources] = useState<SessionSource[]>([])
   const resolution = useRef<Promise<DeviceIntegration> | null>(null)
 
   useEffect(() => {
@@ -42,18 +43,36 @@ export function ApplicationSessionHost({ children, controller: suppliedControlle
     ? startupError ? { status: 'error', message: 'Não foi possível iniciar a integração selecionada' } : { status: 'loading' }
     : { status: 'loading' }
 
-  return activeSource
-    ? <ActiveApplicationSession key={sessionSourceId(activeSource.identity)} controller={activeSource.controller} recovery={activeSource.recovery} now={now}>{children}</ActiveApplicationSession>
-    : <ApplicationSessionContext.Provider value={state}>{children}</ApplicationSessionContext.Provider>
+  const rememberTransactionSource = (source: SessionSource) => {
+    // A submitted confirmation owns causal state until the runtime ends; switching UI sources must not remount it.
+    setRetainedSources((current) => current.some((entry) => entry.identity === source.identity) ? current : [...current, source])
+  }
+  const sources = activeSource
+    ? [...retainedSources.filter((entry) => entry.identity !== activeSource.identity), activeSource]
+    : retainedSources
+
+  return <>
+    {sources.map((source) => <ActiveApplicationSession
+      key={sessionSourceId(source.identity)}
+      controller={source.controller}
+      recovery={source.recovery}
+      now={now}
+      onConfirmationStarted={() => rememberTransactionSource(source)}
+    >{source.identity === activeSource?.identity ? children : null}</ActiveApplicationSession>)}
+    {!activeSource && <ApplicationSessionContext.Provider value={state}>{children}</ApplicationSessionContext.Provider>}
+  </>
 }
 
-function ActiveApplicationSession({ children, controller, recovery, now }: {
+interface SessionSource { identity: object; controller: DeviceController; recovery?: RecoveryIntegration }
+
+function ActiveApplicationSession({ children, controller, recovery, now, onConfirmationStarted }: {
   children: ReactNode
   controller: DeviceController
   recovery?: RecoveryIntegration
   now?: () => number
+  onConfirmationStarted: () => void
 }) {
-  const session = useLightingSession(controller, recovery)
+  const session = useLightingSession(controller, recovery, onConfirmationStarted)
   const [presentation] = useState(() => recovery ? new RecoveryPresentation(now) : undefined)
   const value: ReadyApplicationSession = { status: 'ready', controller, recovery, presentation, session }
   return <ApplicationSessionContext.Provider value={value}>{children}</ApplicationSessionContext.Provider>

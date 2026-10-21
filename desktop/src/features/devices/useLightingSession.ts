@@ -117,7 +117,7 @@ function mergeReadback(confirmed: DeviceViewState['confirmed'], response: Lighti
   return { ...next, knowledge }
 }
 
-export function useLightingSession(controller: DeviceController, recovery?: RecoveryIntegration) {
+export function useLightingSession(controller: DeviceController, recovery?: RecoveryIntegration, onRecoveryConfirmationStarted?: () => void) {
   const [devices, setDevices] = useState<LightingDevice[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [views, setViews] = useState<Record<DeviceId, DeviceViewState>>({})
@@ -324,6 +324,7 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
     let token
     try { token = recovery.reconciliation.beginRecoveryConfirmation(deviceId) }
     catch { return { kind: 'rejected', code: 'PROPOSAL_UNAVAILABLE' } }
+    onRecoveryConfirmationStarted?.()
     let outcome: ConfirmOutcome
     try { outcome = await recovery.controller.confirm(proposalId) }
     catch (error) { outcome = { kind: 'indeterminate', code: parseBridgeError(error).code } }
@@ -347,7 +348,7 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
       } }
     })
     return outcome
-  }, [recovery])
+  }, [recovery, onRecoveryConfirmationStarted])
 
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null
   const selectedView = selectedDeviceId ? views[selectedDeviceId] ?? null : null

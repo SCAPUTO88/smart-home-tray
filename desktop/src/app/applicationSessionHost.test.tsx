@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { StrictMode, useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApplicationSessionHost } from './ApplicationSessionHost'
+import { useApplicationSession } from './ApplicationSessionContext'
 import LightingApp from './LightingApp'
 import { TauriDeviceController, type BridgeApi } from '../features/devices/TauriDeviceController'
 import type { ConfirmOutcome, PrepareOutcome } from '../features/recovery/ManualRecoveryController'
@@ -36,6 +37,62 @@ function HostedApp({ integration, visible = true, now }: { integration: DeviceIn
   return <ApplicationSessionHost integration={integration} now={now}>{visible ? <LightingApp /> : null}</ApplicationSessionHost>
 }
 
+function SessionProbe() {
+  const session = useApplicationSession()
+  const [commandResult, setCommandResult] = useState('')
+  if (!session || session.status !== 'ready') return <output data-testid="session-probe">loading</output>
+  const view = session.session.selectedView
+  return <>
+    <output data-testid="session-probe">{JSON.stringify({
+      selectedDeviceId: session.session.selectedDeviceId,
+      confirmed: view ? { ...view.confirmed.knowledge, hsv: view.confirmed.hsv, hsvKnowledge: view.confirmed.knowledge.hsv, quality: view.confirmed.quality } : undefined,
+      preview: view ? { ...view.preview.knowledge, hsv: view.preview.hsv, hsvKnowledge: view.preview.knowledge.hsv, quality: view.preview.quality } : undefined,
+      pendingOperations: view?.pendingOperations.length,
+      devices: Object.fromEntries(session.session.devices.map((device) => [device.deviceId, device.state.knowledge])),
+      eligibility: session.session.recoveryEligibility('lamp'),
+    })}</output>
+    <button type="button" onClick={() => void session.controller.command('lamp', { hsv: { hue: 222 } }).then(() => setCommandResult('accepted'), (error: { code?: string }) => setCommandResult(error.code ?? 'failed'))}>Probe confirmed base</button>
+    <button type="button" onClick={() => void session.controller.command('other', { hsv: { hue: 223 } }).then(() => setCommandResult('other-accepted'), (error: { code?: string }) => setCommandResult(error.code ?? 'failed'))}>Probe other device</button>
+    <button type="button" onClick={() => session.session.issue('lamp', { hsv: { hue: 211 } }, 'success')}>Issue pending intent</button>
+    <output data-testid="command-probe">{commandResult}</output>
+  </>
+}
+
+function setupDefaultFixture(pendingConfirm: ReturnType<typeof deferred<unknown>>, pendingCommand?: ReturnType<typeof deferred<unknown>>) {
+  runtime.native = true
+  const lamp = publicDevice()
+  const other = publicDevice('other')
+  runtime.invoke.mockReset().mockImplementation(async (command: string, args?: unknown) => {
+    if (command === 'bridge_info') return { mode: 'fixture', available: true }
+    if (command === 'bridge_list') return { devices: [lamp, other] }
+    if (command === 'bridge_recovery_prepare') return proposal
+    if (command === 'bridge_recovery_confirm') return pendingConfirm.promise
+    if (command === 'bridge_hsv') return pendingCommand?.promise ?? (args && typeof args === 'object' && 'deviceId' in args && args.deviceId === 'other' ? other : lamp)
+    throw new Error(`Unexpected bridge command ${command}`)
+  })
+  return { lamp, other }
+}
+
+async function beginDefaultConfirmAcrossSourceSwitch(pendingConfirm: ReturnType<typeof deferred<unknown>>, strictMode = false, pendingCommand?: ReturnType<typeof deferred<unknown>>) {
+  const devices = setupDefaultFixture(pendingConfirm, pendingCommand)
+  const explicit = makeController('Explicit Lamp')
+  const user = userEvent.setup()
+  const host = (controller?: ReturnType<typeof makeController>['lighting']) => {
+    const tree = <ApplicationSessionHost controller={controller}><><LightingApp /><SessionProbe /></></ApplicationSessionHost>
+    return strictMode ? <StrictMode>{tree}</StrictMode> : tree
+  }
+  const view = render(host())
+  await screen.findByRole('heading', { name: 'Synthetic lamp' })
+  await waitFor(() => expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').confirmed.power).toBe('observed'))
+  await prepare(user)
+  await startConfirm(user)
+  view.rerender(host(explicit.lighting))
+  await screen.findByRole('heading', { name: 'Explicit Lamp' })
+  view.rerender(host())
+  await screen.findByRole('heading', { name: 'Synthetic lamp' })
+  return { view, user, explicit, ...devices }
+}
+
 async function prepare(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Recuperar IP/ }))
   await user.click(screen.getByRole('button', { name: 'Preparar recuperação' }))
@@ -48,6 +105,144 @@ async function startConfirm(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('application session host', () => {
+  it('reconciles an old default confirmation before a returning session can relist the controller', async () => {
+    runtime.native = true
+    const pendingConfirm = deferred<unknown>()
+    const lamp = publicDevice()
+    const other = publicDevice('other')
+    runtime.invoke.mockReset().mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'bridge_info') return { mode: 'fixture', available: true }
+      if (command === 'bridge_list') return { devices: [lamp, other] }
+      if (command === 'bridge_recovery_prepare') return proposal
+      if (command === 'bridge_recovery_confirm') return pendingConfirm.promise
+      if (command === 'bridge_hsv') return args && typeof args === 'object' && 'deviceId' in args && args.deviceId === 'other' ? other : lamp
+      throw new Error(`Unexpected bridge command ${command}`)
+    })
+    const explicit = makeController('Explicit Lamp')
+    const user = userEvent.setup()
+    const view = render(<StrictMode><ApplicationSessionHost><><LightingApp /><SessionProbe /></></ApplicationSessionHost></StrictMode>)
+    await screen.findByRole('heading', { name: 'Synthetic lamp' })
+    await waitFor(() => expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').confirmed.power).toBe('observed'))
+    await prepare(user)
+    await startConfirm(user)
+
+    view.rerender(<StrictMode><ApplicationSessionHost controller={explicit.lighting}><><LightingApp /><SessionProbe /></></ApplicationSessionHost></StrictMode>)
+    await screen.findByRole('heading', { name: 'Explicit Lamp' })
+    view.rerender(<StrictMode><ApplicationSessionHost><><LightingApp /><SessionProbe /></></ApplicationSessionHost></StrictMode>)
+    await screen.findByRole('heading', { name: 'Synthetic lamp' })
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_list')).toHaveLength(1)
+    expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').confirmed.power).toBe('observed')
+
+    await act(async () => { pendingConfirm.resolve({ recovery: { status: 'ADOPTED' }, readback: { status: 'FAILED' } }) })
+
+    await waitFor(() => expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').confirmed.power).toBe('stale'))
+    const snapshot = JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}')
+    expect(snapshot.preview.power).toBe('stale')
+    expect(snapshot.confirmed.quality).toBe('unknown')
+    expect(snapshot.preview.quality).toBe('unknown')
+    expect(snapshot.selectedDeviceId).toBe('lamp')
+    expect(snapshot.eligibility).toEqual({ status: 'ELIGIBLE', protocolVersion: 3.5 })
+    await user.click(screen.getByRole('button', { name: 'Probe confirmed base' }))
+    await waitFor(() => expect(screen.getByTestId('command-probe')).toHaveTextContent('DEVICE_ERROR'))
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_hsv')).toHaveLength(0)
+    expect(screen.getByTestId('session-probe')).toHaveTextContent('stale')
+    await user.click(screen.getByRole('button', { name: /Recuperar IP/ }))
+    expect(screen.getByText(/Adoção em memória concluída/)).toBeVisible()
+    expect(screen.getByRole('button', { name: /Recuperar IP/ })).toBeVisible()
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_recovery_confirm')).toHaveLength(1)
+    expect(snapshot.devices.other.power).toBe('observed')
+    await user.click(screen.getByRole('button', { name: 'Probe other device' }))
+    await waitFor(() => expect(screen.getByTestId('command-probe')).toHaveTextContent('other-accepted'))
+    expect(runtime.invoke.mock.calls.filter(([command, args]) => command === 'bridge_hsv' && args?.deviceId === 'other')).toHaveLength(1)
+  })
+
+  it.each([
+    { name: 'ADOPTED plus SUPERSEDED', result: { recovery: { status: 'ADOPTED' }, readback: { status: 'SUPERSEDED' } }, expected: 'stale' },
+    { name: 'ADOPTED plus SUCCEEDED without a device', result: { recovery: { status: 'ADOPTED' }, readback: { status: 'SUCCEEDED' } }, expected: 'stale' },
+    { name: 'indeterminate', result: null, expected: 'stale' },
+  ])('retains the old source checkpoint across switching for $name', async ({ name: _name, result, expected }) => {
+    const pendingConfirm = deferred<unknown>()
+    const s = await beginDefaultConfirmAcrossSourceSwitch(pendingConfirm)
+    if (result) await act(async () => { pendingConfirm.resolve(result) })
+    else await act(async () => { pendingConfirm.reject({ code: 'TIMEOUT' }) })
+
+    await waitFor(() => expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').confirmed.power).toBe(expected))
+    const snapshot = JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}')
+    expect(snapshot.preview.power).toBe(expected)
+    expect(snapshot.confirmed.hsv).toEqual({ hue: 120, saturation: 70, value: 60 })
+    expect(snapshot.confirmed.quality).toBe('unknown')
+    expect(snapshot.selectedDeviceId).toBe('lamp')
+    expect(snapshot.devices.other.power).toBe('observed')
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_list')).toHaveLength(1)
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_recovery_confirm')).toHaveLength(1)
+    await s.user.click(screen.getByRole('button', { name: 'Probe confirmed base' }))
+    await waitFor(() => expect(screen.getByTestId('command-probe')).toHaveTextContent('DEVICE_ERROR'))
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_hsv')).toHaveLength(0)
+  })
+
+  it('uses only the old source recovery readback when confirm finishes before that source is reactivated', async () => {
+    const pendingConfirm = deferred<unknown>()
+    setupDefaultFixture(pendingConfirm)
+    const explicit = makeController('Explicit Lamp')
+    const user = userEvent.setup()
+    const host = (controller?: typeof explicit.lighting) => <ApplicationSessionHost controller={controller}><><LightingApp /><SessionProbe /></></ApplicationSessionHost>
+    const view = render(host())
+    await screen.findByRole('heading', { name: 'Synthetic lamp' })
+    await prepare(user)
+    await startConfirm(user)
+    view.rerender(host(explicit.lighting))
+    await screen.findByRole('heading', { name: 'Explicit Lamp' })
+    await act(async () => { pendingConfirm.resolve({ recovery: { status: 'ADOPTED' }, readback: { status: 'SUCCEEDED', device: { ...publicDevice(), state: { ...publicDevice().state, hsv: { hue: 245, saturation: 70, value: 60 }, colorValuePercent: 60 } } } }) })
+    expect(screen.getByRole('heading', { name: 'Explicit Lamp' })).toBeVisible()
+    const explicitSnapshot = JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}')
+    expect(explicitSnapshot.selectedDeviceId).toBe('explicit-lamp')
+    expect(explicitSnapshot.confirmed.power).toBe('observed')
+
+    view.rerender(host())
+    await screen.findByRole('heading', { name: 'Synthetic lamp' })
+    const snapshot = JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}')
+    expect(snapshot.confirmed.hsv.hue).toBe(245)
+    expect(snapshot.confirmed.hsv).toMatchObject({ hue: 245 })
+    expect(snapshot.selectedDeviceId).toBe('lamp')
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_list')).toHaveLength(1)
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_recovery_confirm')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Probe confirmed base' }))
+    await waitFor(() => expect(screen.getByTestId('command-probe')).toHaveTextContent('accepted'))
+    expect(runtime.invoke.mock.calls.filter(([command, args]) => command === 'bridge_hsv' && args && typeof args === 'object' && 'hue' in args && args.hue === 222)).toHaveLength(1)
+  })
+
+  it('preserves a concurrent lighting intent across the confirmation source switch and causal barrier', async () => {
+    const pendingConfirm = deferred<unknown>()
+    const pendingCommand = deferred<unknown>()
+    setupDefaultFixture(pendingConfirm, pendingCommand)
+    const explicit = makeController('Explicit Lamp')
+    const user = userEvent.setup()
+    const host = (controller?: typeof explicit.lighting) => <ApplicationSessionHost controller={controller}><><LightingApp /><SessionProbe /></></ApplicationSessionHost>
+    const view = render(host())
+    await screen.findByRole('heading', { name: 'Synthetic lamp' })
+    await prepare(user)
+    await startConfirm(user)
+    await user.click(screen.getByRole('button', { name: 'Issue pending intent' }))
+    expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').pendingOperations).toBe(1)
+    expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').preview.hsv.hue).toBe(211)
+    view.rerender(host(explicit.lighting))
+    await screen.findByRole('heading', { name: 'Explicit Lamp' })
+    view.rerender(host())
+    await screen.findByRole('heading', { name: 'Synthetic lamp' })
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_list')).toHaveLength(1)
+
+    await act(async () => { pendingConfirm.resolve({ recovery: { status: 'ADOPTED' }, readback: { status: 'FAILED' } }) })
+    expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').pendingOperations).toBe(1)
+    expect(JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}').preview.hsv.hue).toBe(211)
+    await act(async () => { pendingCommand.resolve(publicDevice()) })
+
+    const snapshot = JSON.parse(screen.getByTestId('session-probe').textContent ?? '{}')
+    expect(snapshot.pendingOperations).toBe(0)
+    expect(snapshot.confirmed.hsv).toMatchObject({ hue: 120 })
+    expect(snapshot.confirmed.hsvKnowledge).toBe('stale')
+    expect(runtime.invoke.mock.calls.filter(([command]) => command === 'bridge_recovery_confirm')).toHaveLength(1)
+  })
+
   it('uses an explicitly supplied controller after the default integration has resolved', async () => {
     runtime.native = true
     runtime.invoke.mockReset().mockResolvedValue({ mode: 'mock', available: true })

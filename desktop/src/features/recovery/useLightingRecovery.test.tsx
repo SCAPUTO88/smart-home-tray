@@ -218,14 +218,17 @@ describe('lighting recovery session', () => {
     expect(await confirmation).toMatchObject({ kind: 'terminal', result: { recovery: { status: 'ADOPTED' } } })
     await expect(s.lighting.command('lamp', { enabled: false })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
   })
-  it('does not invalidate a new catalog/session when a previous session completes late', async () => {
+  it('reconciles an old session before a later catalog can establish new observations', async () => {
     const s = await setup()
     let confirmation!: Promise<ConfirmOutcome>
     act(() => { confirmation = s.result.current.confirmRecovery(proposal.proposalId) })
     s.unmount()
+    await act(async () => { s.confirm.resolve(adopted({ status: 'FAILED' })); await confirmation })
+    expect(s.lighting.eligibility('lamp')).toEqual({ status: 'ELIGIBLE', protocolVersion: 3.5 })
+    await expect(s.lighting.command('lamp', { hsv: { hue: 10 } })).rejects.toMatchObject({ code: 'DEVICE_ERROR' })
+
     const next = renderHook(() => useLightingSession(s.lighting, s.recovery))
     await waitFor(() => expect(next.result.current.selectedDevice).not.toBeNull())
-    await act(async () => { s.confirm.resolve(adopted({ status: 'FAILED' })); await confirmation })
     expect(next.result.current.selectedView?.confirmed.knowledge.power).toBe('observed')
     await s.lighting.command('lamp', { enabled: false })
     next.unmount()
