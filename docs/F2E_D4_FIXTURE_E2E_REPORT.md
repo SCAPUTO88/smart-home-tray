@@ -112,6 +112,12 @@ Após a execução, preencher neste relatório os resultados visuais e conferir 
 - **Arquitetura:** nenhuma decisão aprovada/superada foi alterada. Nenhuma mudança de código de produto ou contrato; apenas relatório e checkpoint documental.
 - **Recomendação:** manter **NO-GO** para declarar F2E.D.4.V1 completa até o roteiro nativo validar ao menos prepare/confirm através dos handlers registrados e as verificações de segurança/retorno de foco. A validação automatizada das regressões permanece verde.
 
+## Publicação e checks remotos
+
+- Commit documental publicado na branch remota `test/f2e-d4v1-fixture-e2e`: `200a2c9937c91af606aa90710989adc3231a3bd4`; o pai remoto conferido é a base `55404c58bc7e7c5b141374d53cf1c11f76d19eb2`.
+- A criação da PR para `develop` foi solicitada pelo conector GitHub, mas a chamada foi recusada com: `MCP tool call requires approval, but approval policy is never`. `gh pr list` também não pôde conectar pela configuração de proxy local. A PR **não foi criada** e não houve merge.
+- Leitura remota do commit retornou `check_runs: []` e `total_count: 0`; como não há PR, os checks de pull request estão **NOT RUN**. Checks locais estão listados acima.
+
 ## Resumo para revisão arquitetural
 
 Base `55404c58`; frontend 224/224, backend 400/400, Rust 28/28, typecheck/lint/build/compile Tauri sem bundle aprovados. O teste `BridgeClient` usa processo Python FIXTURE real e prova prepare/confirm/replay/shutdown sobre JSONL. React continua testado com invoke doubles. A janela/WebView não estava acessível (`apps: []`), logo os handlers Tauri no dispatcher e QA visual não foram percorridos. Sem REAL/LAN/hardware/credenciais. Parecer NO-GO até execução manual reproduzível.

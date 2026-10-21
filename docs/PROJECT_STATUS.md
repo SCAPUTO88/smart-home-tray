@@ -6,7 +6,7 @@
 - Evidência automatizada: backend **400 passed**; frontend **224 passed/17 arquivos**, typecheck, lint e build (2.350 módulos) passaram; Rust **28 passed/3 suites**, `cargo fmt --check`, `cargo check --locked` e `tauri:build -- --no-bundle` passaram. O build nativo mostrou somente aviso de colisão de PDB lib/bin.
 - O `BridgeClient` inicia `python -u -m smart_home_tray.fixture` real e cobre catálogo, prepare/confirm/replay, correlação e shutdown sobre JSONL. Testes React cobrem controller, reconciliação e apresentação com doubles de invoke; não equivalem a invoke dos handlers Tauri reais.
 - **NO-GO para aceite E2E nativo:** ambiente de UI retornou `apps: []`/`browsers: []`; nenhum fluxo da WebView, tray ou QA visual foi observado. Roteiro reproduzível, matriz C01–C17, evidências e limitações em `docs/F2E_D4_FIXTURE_E2E_REPORT.md`.
-- Execuções delimitadas a FIXTURE; sem REAL, configuração TOML, Local Keys, rede doméstica, LAN, cloud ou hardware. Sem mudança arquitetural/funcional; sem merge. Abrir PR para revisão documental e parar para code review; manter o aceite completo NO-GO até jornada nativa ser validada.
+- Execuções delimitadas a FIXTURE; sem REAL, configuração TOML, Local Keys, rede doméstica, LAN, cloud ou hardware. Sem mudança arquitetural/funcional. Commit `200a2c9937c91af606aa90710989adc3231a3bd4` está na branch remota; criação da PR foi bloqueada pelo conector GitHub (`MCP tool call requires approval, but approval policy is never`) e o CLI não alcançou a API via proxy. A PR não existe; checks remotos de PR estão NOT RUN (0 check-runs). Manter o aceite completo NO-GO até a jornada nativa ser validada.
 
 ## CR-49.3 — reconciliação durante troca de origem (2026-10-21)
 
