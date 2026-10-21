@@ -1,6 +1,28 @@
 # F2E.D.4.V1 — relatório de validação FIXTURE
 
-## Parecer
+## Atualização de homologação manual — 2026-10-21 (evidência posterior à execução automatizada)
+
+**Parecer vigente: GO restrito para a jornada funcional principal em Tauri/FIXTURE; NO-GO para encerramento integral de F2E.D.4.V1.** A conclusão inicial de indisponibilidade da WebView abaixo é histórica e foi parcialmente superada por uma gravação feita pelo mantenedor no Windows. O vídeo foi fornecido na conversa de revisão; não foi versionado neste repositório, e não há transcrição de tráfego interno do dispatcher.
+
+**Evidência observada na gravação (~71 s):**
+- **C01 (parcial):** janela Tauri abriu com indicação `Fixture · simulação`, dispositivos sintéticos e controles. A interface visual não apresentou fallback aparente para REAL ou MOCK. A gravação isoladamente não rastreia cada chamada Tauri.
+- **C02–C03 (jornada principal):** em `fixture-tuya35`, preparação explícita mostrou candidato `198.51.100.35`, TTL aproximadamente 60 s e aviso de confiança; a confirmação manual resultou em mensagem de adoção em memória e leitura reconciliada. A sequência é compatível com React → Tauri → Python FIXTURE, corroborada pelos testes Rust ↔ subprocesso real e pelos testes React separados; não equivale a captura do dispatcher de ponta a ponta.
+- **C04:** `fixture-tuya33` mostrou inelegibilidade e preparação desabilitada.
+- **C09:** `fixture-recovery-readback-failed` exibiu `ADOPTED` separado de readback falho, controles dependentes sem estado confirmado; após refresh manual, os valores voltaram a aparecer. O teste de confirmação com falha foi repetido e o estado não confirmado voltou a ser exibido.
+- **C14 (parcial):** ocultar e reabrir o painel pelo tray preservou a seleção e o estado exibido. A gravação **não** comprova ocultação durante uma confirmação pendente nem ausência de segunda `list()` por inspeção de IPC.
+- **C17 (complementar):** após encerrar o aplicativo, o mantenedor executou `Get-CimInstance Win32_Process` filtrando `python.exe`/`pythonw.exe` e `*smart_home_tray.fixture*`; o comando não retornou processos. Isso evidencia ausência de subprocesso FIXTURE residual **no momento da consulta**, não demonstra sozinho a ordem interna de shutdown.
+
+**Ainda não verificado manualmente:** execução completa por teclado, `Escape`/retorno de foco, leitor de tela/`aria-live`, escalas 100%/125%, monitor secundário, seleção/troca durante confirmação pendente, verificação por logs de `requestId` e chamadas `list()`, e todos os cenários C05–C08/C10–C13/C15–C16 em uma mesma jornada nativa. A matriz original abaixo permanece evidência por camada para esses cenários, não passe nativo universal.
+
+**Oportunidades UX, não bloqueantes para o GO restrito:** (1) a mensagem da recuperação continua referindo-se ao readback original falho mesmo após refresh manual posteriormente bem-sucedido — separar histórico da recuperação de knowledge atual; (2) “Pronto para controlar” pode aparecer quando alguns controles dependentes permanecem indisponíveis por knowledge stale/unknown. O catálogo FIXTURE usa nomes extensos e demanda scroll, sem indício de erro funcional.
+
+**Atualização GitHub:** a PR #51 foi efetivamente criada após a tentativa inicialmente bloqueada registrada abaixo; no head `5a1226e` os quatro jobs de CI terminaram com sucesso. As referências históricas abaixo a “PR não criada/0 checks” correspondem somente à situação anterior à abertura da PR.
+
+**Próximo gate:** homologação assistiva/teclado e critérios nativos pendentes, com evidência explícita; nenhuma alteração de backend/contratos, nenhum uso de REAL, LAN ou hardware. Este complemento não substitui a decisão de não fazer merge automático.
+
+---
+
+## Parecer inicial (antes da gravação nativa)
 
 **NO-GO para aceite ponta a ponta/nativo.** Os testes automatizados comprovam o processo Python FIXTURE real iniciado pelo `BridgeClient` Rust, o protocolo JSON Lines, os DTOs/parsers Rust e, em suítes separadas, controller, reconciliação e UI React usando doubles. Não foi possível observar ou interagir com a janela WebView2 nesta sessão: a superfície de UI informou `apps: []` e `browsers: []`. Portanto, não há evidência da jornada React → `invoke` → handlers Tauri registrados → `BridgeState` → subprocesso Python na janela nativa.
 
