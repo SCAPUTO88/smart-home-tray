@@ -1,5 +1,13 @@
 # Smart Home Tray — Project Status
 
+## F2E.D.4.V1 — validação FIXTURE (2026-10-21)
+
+- Base/HEAD de início: `55404c58bc7e7c5b141374d53cf1c11f76d19eb2`, merge da PR #49 em `origin/develop`; worktree `f2e-d4v1-fixture-e2e`, branch `test/f2e-d4v1-fixture-e2e`, inicialmente limpa.
+- Evidência automatizada: backend **400 passed**; frontend **224 passed/17 arquivos**, typecheck, lint e build (2.350 módulos) passaram; Rust **28 passed/3 suites**, `cargo fmt --check`, `cargo check --locked` e `tauri:build -- --no-bundle` passaram. O build nativo mostrou somente aviso de colisão de PDB lib/bin.
+- O `BridgeClient` inicia `python -u -m smart_home_tray.fixture` real e cobre catálogo, prepare/confirm/replay, correlação e shutdown sobre JSONL. Testes React cobrem controller, reconciliação e apresentação com doubles de invoke; não equivalem a invoke dos handlers Tauri reais.
+- **NO-GO para aceite E2E nativo:** ambiente de UI retornou `apps: []`/`browsers: []`; nenhum fluxo da WebView, tray ou QA visual foi observado. Roteiro reproduzível, matriz C01–C17, evidências e limitações em `docs/F2E_D4_FIXTURE_E2E_REPORT.md`.
+- Execuções delimitadas a FIXTURE; sem REAL, configuração TOML, Local Keys, rede doméstica, LAN, cloud ou hardware. Sem mudança arquitetural/funcional; sem merge. Abrir PR para revisão documental e parar para code review; manter o aceite completo NO-GO até jornada nativa ser validada.
+
 ## CR-49.3 — reconciliação durante troca de origem (2026-10-21)
 
 - **Causa-raiz confirmada:** `useLightingSession.confirmRecovery()` aguardava a Promise no proprietário antigo e guardava o checkpoint no `TauriDeviceController`. Ao voltar à origem padrão, o `ActiveApplicationSession` era remontado sobre o controller em cache; `useLightingSession` chamava `list()`, que avançava `catalogEpoch` e limpava checkpoints, `knownPublic`, `confirmedBase` e knowledge. O confirm antigo depois era recusado por incompatibilidade de catálogo; a sessão nova mantinha o snapshot listado antes da adoção como `observed` e aceitava comandos que dependem de `confirmedBase`.
