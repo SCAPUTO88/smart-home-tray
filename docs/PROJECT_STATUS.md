@@ -17,7 +17,7 @@
 - **Garantias:** erro histórico da leitura permanece separado do status da escrita; nenhuma knowledge é promovida. Refresh sem destino/vista e snapshot de Device ID divergente não produzem evidência para `recordManualRefresh`. Operações pendentes preservam o preview. Sem invoke/retry/polling, controller Tauri, backend, IPC, regras de reconciliação, epochs, proposalId/TTL ou políticas D-015–D-020 alterados.
 - **Verificação local:** regressões focadas — **41 passed / 2 arquivos**; suíte desktop — **237 passed / 17 arquivos** (232 baseline + 5). `npm run typecheck`, `npm run lint`, `npm run build` (2.350 módulos) e `git diff --check` passaram. Nenhuma execução REAL, LAN, cloud ou hardware.
 - **Arquivos:** `desktop/src/app/LightingApp.tsx`, `desktop/src/app/App.test.tsx`, `desktop/src/features/devices/useLightingSession.ts`, `desktop/src/features/devices/useLightingSession.test.tsx` e este status.
-- **Publicação/CI:** correção preparada na branch já vinculada à PR #53; aguarda commit/push normal e confirmação dos quatro jobs remotos do novo head. Sem nova PR, merge, rebase ou force-push; parar para novo code review.
+- **Publicação/CI:** commit funcional `9832a72f1093f75877aed0973d292cb4998875d9` publicado por push normal na branch vinculada à PR [#53](https://github.com/SCAPUTO88/smart-home-tray/pull/53). Os quatro jobs desse head passaram: Python 3.12 Windows, Python 3.14 Windows, Frontend Node 24 e Tauri/Rust Windows MSVC. Sem nova PR, merge, rebase ou force-push; parar para novo code review.
 - **Riscos residuais:** a atualização validada é observacional e não prova adoção física retroativa; respostas que cruzam a barreira causal continuam descartadas e podem exigir nova leitura explícita.
 
 ## F2E.D.4.V1 — checklist nativo concluído (2026-10-21)
