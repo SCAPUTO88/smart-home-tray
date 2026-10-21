@@ -1,5 +1,29 @@
 # F2E.D.4.V1 — relatório de validação FIXTURE
 
+## Homologação complementar — checklist de teclado/acessibilidade (2026-10-21)
+
+**Parecer atualizado: GO para integrar a documentação da F2E.D.4.V1 e aceitar a jornada funcional principal em FIXTURE, com cobertura e ressalvas explicitadas.** Este parecer sucede o NO-GO inicial do agente (sem janela) e o GO restrito da gravação. Não significa que os 17 cenários tenham sido exercitados individualmente na WebView nativa ou que cada evento `invoke` tenha sido capturado.
+
+**Checklist executado manualmente pelo mantenedor no Windows — 7/7 itens reportados como aprovados:**
+
+1. Navegação entre dispositivos e controles por `Tab` e `Shift+Tab`.
+2. `Enter` ou `Espaço` acionam a expansão e os botões.
+3. Após preparar proposta, foco direcionado ao título de confirmação.
+4. `Escape` fecha o painel quando permitido e devolve o foco ao controle de abertura.
+5. Destaque de foco visível e controles alcançáveis por teclado.
+6. Texto, botões e TTL legíveis sem cortes, inclusive com rolagem.
+7. Anúncios de mensagens importantes pelo Narrador do Windows.
+
+**Evidências anteriores complementares:** gravação (~71 s) da janela Tauri em FIXTURE, incluindo `fixture-tuya35` prepare/confirm e `ADOPTED`, Tuya 3.3 inelegível, `ADOPTED + FAILED`, refresh manual e ocultar/reabrir pelo tray; e consulta PowerShell sem `python(w).exe` executando `smart_home_tray.fixture` após encerramento. O vídeo e o checklist foram fornecidos/reportados na conversa; não há artefato de vídeo anexado ao repositório nem log do dispatcher nativo.
+
+**Verificação remota antes deste complemento:** quatro jobs do head `9196026` concluídos com SUCCESS (Python 3.12/3.14 Windows, Frontend Node 24 e Tauri/Rust Windows MSVC). O CI do novo head documental deverá ser verificado separadamente.
+
+**Limites conscientemente aceitos para o merge documental:** sem captura direta de `requestId`/dispatcher ou contagem de `list()`; nem todos os C01–C17 foram repetidos na UI real; escala 125%, monitor secundário e operação confirm pendente durante ocultação não possuem evidência manual específica. Eles permanecem como cobertura automatizada por camadas ou backlog de QA ampliado, conforme matriz, sem serem marcados falsamente como passes nativos.
+
+**Backlog UX não bloqueante:** texto histórico da falha do readback após refresh posterior válido; status “Pronto para controlar” com alguns campos stale/unknown; nomes extensos na lista sintética. Nenhuma alteração de código de produto nesta PR.
+
+---
+
 ## Atualização de homologação manual — 2026-10-21 (evidência posterior à execução automatizada)
 
 **Parecer vigente: GO restrito para a jornada funcional principal em Tauri/FIXTURE; NO-GO para encerramento integral de F2E.D.4.V1.** A conclusão inicial de indisponibilidade da WebView abaixo é histórica e foi parcialmente superada por uma gravação feita pelo mantenedor no Windows. O vídeo foi fornecido na conversa de revisão; não foi versionado neste repositório, e não há transcrição de tráfego interno do dispatcher.
