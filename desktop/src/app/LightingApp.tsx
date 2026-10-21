@@ -30,7 +30,7 @@ const scenarioNames: Record<OperationScenario, string> = {
 function operationLabel(device: NonNullable<ReturnType<typeof useLightingSession>['selectedDevice']>, state: DeviceState, status: OperationStatus, pending: boolean, refreshing: boolean, refreshError: string | null, operationError: string | null): string {
   if (pending || refreshing || status === 'pending') return 'Enviando…'
   if (device.connection === 'offline' || status === 'offline') return 'Offline'
-  if (refreshError || operationError || status === 'error') return 'Não foi possível atualizar'
+  if (operationError || status === 'error') return 'Não foi possível atualizar'
   if (status === 'canceled') return 'Operação cancelada'
   if (device.connection !== 'online') return 'Atualização necessária'
   const rgbPanel = state.mode === 'rgb' && device.capabilities.rgb
@@ -42,6 +42,7 @@ function operationLabel(device: NonNullable<ReturnType<typeof useLightingSession
   if (modeFields.length > 0 && availableModeFields === 0) return 'Atualização necessária'
   if (availableModeFields < modeFields.length || device.capabilities.power && state.knowledge.power !== 'observed') return 'Controles limitados'
   if (status === 'confirmed') return 'Atualizado'
+  if (refreshError) return 'Não foi possível atualizar'
   return 'Pronto para controlar'
 }
 

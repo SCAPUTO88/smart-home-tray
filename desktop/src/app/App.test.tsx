@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { DeviceController, LightingDevice } from '../features/devices/types'
+import { OperationError } from '../features/devices/types'
 import { createMockDeviceController, createMockDevices } from '../mock/MockDeviceController'
 import App from './LightingApp'
 
@@ -26,6 +27,29 @@ describe('Smart Home Tray app', () => {
     expect(screen.getByText('Conectado · simulação')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Fita LED' })).toBeVisible()
     expect(screen.getByRole('status')).toHaveTextContent('Pronto para controlar')
+  })
+
+  it('shows a later successful write result after a generic refresh failure', async () => {
+    const [lamp] = createMockDevices()
+    const controller: DeviceController = {
+      mode: 'real',
+      list: async () => [lamp],
+      refresh: async () => { throw new OperationError('DEVICE_ERROR') },
+      command: async (_deviceId, patch) => ({
+        ...lamp,
+        state: { ...lamp.state, ...patch, hsv: { ...lamp.state.hsv, ...patch.hsv } },
+      }),
+    }
+    const user = userEvent.setup()
+    render(<App controller={controller} />)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    await user.click(screen.getByRole('button', { name: 'Atualizar estado do dispositivo' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to refresh device state')
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '205' } })
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Atualizado'))
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to refresh device state')
   })
 
   it('preserves each device preview when switching between devices', async () => {
