@@ -3,7 +3,7 @@ import { useApplicationSession } from './ApplicationSessionContext'
 import { ApplicationSessionHost } from './ApplicationSessionHost'
 import type { useLightingSession } from '../features/devices/useLightingSession'
 import type { CSSProperties } from 'react'
-import type { DeviceController, LightingPatch, OperationScenario } from '../features/devices/types'
+import type { DeviceController, DeviceState, FieldKnowledge, LightingPatch, OperationStatus, OperationScenario } from '../features/devices/types'
 import type { DeviceIntegration } from '../features/devices/platformController'
 import { ManualRecoveryPanel } from '../features/recovery/ManualRecoveryPanel'
 import type { RecoveryIntegration } from '../features/recovery/reconciliation'
@@ -27,12 +27,21 @@ const scenarioNames: Record<OperationScenario, string> = {
   success: 'Sucesso', delay: 'Atraso', canceled: 'Cancelada', error: 'Erro', offline: 'Offline',
 }
 
-function operationLabel(status: string): string {
-  if (status === 'pending') return 'Enviando…'
-  if (status === 'confirmed') return 'Atualizado'
+function operationLabel(device: NonNullable<ReturnType<typeof useLightingSession>['selectedDevice']>, state: DeviceState, status: OperationStatus, pending: boolean, refreshing: boolean, refreshError: string | null, operationError: string | null): string {
+  if (pending || refreshing || status === 'pending') return 'Enviando…'
+  if (device.connection === 'offline' || status === 'offline') return 'Offline'
+  if (refreshError || operationError || status === 'error') return 'Não foi possível atualizar'
   if (status === 'canceled') return 'Operação cancelada'
-  if (status === 'offline') return 'Offline'
-  if (status === 'error') return 'Não foi possível atualizar'
+  if (device.connection !== 'online') return 'Atualização necessária'
+  const rgbPanel = state.mode === 'rgb' && device.capabilities.rgb
+  const whitePanel = !rgbPanel && device.capabilities.white
+  const modeFields: FieldKnowledge[] = rgbPanel || !whitePanel
+    ? [state.knowledge.hsv]
+    : [device.capabilities.white && state.knowledge.whiteBrightness, device.capabilities.temperature && state.knowledge.colorTemperature].filter((field): field is FieldKnowledge => Boolean(field))
+  const availableModeFields = modeFields.filter((field) => field === 'observed').length
+  if (modeFields.length > 0 && availableModeFields === 0) return 'Atualização necessária'
+  if (availableModeFields < modeFields.length || device.capabilities.power && state.knowledge.power !== 'observed') return 'Controles limitados'
+  if (status === 'confirmed') return 'Atualizado'
   return 'Pronto para controlar'
 }
 
@@ -75,7 +84,8 @@ function LightingPanel({ controller, recovery, presentation, session }: { contro
   const accent = selectedLightingColor(state)
   const ambientIntensity = lightingIntensity(state)
   const issueValue = (patch: LightingPatch) => issue(device.deviceId, patch, scenario)
-  const statusText = operationLabel(view.status)
+  const statusText = operationLabel(device, state, view.status, view.pendingOperations.length > 0, Boolean(refreshing[device.deviceId]), refreshError, view.error)
+  const statusTone = statusText === 'Atualizado' ? 'confirmed' : statusText === 'Enviando…' ? 'pending' : statusText === 'Offline' ? 'offline' : statusText === 'Não foi possível atualizar' ? 'error' : statusText === 'Operação cancelada' ? 'canceled' : 'idle'
 
   return (
     <MotionConfig reducedMotion="user">
@@ -148,8 +158,8 @@ function LightingPanel({ controller, recovery, presentation, session }: { contro
             <div className="control-heading-icon"><SlidersHorizontal size={15} /></div>
             <div><h3>Controles</h3><p>{Object.values(state.knowledge).includes('stale') ? 'Últimos valores observados; atualização recomendada' : 'Ajuste a luz ao seu ambiente'}</p></div>
             {controller.refresh && <button className="refresh-action" type="button" aria-label="Atualizar estado do dispositivo" disabled={Boolean(refreshing[device.deviceId]) || view.pendingOperations.length > 0} onClick={() => void refreshDevice(device.deviceId)}>{refreshing[device.deviceId] ? "Atualizando..." : <><RefreshCw size={13} /> Atualizar</>}</button>}
-            <div className={`operation-indicator is-${view.status}`} role="status" aria-live="polite">
-              {view.status === 'pending' ? <span className="pending-dot" /> : view.status === 'confirmed' ? <Check size={13} /> : view.status === 'offline' ? <WifiOff size={13} /> : null}
+            <div className={`operation-indicator is-${statusTone}`} role="status" aria-live="polite">
+              {statusTone === 'pending' ? <span className="pending-dot" /> : statusTone === 'confirmed' ? <Check size={13} /> : statusTone === 'offline' ? <WifiOff size={13} /> : null}
               <span>{statusText}</span>
             </div>
           </div>
@@ -209,6 +219,7 @@ function LightingPanel({ controller, recovery, presentation, session }: { contro
           prepareRecovery={session.prepareRecovery}
           confirmRecovery={session.confirmRecovery}
           refreshDevice={controller.refresh ? refreshDevice : undefined}
+          currentKnowledge={state.knowledge}
           refreshDisabled={Boolean(refreshing[device.deviceId]) || view.pendingOperations.length > 0}
           simulation={controller.mode === 'mock' || controller.mode === 'fixture'}
         />}

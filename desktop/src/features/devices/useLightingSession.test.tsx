@@ -111,8 +111,10 @@ describe('lighting session field reconciliation', () => {
     expect(result.current.selectedView?.confirmed).toMatchObject({ hsv: { hue: 205 }, knowledge: { hsv: 'stale', colorValue: 'stale' } })
 
     devices[0].state.knowledge = { ...devices[0].state.knowledge, hsv: 'observed', colorValue: 'observed' }
-    await act(async () => { await result.current.refreshDevice('mock-desk-lamp') })
+    let appliedRefresh: LightingDevice | undefined
+    await act(async () => { appliedRefresh = await result.current.refreshDevice('mock-desk-lamp') })
 
+    expect(appliedRefresh).toMatchObject({ deviceId: 'mock-desk-lamp', state: { knowledge: { hsv: 'observed', colorValue: 'observed' } } })
     expect(result.current.selectedView?.confirmed).toMatchObject({ knowledge: { hsv: 'observed', colorValue: 'observed' } })
   })
 
@@ -171,7 +173,7 @@ describe('lighting session field reconciliation', () => {
     setup.controller.refresh = () => new Promise((_resolve, reject) => { rejectRefresh = reject })
     const session = renderHook(() => useLightingSession(setup.controller))
     await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
-    let refreshTask!: Promise<void>
+    let refreshTask!: Promise<unknown>
     act(() => { refreshTask = session.result.current.refreshDevice('mock-desk-lamp') })
     issue(session.result, 'mock-desk-lamp', { enabled: false })
     await act(async () => { confirm(setup.pending, 0, setup.devices) })

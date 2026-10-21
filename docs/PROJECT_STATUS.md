@@ -1,5 +1,13 @@
 # Smart Home Tray — Project Status
 
+## F2E.D.4.UX1 — apresentação de recovery e controles (2026-10-21)
+
+- **Causas reproduzidas:** o painel apresentava exclusivamente o readback terminal de recovery, então continuava mostrando a falha imediata depois de um refresh manual válido. O indicador operacional usava `view.status=idle` como sinônimo de disponibilidade, sem considerar knowledge por campo nem os controles habilitados no modo atual.
+- **Mudanças de apresentação:** falha do readback agora é descrita como histórica. Um refresh manual aplicado pode exibir a mensagem de leitura posterior somente quando o snapshot corresponde ao mesmo Device ID, contém campos `observed` e ao menos um desses campos continua observado no estado atual. O status dos controles considera conexão, operação pendente/erro, refresh em andamento/erro, capacidades e conhecimento dos campos do modo selecionado; knowledge de `scene` não suportado é ignorado. O refresh da sessão retorna internamente o snapshot que foi efetivamente aplicado para permitir essa derivação.
+- **Garantias preservadas:** ADOPTED permanece separado de sucesso de readback; leitura posterior não confirma retroativamente a adoção. `SUPERSEDED` não afirma estado físico confirmado; indeterminate permanece incerto mesmo após refresh. Falha, snapshot vazio, refresh fora de ordem ou Device ID divergente não substituem o histórico. Refresh parcial qualifica somente campos observados; knowledge não é promovido pela UI. Sem retry, polling, invoke adicional, persistência, mudanças no controller Tauri/backend/Rust/IPC/reconciliação/TTL/proposalId ou política D-015–D-020. Retenção de sessões CR-49.3 preservada.
+- **Regressões RED/GREEN:** os testes iniciais falharam nos dois sintomas; após a correção, testes focados — **110 passed / 4 arquivos** — e suíte desktop completa — **232 passed / 17 arquivos**. `npm run typecheck`, `npm run lint` e `npm run build` (2.350 módulos) passaram; `git diff --check` passou.
+- **Escopo/riscos residuais:** mudança restrita à apresentação e ao valor retornado pela sessão para o snapshot já aceito. O aviso de leitura posterior é transitório, mantido somente em memória junto ao histórico durante o runtime; reload encerra esse estado, conforme D-020. Sem REAL, LAN, cloud ou hardware. Aguardando publicação/CI remoto e code review; não fazer merge.
+
 ## F2E.D.4.V1 — checklist nativo concluído (2026-10-21)
 
 - **Parecer vigente:** **GO para merge documental da PR #51 e aceite da jornada funcional principal em FIXTURE**, com limites no relatório. O NO-GO inicial referia-se à falta de janela no ambiente do agente e foi parcialmente superado pela gravação e pelo QA manual posteriores; não equivale a alegar execução nativa de toda a matriz C01–C17.

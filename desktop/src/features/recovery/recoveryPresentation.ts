@@ -1,5 +1,6 @@
 import type { ConfirmOutcome, PrepareOutcome } from './ManualRecoveryController'
 import type { PrepareResult, ReadbackResult } from './contracts'
+import type { DeviceKnowledge } from '../devices/types'
 
 type Proposal = Extract<PrepareResult, { status: 'PROPOSAL_READY' }> & { deadline: number }
 export type RecoveryView =
@@ -8,7 +9,7 @@ export type RecoveryView =
   | { kind: 'proposal-ready'; deviceName: string; proposal: Proposal }
   | { kind: 'busy'; deviceName: string; proposal?: Proposal }
   | { kind: 'failed' | 'ambiguous' | 'expired'; deviceName: string; message: string }
-  | { kind: 'adopted'; deviceName: string; readback: ReadbackResult }
+  | { kind: 'adopted'; deviceName: string; readback: ReadbackResult; laterRefreshFields?: (keyof DeviceKnowledge)[] }
   | { kind: 'indeterminate'; deviceName: string }
 
 const idle: RecoveryView = { kind: 'idle' }
@@ -42,9 +43,20 @@ export class RecoveryPresentation {
   constructor(now: () => number = () => performance.now()) { this.now = now }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   get = (deviceId: string): RecoveryView => this.views.get(deviceId) ?? idle
+  private notify() { for (const listener of this.listeners) listener() }
+  beginManualRefresh(deviceId: string) {
+    const state = this.get(deviceId)
+    if (state.kind === 'adopted' && state.laterRefreshFields) {
+      this.put(deviceId, { kind: 'adopted', deviceName: state.deviceName, readback: state.readback })
+    }
+  }
+  recordManualRefresh(deviceId: string, observedFields: readonly (keyof DeviceKnowledge)[]) {
+    const state = this.get(deviceId)
+    if (state.kind === 'adopted' && observedFields.length) this.put(deviceId, { ...state, laterRefreshFields: [...observedFields] })
+  }
   private put(deviceId: string, state: RecoveryView) {
     this.views.set(deviceId, state)
-    for (const listener of this.listeners) listener()
+    this.notify()
   }
   remaining(state: RecoveryView): number {
     return 'proposal' in state && state.proposal ? Math.max(0, (state.proposal.deadline - this.now()) / 1000) : 0

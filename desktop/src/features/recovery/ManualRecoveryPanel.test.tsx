@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ManualRecoveryPanel } from './ManualRecoveryPanel'
@@ -7,6 +7,8 @@ import type { ConfirmOutcome, PrepareOutcome } from './ManualRecoveryController'
 import type { RecoveryEligibility } from './reconciliation'
 import { confirmFailures, prepareFailures, type ReadbackResult } from './contracts'
 import { deferred, proposal, publicDevice } from './testSupport'
+import type { LightingDevice } from '../devices/types'
+import { createMockDevices } from '../../mock/MockDeviceController'
 
 const eligible: RecoveryEligibility = { status: 'ELIGIBLE', protocolVersion: 3.5 }
 function setup(options: { ttl?: number; eligibility?: RecoveryEligibility } = {}) {
@@ -14,8 +16,8 @@ function setup(options: { ttl?: number; eligibility?: RecoveryEligibility } = {}
   const store = new RecoveryPresentation(() => time)
   const prepare = vi.fn<(_: string) => Promise<PrepareOutcome>>(async () => ({ kind: 'terminal', result: { ...proposal, ttlSeconds: options.ttl ?? 60 } }))
   const confirm = vi.fn<(_: string) => Promise<ConfirmOutcome>>(async () => ({ kind: 'terminal', result: { recovery: { status: 'ADOPTED' }, readback: { status: 'FAILED' } } }))
-  const refresh = vi.fn(async () => {})
-  const props = { deviceId: 'lamp', deviceName: 'Luz Mesa', eligibility: options.eligibility ?? eligible, store, prepareRecovery: prepare, confirmRecovery: confirm, refreshDevice: refresh, refreshDisabled: false, simulation: true }
+  const refresh = vi.fn(async (_deviceId: string): Promise<LightingDevice | undefined> => undefined)
+  const props = { deviceId: 'lamp', deviceName: 'Luz Mesa', eligibility: options.eligibility ?? eligible, store, prepareRecovery: prepare, confirmRecovery: confirm, refreshDevice: refresh, currentKnowledge: { power: 'observed', workMode: 'observed', whiteBrightness: 'observed', colorTemperature: 'observed', hsv: 'observed', colorValue: 'observed', scene: 'unknown' } as const, refreshDisabled: false, simulation: true }
   const view = render(<ManualRecoveryPanel {...props} />)
   const user = userEvent.setup(vi.isFakeTimers() ? { advanceTimers: vi.advanceTimersByTime } : {})
   const open = async () => user.click(screen.getByRole('button', { name: /Recuperar IP/ }))
@@ -101,23 +103,78 @@ describe('manual recovery presentation', () => {
     await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
     expect(screen.getByTestId('recovery-state')).toHaveAttribute('data-state', status === 'PROPOSAL_EXPIRED' ? 'expired' : status === 'BUSY' ? 'busy' : 'failed')
   })
-  it('treats bridge timeout as unknown adoption, never enables retry or claims rollback', async () => {
+  it('keeps bridge timeout indeterminate after a later valid manual refresh, never enabling recovery retry', async () => {
     const s = setup(); s.confirm.mockResolvedValue({ kind: 'indeterminate', code: 'TIMEOUT' })
     await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
     expect(screen.getByText(/adoção pode ter ocorrido/)).toBeVisible()
     expect(screen.queryByRole('button', { name: /Preparar|Confirmar recuperação/ })).not.toBeInTheDocument()
-    await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' }))
+    s.refresh.mockResolvedValueOnce({ ...createMockDevices()[0], deviceId: 'lamp' })
+    await act(async () => { await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' })) })
     expect(s.refresh).toHaveBeenCalledExactlyOnceWith('lamp')
     expect(s.confirm).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('recovery-state')).toHaveAttribute('data-state', 'indeterminate')
+    expect(screen.getByText(/Resultado desconhecido.*não comprova o resultado da adoção original/)).toBeVisible()
   })
   it.each<ReadbackResult>([{ status: 'SUCCEEDED', device: publicDevice() }, { status: 'FAILED' }, { status: 'SUPERSEDED' }, { status: 'SUCCEEDED' }])('keeps adoption distinct from readback $status', async (readback) => {
     const s = setup(); s.confirm.mockResolvedValue({ kind: 'terminal', result: { recovery: { status: 'ADOPTED' }, readback } })
     await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
     expect(screen.getByText(/Adoção em memória concluída/)).toBeVisible()
+    if (readback.status === 'SUPERSEDED') {
+      expect(screen.getByTestId('recovery-state')).toHaveTextContent('A leitura foi superada por outra operação')
+      expect(screen.getByTestId('recovery-state')).not.toHaveTextContent(/estado físico confirmado|Leitura posterior realizada/)
+    }
     expect(s.refresh).not.toHaveBeenCalled()
     if (readback.status === 'FAILED' || readback.status === 'SUCCEEDED' && !readback.device) {
       await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' })); expect(s.refresh).toHaveBeenCalledWith('lamp')
     }
+  })
+  it('replaces the current failure wording after a later refresh observes fields, while preserving recovery history', async () => {
+    const s = setup()
+    await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
+    expect(screen.getByText(/Adoção em memória concluída.*leitura realizada imediatamente após a recuperação falhou/i)).toBeVisible()
+    const device = createMockDevices()[0]
+    const later = { ...device, deviceId: 'lamp', state: { ...device.state, knowledge: { ...device.state.knowledge, power: 'observed' as const, workMode: 'stale' as const, whiteBrightness: 'unknown' as const, colorTemperature: 'unknown' as const, hsv: 'stale' as const, colorValue: 'unknown' as const } } }
+    s.refresh.mockResolvedValue(later)
+    await act(async () => { await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' })) })
+    expect(s.refresh).toHaveBeenCalledExactlyOnceWith('lamp')
+    await waitFor(() => expect(s.store.get('lamp')).toMatchObject({ kind: 'adopted', laterRefreshFields: expect.arrayContaining(['power']) }))
+    expect(s.store.get('lamp')).toMatchObject({ laterRefreshFields: ['power'] })
+    s.rerender(<ManualRecoveryPanel {...s.props} currentKnowledge={{ power: 'observed', workMode: 'stale', whiteBrightness: 'unknown', colorTemperature: 'unknown', hsv: 'stale', colorValue: 'unknown', scene: 'unknown' }} />)
+    expect(await screen.findByText(/Leitura posterior realizada.*campos observados/i)).toBeVisible()
+    expect(screen.getByTestId('recovery-state')).toHaveAttribute('data-state', 'adopted')
+  })
+  it('keeps the original uncertainty after a failed, empty, or cross-device refresh', async () => {
+    const s = setup()
+    await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
+    s.refresh.mockRejectedValueOnce(new Error('read failed'))
+    await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' }))
+    expect(screen.getByText(/leitura realizada imediatamente após a recuperação falhou/i)).toBeVisible()
+    s.refresh.mockResolvedValueOnce({ ...createMockDevices()[0], deviceId: 'other' })
+    await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' }))
+    expect(screen.getByText(/leitura realizada imediatamente após a recuperação falhou/i)).toBeVisible()
+  })
+  it('does not claim a later refresh updated the current state when its observed fields are now stale', async () => {
+    const s = setup()
+    await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
+    s.refresh.mockResolvedValueOnce(createMockDevices()[0])
+    await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' }))
+    s.rerender(<ManualRecoveryPanel {...s.props} currentKnowledge={{ power: 'stale', workMode: 'unknown', whiteBrightness: 'unknown', colorTemperature: 'unknown', hsv: 'stale', colorValue: 'unknown', scene: 'unknown' }} />)
+    expect(screen.getByText(/leitura realizada imediatamente após a recuperação falhou/i)).toBeVisible()
+  })
+  it('keeps each device recovery and later refresh message isolated across selection and remount', async () => {
+    const s = setup()
+    await s.start(); await s.user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
+    await act(async () => { await s.store.prepare('other', 'Fita LED', s.prepare) })
+    await act(async () => { await s.store.confirm('other', s.confirm) })
+    s.refresh.mockResolvedValueOnce({ ...createMockDevices()[0], deviceId: 'lamp' })
+    await act(async () => { await s.user.click(screen.getByRole('button', { name: 'Atualizar leitura' })) })
+    expect(screen.getByText(/Leitura posterior realizada/)).toBeVisible()
+    s.rerender(<ManualRecoveryPanel {...s.props} deviceId="other" deviceName="Fita LED" />)
+    expect(screen.getByText(/A leitura realizada imediatamente após a recuperação falhou/)).toBeVisible()
+    const remount = render(<ManualRecoveryPanel {...s.props} />)
+    await s.user.click(within(remount.container).getByRole('button', { name: /Recuperar IP/ }))
+    expect(within(remount.container).getByText(/Leitura posterior realizada/)).toBeVisible()
+    expect(s.refresh).toHaveBeenCalledExactlyOnceWith('lamp')
   })
   it('isolates late prepare results by original device and restores the original panel', async () => {
     const s = setup(); const p = deferred<PrepareOutcome>(); s.prepare.mockReturnValueOnce(p.promise)

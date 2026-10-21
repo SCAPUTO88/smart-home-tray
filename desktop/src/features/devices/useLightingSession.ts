@@ -283,6 +283,7 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
         const confirmed = { ...device.state, hsv: { ...device.state.hsv }, knowledge: { ...device.state.knowledge } }
         return { ...current, [deviceId]: { ...view, confirmed, preview: confirmed, error: null, status: 'idle' } }
       })
+      return device
     } catch (error) {
       if (!mounted.current || epoch !== lifetime.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
       if (error instanceof OperationError && error.code === 'COMMAND_CANCELED') return

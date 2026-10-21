@@ -25,6 +25,7 @@ describe('Smart Home Tray app', () => {
     expect(await screen.findByRole('heading', { name: 'Luz Mesa' })).toBeVisible()
     expect(screen.getByText('Conectado · simulação')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Fita LED' })).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('Pronto para controlar')
   })
 
   it('preserves each device preview when switching between devices', async () => {
@@ -146,8 +147,10 @@ describe('Smart Home Tray app', () => {
     const currentResponse = { ...lamp, state: { ...lamp.state, hsv: { ...lamp.state.hsv, hue: 196 } } }
     const oldResponse = { ...lamp, state: { ...lamp.state, hsv: { ...lamp.state.hsv, hue: 195 } } }
     pendingResponses[1](currentResponse)
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Atualizado'))
+    expect(screen.getByRole('status')).toHaveTextContent('Enviando')
     pendingResponses[0](oldResponse)
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Atualizado'))
+    expect(screen.getByRole('status')).toHaveTextContent('Atualizado')
 
     expect(screen.getByRole('img', { name: /Ilustração Luz Mesa/ })).toHaveAttribute('data-hue', '196')
   })
@@ -214,6 +217,7 @@ describe('Smart Home Tray app', () => {
     const stage = screen.getByRole("region", { name: "Visualização Luz Mesa" })
     expect(stage.querySelector(".stage-value")).toHaveTextContent("Estado desconhecido")
     expect(screen.getByRole("button", { name: "Estado de energia desconhecido para Luz Mesa" })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Atualização necessária')
     expect(screen.getByRole("slider", { name: "Matiz" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "RGB" })).toBeDisabled()
     expect(command).not.toHaveBeenCalled()
@@ -232,6 +236,37 @@ describe('Smart Home Tray app', () => {
     expect(screen.getByRole('button', { name: 'Branco' })).toBeEnabled()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Desligar Luz Mesa' }))
     await waitFor(() => expect(command).toHaveBeenCalledWith('mock-desk-lamp', { enabled: false }, 'success'))
+  })
+
+  it('shows that RGB needs a refresh when its knowledge is stale, even while operation status is idle', async () => {
+    const [lamp] = createMockDevices()
+    const stale: LightingDevice = { ...lamp, state: { ...lamp.state, knowledge: { ...lamp.state.knowledge, hsv: 'stale', colorValue: 'stale' } } }
+    render(<App controller={{ mode: 'fixture', list: async () => [stale], command: async () => stale }} />)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    expect(screen.getByRole('status')).toHaveTextContent('Atualização necessária')
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Desligar Luz Mesa' })).toBeEnabled()
+  })
+
+  it('shows ready controls for a normal fixture snapshot with unknown unsupported scenes', async () => {
+    const [lamp] = createMockDevices()
+    render(<App controller={{ mode: 'fixture', list: async () => [lamp], command: async () => lamp }} />)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    expect(screen.getByRole('status')).toHaveTextContent('Pronto para controlar')
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toBeEnabled()
+  })
+
+  it('keeps independent observed controls usable and ignores unknown unsupported scenes', async () => {
+    const [lamp] = createMockDevices()
+    const partial: LightingDevice = { ...lamp, state: { ...lamp.state, knowledge: { ...lamp.state.knowledge, hsv: 'stale', colorValue: 'stale', colorTemperature: 'unknown', scene: 'unknown' } } }
+    render(<App controller={{ mode: 'mock', list: async () => [partial], command: async (_deviceId, patch) => ({ ...partial, state: { ...partial.state, mode: patch.mode ?? partial.state.mode } }) }} />)
+    const user = userEvent.setup()
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    expect(screen.getByRole('status')).toHaveTextContent('Atualização necessária')
+    await user.click(screen.getByRole('button', { name: 'Branco' }))
+    expect(await screen.findByRole('slider', { name: 'Brilho branco' })).toBeEnabled()
+    expect(await screen.findByRole('slider', { name: 'Temperatura de branco' })).toBeDisabled()
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Controles limitados'))
   })
 
 })
