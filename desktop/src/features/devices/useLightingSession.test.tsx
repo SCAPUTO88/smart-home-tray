@@ -111,9 +111,85 @@ describe('lighting session field reconciliation', () => {
     expect(result.current.selectedView?.confirmed).toMatchObject({ hsv: { hue: 205 }, knowledge: { hsv: 'stale', colorValue: 'stale' } })
 
     devices[0].state.knowledge = { ...devices[0].state.knowledge, hsv: 'observed', colorValue: 'observed' }
-    await act(async () => { await result.current.refreshDevice('mock-desk-lamp') })
+    let appliedRefresh: LightingDevice | undefined
+    await act(async () => { appliedRefresh = await result.current.refreshDevice('mock-desk-lamp') })
 
+    expect(appliedRefresh).toMatchObject({ deviceId: 'mock-desk-lamp', state: { knowledge: { hsv: 'observed', colorValue: 'observed' } } })
     expect(result.current.selectedView?.confirmed).toMatchObject({ knowledge: { hsv: 'observed', colorValue: 'observed' } })
+  })
+
+  it('applies a refresh response before a write queued in the same React batch', async () => {
+    const setup = createControlledController()
+    let resolveRefresh!: (device: LightingDevice) => void
+    setup.controller.refresh = () => new Promise((resolve) => { resolveRefresh = resolve })
+    const session = renderHook(() => useLightingSession(setup.controller))
+    await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
+    let refreshTask!: Promise<LightingDevice | undefined>
+    act(() => { refreshTask = session.result.current.refreshDevice('mock-desk-lamp') })
+
+    let applied: LightingDevice | undefined
+    await act(async () => {
+      const refreshed = copyDevice(setup.devices[0])
+      refreshed.state.hsv.hue = 222
+      resolveRefresh(refreshed)
+      applied = await refreshTask
+      session.result.current.issue('mock-desk-lamp', { hsv: { hue: 230 } }, 'success')
+    })
+
+    expect(applied?.state.hsv.hue).toBe(222)
+    expect(session.result.current.selectedView?.confirmed.hsv.hue).toBe(222)
+    expect(session.result.current.selectedView?.preview.hsv.hue).toBe(230)
+    expect(session.result.current.selectedView?.pendingOperations).toHaveLength(1)
+  })
+
+  it('does not return a refresh snapshot when the session has no view for that device', async () => {
+    const setup = createControlledController()
+    setup.controller.refresh = async () => copyDevice(setup.devices[0])
+    const session = renderHook(() => useLightingSession(setup.controller))
+    await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
+
+    let applied: LightingDevice | undefined
+    await act(async () => { applied = await session.result.current.refreshDevice('missing-device') })
+
+    expect(applied).toBeUndefined()
+    expect(session.result.current.devices.map((device) => device.deviceId)).toEqual(['mock-desk-lamp', 'mock-led-strip'])
+  })
+
+  it('does not apply or return a refresh snapshot belonging to another device', async () => {
+    const setup = createControlledController()
+    setup.controller.refresh = async () => copyDevice(setup.devices.find((device) => device.deviceId === 'mock-led-strip')!)
+    const session = renderHook(() => useLightingSession(setup.controller))
+    await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
+
+    let applied: LightingDevice | undefined
+    await act(async () => { applied = await session.result.current.refreshDevice('mock-desk-lamp') })
+
+    expect(applied).toBeUndefined()
+    expect(session.result.current.devices.map((device) => device.deviceId)).toEqual(['mock-desk-lamp', 'mock-led-strip'])
+    expect(session.result.current.selectedView?.confirmed.hsv.hue).toBe(194)
+  })
+
+  it('discards refresh evidence when a same-device operation starts before the response', async () => {
+    const setup = createControlledController()
+    let resolveRefresh!: (device: LightingDevice) => void
+    setup.controller.refresh = () => new Promise((resolve) => { resolveRefresh = resolve })
+    const session = renderHook(() => useLightingSession(setup.controller))
+    await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
+    let refreshTask!: Promise<LightingDevice | undefined>
+    act(() => { refreshTask = session.result.current.refreshDevice('mock-desk-lamp') })
+    issue(session.result, 'mock-desk-lamp', { hsv: { hue: 230 } })
+
+    let applied: LightingDevice | undefined
+    await act(async () => {
+      const refreshed = copyDevice(setup.devices[0])
+      refreshed.state.hsv.hue = 222
+      resolveRefresh(refreshed)
+      applied = await refreshTask
+    })
+
+    expect(applied).toBeUndefined()
+    expect(session.result.current.selectedView?.confirmed.hsv.hue).toBe(194)
+    expect(session.result.current.selectedView?.preview.hsv.hue).toBe(230)
   })
 
   it('does not let an older HSV readback replace knowledge after a newer independent field result', async () => {
@@ -171,7 +247,7 @@ describe('lighting session field reconciliation', () => {
     setup.controller.refresh = () => new Promise((_resolve, reject) => { rejectRefresh = reject })
     const session = renderHook(() => useLightingSession(setup.controller))
     await waitFor(() => expect(session.result.current.selectedView).not.toBeNull())
-    let refreshTask!: Promise<void>
+    let refreshTask!: Promise<unknown>
     act(() => { refreshTask = session.result.current.refreshDevice('mock-desk-lamp') })
     issue(session.result, 'mock-desk-lamp', { enabled: false })
     await act(async () => { confirm(setup.pending, 0, setup.devices) })
