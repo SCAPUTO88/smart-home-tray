@@ -8,6 +8,9 @@ import type {
   OperationScenario,
 } from './types'
 import { OperationError } from './types'
+import type { RecoveryIntegration } from '../recovery/reconciliation'
+import type { PrepareOutcome, ConfirmOutcome } from '../recovery/ManualRecoveryController'
+import { parseBridgeError } from './publicDeviceMapper'
 
 type LightingField = 'enabled' | 'mode' | 'whiteBrightness' | 'whiteTemperature' | `hsv.${'hue' | 'saturation' | 'value'}`
 type PendingOperation = DeviceViewState['pendingOperations'][number]
@@ -32,6 +35,12 @@ function fieldsOf(patch: LightingPatch): LightingField[] {
     if (patch.hsv.value !== undefined) fields.push('hsv.value')
   }
   return fields
+}
+
+function readbackFieldsOf(patch: LightingPatch, accepted: LightingField[], latest: LatestByField, operationId: number): LightingField[] {
+  const mayChangeMode = patch.whiteBrightness !== undefined || patch.whiteTemperature !== undefined || patch.hsv !== undefined
+  const modeStillOwned = (latest.mode ?? 0) <= operationId
+  return mayChangeMode && modeStillOwned && !accepted.includes('mode') ? [...accepted, 'mode'] : accepted
 }
 
 function fieldValue(patch: LightingPatch, field: LightingField): unknown {
@@ -108,7 +117,7 @@ function mergeReadback(confirmed: DeviceViewState['confirmed'], response: Lighti
   return { ...next, knowledge }
 }
 
-export function useLightingSession(controller: DeviceController) {
+export function useLightingSession(controller: DeviceController, recovery?: RecoveryIntegration, onRecoveryConfirmationStarted?: () => void) {
   const [devices, setDevices] = useState<LightingDevice[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [views, setViews] = useState<Record<DeviceId, DeviceViewState>>({})
@@ -120,23 +129,32 @@ export function useLightingSession(controller: DeviceController) {
   const refreshSequence = useRef<Record<DeviceId, number>>({})
   const activeRefresh = useRef<Record<DeviceId, boolean>>({})
   const mounted = useRef(true)
+  const lifetime = useRef(0)
+  const proposals = useRef(new Map<string, DeviceId>())
+  const catalogRequest = useRef<{ controller: DeviceController; promise: Promise<LightingDevice[]> } | null>(null)
   const [refreshing, setRefreshing] = useState<Record<DeviceId, boolean>>({})
   const [refreshErrors, setRefreshErrors] = useState<Record<DeviceId, string | null>>({})
 
   useEffect(() => {
     let active = true
     mounted.current = true
-    void controller.list().then((catalog) => {
+    lifetime.current += 1
+    activeRefresh.current = {}
+    if (!catalogRequest.current || catalogRequest.current.controller !== controller) {
+      catalogRequest.current = { controller, promise: Promise.resolve().then(() => controller.list()) }
+    }
+    void catalogRequest.current.promise.then((catalog) => {
       if (!active) return
       setLoadError(null)
       setDevices(catalog)
       setViews(Object.fromEntries(catalog.map((device) => [device.deviceId, initialView(device)])))
       setSelectedDeviceId((current) => current ?? catalog[0]?.deviceId ?? null)
     }).catch(() => { if (active) setLoadError("Não foi possível carregar os dispositivos") })
-    return () => { active = false; mounted.current = false }
+    return () => { active = false; mounted.current = false; lifetime.current += 1 }
   }, [controller])
 
   const issue = useCallback((deviceId: DeviceId, patch: LightingPatch, scenario: OperationScenario) => {
+    const epoch = lifetime.current
     const operationId = (sequenceByDevice.current[deviceId] ?? 0) + 1
     sequenceByDevice.current[deviceId] = operationId
     latestOperationByDevice.current[deviceId] = operationId
@@ -168,6 +186,7 @@ export function useLightingSession(controller: DeviceController) {
       command = Promise.reject(error)
     }
     void command.then((device) => {
+      if (!mounted.current || epoch !== lifetime.current) return
       if (latestOperationByDevice.current[deviceId] === operationId) {
         latestOutcomeByDevice.current[deviceId] = { status: 'confirmed', error: null }
       }
@@ -175,7 +194,7 @@ export function useLightingSession(controller: DeviceController) {
         if (item.deviceId !== deviceId) return item
         const acceptedFields = fieldsOf(patch).filter((field) => latestByField.current[deviceId]?.[field] === operationId)
         if (!acceptedFields.length) return item
-        const state = mergeReadback(initialView(item).confirmed, device, acceptedFields)
+        const state = mergeReadback(initialView(item).confirmed, device, readbackFieldsOf(patch, acceptedFields, latestByField.current[deviceId] ?? {}, operationId))
         return { ...item, connection: device.connection, state }
       }))
       setViews((current) => {
@@ -183,7 +202,8 @@ export function useLightingSession(controller: DeviceController) {
         if (!view) return current
         const pendingOperations = view.pendingOperations.filter((item) => item.operationId !== operationId)
         const acceptedFields = fieldsOf(patch).filter((field) => latestByField.current[deviceId]?.[field] === operationId)
-        const confirmed = acceptedFields.length ? mergeReadback(view.confirmed, device, acceptedFields) : view.confirmed
+        const readbackFields = readbackFieldsOf(patch, acceptedFields, latestByField.current[deviceId] ?? {}, operationId)
+        const confirmed = acceptedFields.length ? mergeReadback(view.confirmed, device, readbackFields) : view.confirmed
         const active = activeOperations(pendingOperations, latestByField.current[deviceId] ?? {})
         const outcome = latestOutcomeByDevice.current[deviceId]
         const status = active.length ? 'pending' : outcome?.status ?? view.status
@@ -197,6 +217,7 @@ export function useLightingSession(controller: DeviceController) {
         } }
       })
     }).catch((error: unknown) => {
+      if (!mounted.current || epoch !== lifetime.current) return
       const code = error instanceof OperationError ? error.code : 'DEVICE_ERROR'
       const status = code === 'COMMAND_CANCELED' ? 'canceled' : code === 'DEVICE_OFFLINE' ? 'offline' : 'error'
       const isLatestOperation = latestOperationByDevice.current[deviceId] === operationId
@@ -244,6 +265,7 @@ export function useLightingSession(controller: DeviceController) {
   }, [controller])
 
   const refreshDevice = useCallback(async (deviceId: DeviceId) => {
+    const epoch = lifetime.current
     if (!controller.refresh || activeRefresh.current[deviceId] || (views[deviceId]?.pendingOperations.length ?? 0) > 0) return
     activeRefresh.current[deviceId] = true
     const version = latestOperationByDevice.current[deviceId] ?? 0
@@ -253,7 +275,7 @@ export function useLightingSession(controller: DeviceController) {
     setRefreshErrors((current) => ({ ...current, [deviceId]: null }))
     try {
       const device = await controller.refresh(deviceId)
-      if (!mounted.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
+      if (!mounted.current || epoch !== lifetime.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
       setDevices((current) => current.map((item) => item.deviceId === deviceId ? device : item))
       setViews((current) => {
         const view = current[deviceId]
@@ -262,7 +284,7 @@ export function useLightingSession(controller: DeviceController) {
         return { ...current, [deviceId]: { ...view, confirmed, preview: confirmed, error: null, status: 'idle' } }
       })
     } catch (error) {
-      if (!mounted.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
+      if (!mounted.current || epoch !== lifetime.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
       if (error instanceof OperationError && error.code === 'COMMAND_CANCELED') return
       const offline = error instanceof OperationError && (error.code === 'DEVICE_OFFLINE' || error.code === 'TIMEOUT' || error.code === 'AUTH_FAILED')
       if (offline) setDevices((current) => current.map((item) => item.deviceId === deviceId ? { ...item, connection: 'offline', state: { ...item.state, quality: 'offline', knowledge: Object.fromEntries(Object.entries(item.state.knowledge).map(([key, value]) => [key, value === 'observed' ? 'stale' : value])) as typeof item.state.knowledge } } : item))
@@ -276,13 +298,61 @@ export function useLightingSession(controller: DeviceController) {
       })
       setRefreshErrors((current) => ({ ...current, [deviceId]: offline ? 'Device offline; previous reading preserved' : 'Unable to refresh device state' }))
     } finally {
-      activeRefresh.current[deviceId] = false
-      if (mounted.current && refreshSequence.current[deviceId] === requestId) setRefreshing((current) => ({ ...current, [deviceId]: false }))
+      if (epoch === lifetime.current) activeRefresh.current[deviceId] = false
+      if (mounted.current && epoch === lifetime.current && refreshSequence.current[deviceId] === requestId) setRefreshing((current) => ({ ...current, [deviceId]: false }))
     }
   }, [controller, views])
+
+  const prepareRecovery = useCallback(async (deviceId: DeviceId): Promise<PrepareOutcome> => {
+    if (!recovery || !mounted.current) return { kind: 'rejected', code: 'INVALID_INPUT' }
+    const epoch = lifetime.current
+    let outcome: PrepareOutcome
+    try { outcome = await recovery.controller.prepare(deviceId) }
+    catch (error) { outcome = { kind: 'bridge-error', code: parseBridgeError(error).code } }
+    if (mounted.current && epoch === lifetime.current && outcome.kind === 'terminal' && outcome.result.status === 'PROPOSAL_READY') {
+      for (const [id, device] of proposals.current) if (device === deviceId) proposals.current.delete(id)
+      proposals.current.set(outcome.result.proposalId, deviceId)
+    }
+    return outcome
+  }, [recovery])
+
+  const confirmRecovery = useCallback(async (proposalId: string): Promise<ConfirmOutcome> => {
+    const deviceId = proposals.current.get(proposalId)
+    if (!recovery || !mounted.current || !deviceId) return { kind: 'rejected', code: 'PROPOSAL_UNAVAILABLE' }
+    proposals.current.delete(proposalId)
+    const epoch = lifetime.current
+    let token
+    try { token = recovery.reconciliation.beginRecoveryConfirmation(deviceId) }
+    catch { return { kind: 'rejected', code: 'PROPOSAL_UNAVAILABLE' } }
+    onRecoveryConfirmationStarted?.()
+    let outcome: ConfirmOutcome
+    try { outcome = await recovery.controller.confirm(proposalId) }
+    catch (error) { outcome = { kind: 'indeterminate', code: parseBridgeError(error).code } }
+    const adopted = outcome.kind === 'terminal' && outcome.result.recovery.status === 'ADOPTED'
+    // Unknown commit outcome also makes the previous baseline unsafe, without asserting adoption.
+    const device = adopted || outcome.kind === 'indeterminate'
+      ? recovery.reconciliation.reconcileRecovery(token, outcome.kind === 'terminal' ? outcome.result.readback : undefined)
+      : undefined
+    // Reconcile controller caches even after unmount; never claim that unmount canceled the backend.
+    if (!mounted.current || epoch !== lifetime.current) return outcome
+    if (outcome.kind === 'terminal' && outcome.result.recovery.status === 'BUSY') proposals.current.set(proposalId, deviceId)
+    if (!adopted && outcome.kind !== 'indeterminate') return outcome
+    if (!device) return outcome
+    setDevices((current) => current.map((item) => item.deviceId === deviceId ? device : item))
+    setViews((current) => {
+      const view = current[deviceId]
+      if (!view) return current
+      const confirmed = { ...device.state, hsv: { ...device.state.hsv }, knowledge: { ...device.state.knowledge } }
+      return { ...current, [deviceId]: { ...view, confirmed,
+        preview: visiblePreview(confirmed, view.pendingOperations, latestByField.current[deviceId] ?? {}),
+      } }
+    })
+    return outcome
+  }, [recovery, onRecoveryConfirmationStarted])
 
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null
   const selectedView = selectedDeviceId ? views[selectedDeviceId] ?? null : null
 
-  return { devices, selectedDevice, selectedView, selectedDeviceId, selectDevice: setSelectedDeviceId, issue, loadError, refreshDevice, refreshing, refreshError: selectedDeviceId ? refreshErrors[selectedDeviceId] ?? null : null }
+  return { devices, selectedDevice, selectedView, selectedDeviceId, selectDevice: setSelectedDeviceId, issue, loadError, refreshDevice, refreshing, refreshError: selectedDeviceId ? refreshErrors[selectedDeviceId] ?? null : null,
+    prepareRecovery, confirmRecovery, recoveryEligibility: (deviceId: string) => recovery?.reconciliation.eligibility(deviceId) ?? { status: 'UNKNOWN' as const, protocolVersion: null } }
 }
