@@ -25,6 +25,13 @@ function makeIntegration() {
   return { integration, bridge, lighting, prepare, confirm, lamp, other }
 }
 
+function makeController(name: string) {
+  const lamp = publicDevice(name.toLowerCase().replaceAll(' ', '-'))
+  lamp.name = name
+  const bridge: BridgeApi = { list: vi.fn(async () => [lamp]), status: vi.fn(async () => lamp), command: vi.fn(async () => lamp) }
+  return { lighting: new TauriDeviceController(bridge, 'fixture'), bridge, lamp }
+}
+
 function HostedApp({ integration, visible = true, now }: { integration: DeviceIntegration; visible?: boolean; now?: () => number }) {
   return <ApplicationSessionHost integration={integration} now={now}>{visible ? <LightingApp /> : null}</ApplicationSessionHost>
 }
@@ -41,6 +48,93 @@ async function startConfirm(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('application session host', () => {
+  it('uses an explicitly supplied controller after the default integration has resolved', async () => {
+    runtime.native = true
+    runtime.invoke.mockReset().mockResolvedValue({ mode: 'mock', available: true })
+    const explicit = makeController('Explicit Lamp')
+    const view = render(<StrictMode><ApplicationSessionHost><LightingApp /></ApplicationSessionHost></StrictMode>)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+
+    view.rerender(<StrictMode><ApplicationSessionHost controller={explicit.lighting}><LightingApp /></ApplicationSessionHost></StrictMode>)
+
+    expect(await screen.findByRole('heading', { name: 'Explicit Lamp' })).toBeVisible()
+    expect(explicit.bridge.list).toHaveBeenCalledTimes(1)
+    expect(runtime.invoke).toHaveBeenCalledExactlyOnceWith('bridge_info', undefined)
+    expect(screen.queryByRole('button', { name: /Recuperar IP/ })).not.toBeInTheDocument()
+  })
+
+  it('isolates catalog, selection, and pending operations when switching explicit controllers', async () => {
+    const first = makeController('First Lamp')
+    const second = makeController('Second Lamp')
+    const pending = deferred<ReturnType<typeof publicDevice>>()
+    first.bridge.command = vi.fn(() => pending.promise)
+    const view = render(<ApplicationSessionHost controller={first.lighting}><LightingApp /></ApplicationSessionHost>)
+    await screen.findByRole('heading', { name: 'First Lamp' })
+    fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '211' } })
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toHaveValue('211')
+
+    view.rerender(<ApplicationSessionHost controller={second.lighting}><LightingApp /></ApplicationSessionHost>)
+    expect(await screen.findByRole('heading', { name: 'Second Lamp' })).toBeVisible()
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toHaveValue(String(second.lamp.state.hsv?.hue ?? 0))
+    expect(second.bridge.list).toHaveBeenCalledTimes(1)
+
+    await act(async () => { pending.resolve({ ...first.lamp, state: { ...first.lamp.state, hsv: { hue: 211, saturation: 70, value: 60 } } }) })
+    expect(screen.getByRole('heading', { name: 'Second Lamp' })).toBeVisible()
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toHaveValue(String(second.lamp.state.hsv?.hue ?? 0))
+    expect(screen.queryByText('Atualizado')).not.toBeInTheDocument()
+  })
+
+  it('prefers an explicitly supplied integration over a supplied controller', async () => {
+    const controller = makeController('Controller Lamp')
+    const integration = makeIntegration()
+    const view = render(<ApplicationSessionHost controller={controller.lighting}><LightingApp /></ApplicationSessionHost>)
+    await screen.findByRole('heading', { name: 'Controller Lamp' })
+
+    view.rerender(<ApplicationSessionHost controller={controller.lighting} integration={integration.integration}><LightingApp /></ApplicationSessionHost>)
+
+    expect(await screen.findByRole('heading', { name: 'Luz Mesa' })).toBeVisible()
+    expect(integration.bridge.list).toHaveBeenCalledTimes(1)
+    expect(controller.bridge.list).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: /Recuperar IP/ })).toBeVisible()
+  })
+
+  it('ignores a late default integration resolution while an explicit source is active', async () => {
+    runtime.native = true
+    const bridgeInfo = deferred<{ mode: 'mock'; available: boolean }>()
+    runtime.invoke.mockReset().mockReturnValue(bridgeInfo.promise)
+    const explicit = makeController('Explicit During Resolve')
+    const view = render(<ApplicationSessionHost><LightingApp /></ApplicationSessionHost>)
+    expect(runtime.invoke).toHaveBeenCalledWith('bridge_info', undefined)
+    view.rerender(<ApplicationSessionHost controller={explicit.lighting}><LightingApp /></ApplicationSessionHost>)
+    expect(await screen.findByRole('heading', { name: 'Explicit During Resolve' })).toBeVisible()
+
+    await act(async () => { bridgeInfo.resolve({ mode: 'mock', available: true }) })
+    expect(screen.getByRole('heading', { name: 'Explicit During Resolve' })).toBeVisible()
+    expect(explicit.bridge.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns to the default origin with a fresh session after an explicit source', async () => {
+    runtime.native = true
+    runtime.invoke.mockReset().mockResolvedValue({ mode: 'mock', available: true })
+    const explicit = makeController('Temporary Lamp')
+    const user = userEvent.setup()
+    const view = render(<ApplicationSessionHost><LightingApp /></ApplicationSessionHost>)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    await prepare(user)
+    expect(screen.getByRole('button', { name: 'Confirmar recuperação' })).toBeEnabled()
+    view.rerender(<ApplicationSessionHost controller={explicit.lighting}><LightingApp /></ApplicationSessionHost>)
+    await screen.findByRole('heading', { name: 'Temporary Lamp' })
+    view.rerender(<ApplicationSessionHost><LightingApp /></ApplicationSessionHost>)
+
+    expect(await screen.findByRole('heading', { name: 'Luz Mesa' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Recuperar IP/ }))
+    expect(screen.getByText(/A busca começa somente ao preparar/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Confirmar recuperação' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Preparar recuperação' })).toBeEnabled()
+    expect(screen.queryByText(/Confirmação em andamento|Resultado desconhecido/)).not.toBeInTheDocument()
+    expect(runtime.invoke).toHaveBeenCalledExactlyOnceWith('bridge_info', undefined)
+  })
+
   it('keeps a prepared proposal confirmable after the complete lighting UI remounts', async () => {
     const s = makeIntegration()
     const user = userEvent.setup()

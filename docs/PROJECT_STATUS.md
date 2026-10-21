@@ -1,5 +1,14 @@
 # Smart Home Tray — Project Status
 
+## CR-49.2 — precedência e isolamento de DeviceIntegration (2026-10-20)
+
+- **Causa:** após o bootstrap padrão, a integração resolvida prevalecia sobre um `suppliedController` injetado. O host podia combinar o controller antigo com sua capability de recuperação e preservar a identidade de sessão errada.
+- **Correção:** o host seleciona uma origem completa, nesta ordem: `suppliedIntegration`, `suppliedController`, integração padrão resolvida. Controller, capability de recuperação e chave de `ActiveApplicationSession` vêm da mesma origem. A guarda de efeito continua descartando conclusões do resolver padrão depois que a origem explícita assume; ao retornar ao padrão, a sessão anterior já foi desmontada e uma instância nova é criada.
+- **Regressões novas:** controller explícito após resolução padrão, catálogo e painel sem mistura de origens, operação antiga concluída após troca A→B, precedência de integração injetada, resolução tardia durante origem explícita e retorno ao padrão sem proposta anterior. A troca de origem executa sob `React.StrictMode`. Permanecem os testes CR-49.1 de remount visual, proposta/confirm, intents e bootstrap idempotente.
+- **Verificações locais:** `npm test` — **218 testes em 17 arquivos aprovados**; `npm run typecheck`, `npm run lint`, `npm run build` (2.350 módulos) e `git diff --check` passaram. Os testes são determinísticos, usam controllers falsos/deferreds e não acessam rede, LAN ou hardware.
+- **Riscos residuais:** a integração padrão resolvida permanece em cache no host para quando a origem padrão voltar a ser selecionada; cada retorno monta uma sessão transacional nova, sem restaurar propostas ou knowledge da instância desmontada. A validação E2E React → Rust → Python FIXTURE permanece separada e não foi executada; nenhuma validação REAL/hardware foi feita.
+- **Publicação:** commit e push normal na branch existente da PR #49; estado dos checks remotos será registrado após consulta ao novo head. Sem merge, force-push ou rebase; parar para novo code review.
+
 ## CR-49.1 — lifecycle da sessão corrigido (2026-10-20)
 
 - **Decisão aprovada:** `ApplicationSessionHost`, persistente acima da árvore visual durante o runtime ativo, mantém DeviceIntegration/controller, hook da sessão, propostas/confirm em andamento, RecoveryPresentation e os checkpoints causais já existentes. A UI pode desmontar/remontar sem recatalogar ou reinicializar estado transacional. D-020 registra limites e trade-offs; D-015–D-019 permanecem inalteradas.

@@ -31,15 +31,19 @@ export function ApplicationSessionHost({ children, controller: suppliedControlle
     return () => { active = false }
   }, [suppliedController, suppliedIntegration])
 
-  const integration = suppliedIntegration ?? resolvedIntegration
-  const activeController = integration?.lighting ?? suppliedController
-  const source = integration ?? suppliedController
-  const state: ApplicationSessionState = !activeController || !source
+  const activeSource = suppliedIntegration
+    ? { identity: suppliedIntegration, controller: suppliedIntegration.lighting, recovery: suppliedIntegration.recovery }
+    : suppliedController
+      ? { identity: suppliedController, controller: suppliedController }
+      : resolvedIntegration
+        ? { identity: resolvedIntegration, controller: resolvedIntegration.lighting, recovery: resolvedIntegration.recovery }
+        : null
+  const state: ApplicationSessionState = !activeSource
     ? startupError ? { status: 'error', message: 'Não foi possível iniciar a integração selecionada' } : { status: 'loading' }
     : { status: 'loading' }
 
-  return source && activeController
-    ? <ActiveApplicationSession key={sessionSourceId(source)} controller={activeController} recovery={integration?.recovery} now={now}>{children}</ActiveApplicationSession>
+  return activeSource
+    ? <ActiveApplicationSession key={sessionSourceId(activeSource.identity)} controller={activeSource.controller} recovery={activeSource.recovery} now={now}>{children}</ActiveApplicationSession>
     : <ApplicationSessionContext.Provider value={state}>{children}</ApplicationSessionContext.Provider>
 }
 
