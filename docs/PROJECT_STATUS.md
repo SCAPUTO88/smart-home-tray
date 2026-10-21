@@ -1,5 +1,13 @@
 # Smart Home Tray — Project Status
 
+## F2E.D.4.V1 — evidência manual complementar (2026-10-21)
+
+- **Situação atual:** GO restrito para a jornada funcional principal na janela Tauri em FIXTURE, observado em gravação fornecida pelo mantenedor; **NO-GO para encerrar toda a homologação E2E/QA**. Detalhes em `docs/F2E_D4_FIXTURE_E2E_REPORT.md` (atualização de homologação manual).
+- **Gravação (~71 s):** UI identificada como FIXTURE com catálogo sintético; `fixture-tuya35` fez prepare explícito, exibiu `198.51.100.35`/TTL/aviso e apresentou ADOPTED com readback; `fixture-tuya33` bloqueou prepare; `readback-failed` distinguiu adoção de confirmação física, controles ficaram indisponíveis até refresh; ocultar/reabrir pelo tray manteve seleção e estado.
+- **Cleanup após encerramento:** filtro PowerShell `Get-CimInstance Win32_Process` para `python.exe`/`pythonw.exe` com `smart_home_tray.fixture` retornou vazio; nenhum subprocesso correspondente observado no instante da verificação.
+- **Limite de evidência:** gravação não expõe dispatcher/`requestId`/segundo `list()`; os testes Rust→Python são reais, mas os testes React ainda simulam `invoke`. Restam teclado, Escape/foco, aria-live/leitor de tela, DPI/monitor secundário e cenários nativos adicionais. Observações de UX não bloqueantes: texto de readback antigo após refresh e “Pronto para controlar” com controles stale/unknown.
+- **PR:** #51 aberta para `develop`, com os quatro checks do head anterior `5a1226e` verdes. Registro antigo de falha na criação da PR/ausência de checks foi superado. Não realizar merge automático.
+
 ## F2E.D.4.V1 — validação FIXTURE (2026-10-21)
 
 - Base/HEAD de início: `55404c58bc7e7c5b141374d53cf1c11f76d19eb2`, merge da PR #49 em `origin/develop`; worktree `f2e-d4v1-fixture-e2e`, branch `test/f2e-d4v1-fixture-e2e`, inicialmente limpa.
