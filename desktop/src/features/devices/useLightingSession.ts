@@ -117,7 +117,7 @@ function mergeReadback(confirmed: DeviceViewState['confirmed'], response: Lighti
   return { ...next, knowledge }
 }
 
-export function useLightingSession(controller: DeviceController, recovery?: RecoveryIntegration) {
+export function useLightingSession(controller: DeviceController, recovery?: RecoveryIntegration, onRecoveryConfirmationStarted?: () => void) {
   const [devices, setDevices] = useState<LightingDevice[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [views, setViews] = useState<Record<DeviceId, DeviceViewState>>({})
@@ -131,24 +131,27 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
   const mounted = useRef(true)
   const lifetime = useRef(0)
   const proposals = useRef(new Map<string, DeviceId>())
+  const catalogRequest = useRef<{ controller: DeviceController; promise: Promise<LightingDevice[]> } | null>(null)
   const [refreshing, setRefreshing] = useState<Record<DeviceId, boolean>>({})
   const [refreshErrors, setRefreshErrors] = useState<Record<DeviceId, string | null>>({})
 
   useEffect(() => {
     let active = true
-    const sessionProposals = proposals.current
     mounted.current = true
     lifetime.current += 1
     activeRefresh.current = {}
-    void controller.list().then((catalog) => {
+    if (!catalogRequest.current || catalogRequest.current.controller !== controller) {
+      catalogRequest.current = { controller, promise: Promise.resolve().then(() => controller.list()) }
+    }
+    void catalogRequest.current.promise.then((catalog) => {
       if (!active) return
       setLoadError(null)
       setDevices(catalog)
       setViews(Object.fromEntries(catalog.map((device) => [device.deviceId, initialView(device)])))
       setSelectedDeviceId((current) => current ?? catalog[0]?.deviceId ?? null)
     }).catch(() => { if (active) setLoadError("Não foi possível carregar os dispositivos") })
-    return () => { active = false; mounted.current = false; lifetime.current += 1; sessionProposals.clear() }
-  }, [controller, recovery?.controller, recovery?.reconciliation])
+    return () => { active = false; mounted.current = false; lifetime.current += 1 }
+  }, [controller])
 
   const issue = useCallback((deviceId: DeviceId, patch: LightingPatch, scenario: OperationScenario) => {
     const epoch = lifetime.current
@@ -321,6 +324,7 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
     let token
     try { token = recovery.reconciliation.beginRecoveryConfirmation(deviceId) }
     catch { return { kind: 'rejected', code: 'PROPOSAL_UNAVAILABLE' } }
+    onRecoveryConfirmationStarted?.()
     let outcome: ConfirmOutcome
     try { outcome = await recovery.controller.confirm(proposalId) }
     catch (error) { outcome = { kind: 'indeterminate', code: parseBridgeError(error).code } }
@@ -344,7 +348,7 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
       } }
     })
     return outcome
-  }, [recovery])
+  }, [recovery, onRecoveryConfirmationStarted])
 
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId) ?? null
   const selectedView = selectedDeviceId ? views[selectedDeviceId] ?? null : null
