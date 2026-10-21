@@ -1,5 +1,29 @@
 # Smart Home Tray — Project Status
 
+## F2E.D.4.V1 — checklist nativo concluído (2026-10-21)
+
+- **Parecer vigente:** **GO para merge documental da PR #51 e aceite da jornada funcional principal em FIXTURE**, com limites no relatório. O NO-GO inicial referia-se à falta de janela no ambiente do agente e foi parcialmente superado pela gravação e pelo QA manual posteriores; não equivale a alegar execução nativa de toda a matriz C01–C17.
+- **QA manual confirmado pelo mantenedor:** 7/7 verificações passaram — Tab/Shift+Tab, Enter/Espaço, foco no título da proposta, Escape e retorno do foco, foco visível/acessibilidade dos controles, legibilidade com rolagem, anúncios pelo Narrador do Windows.
+- **Complementos já registrados:** vídeo da jornada Tauri/FIXTURE (~71 s), Tuya 3.5 prepare/confirm, 3.3 inelegível, readback FAILED e refresh manual; consulta PowerShell sem processo Python FIXTURE residual após encerramento.
+- **Ressalvas:** tráfego do dispatcher/`requestId` não foi capturado; DPI/monitor secundário e ocultação durante confirmação pendente não foram demonstrados manualmente; demais resultados C01–C17 são de suítes por camada quando assim rotulados. UX pós-refresh e estado “Pronto para controlar” ficam como backlog não bloqueante.
+- **GitHub:** PR #51 permanece aberta para `develop`; os quatro jobs do head anterior `9196026` estão verdes. Conferir CI do novo head documental antes do merge; não interpretar status histórico `NO-GO` ou `0 checks` como atual.
+
+## F2E.D.4.V1 — evidência manual complementar (2026-10-21)
+
+- **Situação atual:** GO restrito para a jornada funcional principal na janela Tauri em FIXTURE, observado em gravação fornecida pelo mantenedor; **NO-GO para encerrar toda a homologação E2E/QA**. Detalhes em `docs/F2E_D4_FIXTURE_E2E_REPORT.md` (atualização de homologação manual).
+- **Gravação (~71 s):** UI identificada como FIXTURE com catálogo sintético; `fixture-tuya35` fez prepare explícito, exibiu `198.51.100.35`/TTL/aviso e apresentou ADOPTED com readback; `fixture-tuya33` bloqueou prepare; `readback-failed` distinguiu adoção de confirmação física, controles ficaram indisponíveis até refresh; ocultar/reabrir pelo tray manteve seleção e estado.
+- **Cleanup após encerramento:** filtro PowerShell `Get-CimInstance Win32_Process` para `python.exe`/`pythonw.exe` com `smart_home_tray.fixture` retornou vazio; nenhum subprocesso correspondente observado no instante da verificação.
+- **Limite de evidência:** gravação não expõe dispatcher/`requestId`/segundo `list()`; os testes Rust→Python são reais, mas os testes React ainda simulam `invoke`. Restam teclado, Escape/foco, aria-live/leitor de tela, DPI/monitor secundário e cenários nativos adicionais. Observações de UX não bloqueantes: texto de readback antigo após refresh e “Pronto para controlar” com controles stale/unknown.
+- **PR:** #51 aberta para `develop`, com os quatro checks do head anterior `5a1226e` verdes. Registro antigo de falha na criação da PR/ausência de checks foi superado. Não realizar merge automático.
+
+## F2E.D.4.V1 — validação FIXTURE (2026-10-21)
+
+- Base/HEAD de início: `55404c58bc7e7c5b141374d53cf1c11f76d19eb2`, merge da PR #49 em `origin/develop`; worktree `f2e-d4v1-fixture-e2e`, branch `test/f2e-d4v1-fixture-e2e`, inicialmente limpa.
+- Evidência automatizada: backend **400 passed**; frontend **224 passed/17 arquivos**, typecheck, lint e build (2.350 módulos) passaram; Rust **28 passed/3 suites**, `cargo fmt --check`, `cargo check --locked` e `tauri:build -- --no-bundle` passaram. O build nativo mostrou somente aviso de colisão de PDB lib/bin.
+- O `BridgeClient` inicia `python -u -m smart_home_tray.fixture` real e cobre catálogo, prepare/confirm/replay, correlação e shutdown sobre JSONL. Testes React cobrem controller, reconciliação e apresentação com doubles de invoke; não equivalem a invoke dos handlers Tauri reais.
+- **NO-GO para aceite E2E nativo:** ambiente de UI retornou `apps: []`/`browsers: []`; nenhum fluxo da WebView, tray ou QA visual foi observado. Roteiro reproduzível, matriz C01–C17, evidências e limitações em `docs/F2E_D4_FIXTURE_E2E_REPORT.md`.
+- Execuções delimitadas a FIXTURE; sem REAL, configuração TOML, Local Keys, rede doméstica, LAN, cloud ou hardware. Sem mudança arquitetural/funcional. Commit `200a2c9937c91af606aa90710989adc3231a3bd4` está na branch remota; criação da PR foi bloqueada pelo conector GitHub (`MCP tool call requires approval, but approval policy is never`) e o CLI não alcançou a API via proxy. A PR não existe; checks remotos de PR estão NOT RUN (0 check-runs). Manter o aceite completo NO-GO até a jornada nativa ser validada.
+
 ## CR-49.3 — reconciliação durante troca de origem (2026-10-21)
 
 - **Causa-raiz confirmada:** `useLightingSession.confirmRecovery()` aguardava a Promise no proprietário antigo e guardava o checkpoint no `TauriDeviceController`. Ao voltar à origem padrão, o `ActiveApplicationSession` era remontado sobre o controller em cache; `useLightingSession` chamava `list()`, que avançava `catalogEpoch` e limpava checkpoints, `knownPublic`, `confirmedBase` e knowledge. O confirm antigo depois era recusado por incompatibilidade de catálogo; a sessão nova mantinha o snapshot listado antes da adoção como `observed` e aceitava comandos que dependem de `confirmedBase`.
