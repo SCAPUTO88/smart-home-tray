@@ -1,5 +1,13 @@
 # Smart Home Tray — Project Status
 
+## F2E.D.4.V1 — checklist nativo concluído (2026-10-21)
+
+- **Parecer vigente:** **GO para merge documental da PR #51 e aceite da jornada funcional principal em FIXTURE**, com limites no relatório. O NO-GO inicial referia-se à falta de janela no ambiente do agente e foi parcialmente superado pela gravação e pelo QA manual posteriores; não equivale a alegar execução nativa de toda a matriz C01–C17.
+- **QA manual confirmado pelo mantenedor:** 7/7 verificações passaram — Tab/Shift+Tab, Enter/Espaço, foco no título da proposta, Escape e retorno do foco, foco visível/acessibilidade dos controles, legibilidade com rolagem, anúncios pelo Narrador do Windows.
+- **Complementos já registrados:** vídeo da jornada Tauri/FIXTURE (~71 s), Tuya 3.5 prepare/confirm, 3.3 inelegível, readback FAILED e refresh manual; consulta PowerShell sem processo Python FIXTURE residual após encerramento.
+- **Ressalvas:** tráfego do dispatcher/`requestId` não foi capturado; DPI/monitor secundário e ocultação durante confirmação pendente não foram demonstrados manualmente; demais resultados C01–C17 são de suítes por camada quando assim rotulados. UX pós-refresh e estado “Pronto para controlar” ficam como backlog não bloqueante.
+- **GitHub:** PR #51 permanece aberta para `develop`; os quatro jobs do head anterior `9196026` estão verdes. Conferir CI do novo head documental antes do merge; não interpretar status histórico `NO-GO` ou `0 checks` como atual.
+
 ## F2E.D.4.V1 — evidência manual complementar (2026-10-21)
 
 - **Situação atual:** GO restrito para a jornada funcional principal na janela Tauri em FIXTURE, observado em gravação fornecida pelo mantenedor; **NO-GO para encerrar toda a homologação E2E/QA**. Detalhes em `docs/F2E_D4_FIXTURE_E2E_REPORT.md` (atualização de homologação manual).
