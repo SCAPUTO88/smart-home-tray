@@ -266,7 +266,8 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
 
   const refreshDevice = useCallback(async (deviceId: DeviceId) => {
     const epoch = lifetime.current
-    if (!controller.refresh || activeRefresh.current[deviceId] || (views[deviceId]?.pendingOperations.length ?? 0) > 0) return
+    const initialView = views[deviceId]
+    if (!controller.refresh || !initialView || activeRefresh.current[deviceId] || initialView.pendingOperations.length > 0) return
     activeRefresh.current[deviceId] = true
     const version = latestOperationByDevice.current[deviceId] ?? 0
     const requestId = (refreshSequence.current[deviceId] ?? 0) + 1
@@ -275,14 +276,18 @@ export function useLightingSession(controller: DeviceController, recovery?: Reco
     setRefreshErrors((current) => ({ ...current, [deviceId]: null }))
     try {
       const device = await controller.refresh(deviceId)
-      if (!mounted.current || epoch !== lifetime.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
+      if (device.deviceId !== deviceId || !mounted.current || epoch !== lifetime.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
       setDevices((current) => current.map((item) => item.deviceId === deviceId ? device : item))
       setViews((current) => {
         const view = current[deviceId]
-        if (!view || view.pendingOperations.length) return current
+        if (!view) return current
         const confirmed = { ...device.state, hsv: { ...device.state.hsv }, knowledge: { ...device.state.knowledge } }
-        return { ...current, [deviceId]: { ...view, confirmed, preview: confirmed, error: null, status: 'idle' } }
+        return { ...current, [deviceId]: { ...view, confirmed,
+          preview: visiblePreview(confirmed, view.pendingOperations, latestByField.current[deviceId] ?? {}),
+          error: null, status: view.pendingOperations.length ? 'pending' : 'idle',
+        } }
       })
+      return device
     } catch (error) {
       if (!mounted.current || epoch !== lifetime.current || refreshSequence.current[deviceId] !== requestId || (latestOperationByDevice.current[deviceId] ?? 0) !== version) return
       if (error instanceof OperationError && error.code === 'COMMAND_CANCELED') return

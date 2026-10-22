@@ -370,6 +370,22 @@ describe('application session host', () => {
     expect(s.confirm).toHaveBeenCalledExactlyOnceWith(proposal.proposalId)
   })
 
+  it('replaces an earlier successful operation indicator when recovery makes current knowledge stale', async () => {
+    const s = makeIntegration()
+    s.confirm.mockResolvedValue({ kind: 'terminal', result: { recovery: { status: 'ADOPTED' }, readback: { status: 'FAILED' } } })
+    const user = userEvent.setup()
+    render(<HostedApp integration={s.integration} />)
+    await screen.findByRole('heading', { name: 'Luz Mesa' })
+    fireEvent.change(screen.getByRole('slider', { name: 'Matiz' }), { target: { value: '205' } })
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Atualizado'))
+    await prepare(user)
+    await user.click(screen.getByRole('button', { name: 'Confirmar recuperação' }))
+    await waitFor(() => expect(screen.getByTestId('recovery-state')).toHaveTextContent('leitura realizada imediatamente após a recuperação falhou'))
+    expect(screen.getByRole('status')).toHaveTextContent('Atualização necessária')
+    expect(screen.getByRole('slider', { name: 'Matiz' })).toBeDisabled()
+    expect(document.querySelector('.operation-indicator')).toHaveClass('is-idle')
+  })
+
   it('applies an adopted readback to its original Device ID after selection and UI remount change', async () => {
     const s = makeIntegration()
     const pending = deferred<ConfirmOutcome>()
