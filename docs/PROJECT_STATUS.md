@@ -567,3 +567,25 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificação local:** as regressões focadas passaram (**42 testes**), a suíte Vitest passou (**148 testes em 14 arquivos**), `npm run typecheck`, `npm run lint`, `npm run build` e `git diff --check` passaram. Neste ambiente Windows restrito, Vitest/build foram executados com pool `threads` e preload temporário que suprime somente a consulta auxiliar `net use` do Vite; nenhum arquivo temporário permanece no produto.
 - **Limites:** sem backend, contrato JSONL, D.4.C, LAN, cloud, credenciais ou hardware. CI remoto do novo head deve ser conferido após o push; o CI verde informado pela revisão refere-se ao head anterior.
 - **Estado:** alterações locais não commitadas na branch existente da PR #48; `git add` foi bloqueado pelo ambiente porque o índice do worktree fica em `D:/Projetos/smart-home-tray/.git/worktrees/f2e-d4b-recovery-controller`, fora da raiz gravável. Nenhum lock foi deixado e nenhum workaround de escrita externa foi usado. Commit, push e CI do novo head permanecem pendentes; sem merge/force-push e sem iniciar D.4.C. Parar para novo code review após publicação.
+
+### F2E.D.4.V1 — tentativa adicional de QA nativa (2026-10-23)
+
+- A sessão de validação não expôs janela nativa selecionável (`apps: []`, `browsers: []`); nenhum cenário E2E/visual adicional foi executado. Relatos anteriores de jornada principal e checklist permanecem históricos e separados de evidência observada nesta sessão.
+- Não foram iniciados app, subprocesso, testes ou build nesta tentativa. Não houve uso de configuração REAL, credenciais, LAN, cloud ou hardware.
+- Mantido **NO-GO para conclusão integral do escopo ampliado**: dispatcher/`requestId`, readback observado pelos handlers, perfis completos na janela, seleção/ocultação durante confirmação, critérios visuais de escala/monitor e encerramento precisam de evidência nativa direta conforme aplicável.
+- Próximo passo: executar o roteiro de `docs/F2E_D4_FIXTURE_E2E_REPORT.md` em sessão Windows com janela Tauri acessível; anotar cada resultado sem inferência a partir de testes ou builds.
+
+### Retomada sem acesso ao runtime nativo — 2026-10-23
+
+- O inventário de UI falhou duas vezes ao inicializar, com `failed to write kernel assets: O sistema não pode encontrar o caminho especificado. (os error 3)`, inclusive após reinicialização do runtime. A presença de uma janela Tauri selecionável não pôde ser confirmada.
+- Nenhuma interação, validação, aplicação, subprocesso, teste ou build foi iniciado. Nenhuma configuração de execução foi carregada.
+- NO-GO mantido; repetir o roteiro em sessão Windows com runtime de UI funcional e janela Tauri acessível.
+
+### F2E.D.4.V1 — execução manual FIXTURE informada pelo mantenedor (2026-10-24)
+
+- **Resultado informado e confirmado pelo mantenedor:** todos os cenários manuais planejados foram executados em FIXTURE e passaram. Não foram fornecidos resultados individualizados, timestamps, `requestId`, capturas ou logs; esta sessão não observou a janela nem inspecionou gravação/logs.
+- **Status:** execução manual planejada registrada como aprovada pelo mantenedor; **NO-GO para encerramento integral de F2E.D.4.V1** enquanto faltarem evidências diretas dos critérios nativos e internos definidos no relatório, incluindo jornada pelos handlers Tauri, observação de `requestId`/chamadas `list()` e QA visual/acessibilidade aplicável. Evidências específicas anteriores continuam históricas e separadas.
+- **Homologação física:** confirmado nos registros do repositório: Luz Mesa e Fita LED homologadas; Luz Escritório pendente após erro 904 Tuya 3.3 e comportamento físico intermitente, causa ainda não determinada. Recomenda-se investigar a instabilidade ou substituir o dispositivo antes de defini-la como próximo alvo físico.
+- Nenhuma conexão REAL, teste físico, escrita ou ação na rede doméstica foi realizada. Antes de teste real, acordar dispositivo exato, escopo e comandos, consentimento explícito para escrita física, condição de parada e acesso somente pela rede local; não presumir rollback físico.
+- **Próximo passo:** obter a evidência nativa/logs ainda necessários para encerrar F2E.D.4.V1 e, separadamente, investigar/substituir Luz Escritório antes de preparar sua homologação.
+
