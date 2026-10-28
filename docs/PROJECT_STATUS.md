@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## Descoberta LAN — broadcast e diagnóstico offline (2026-10-28)
+
+- A enumeração de interface ativa pode derivar o broadcast IPv4 da máscara quando o campo não é informado; endereços e máscaras inválidos, loopback, point-to-point conhecido e prefixos /31 e /32 são excluídos. Os limites existentes e a validação posterior permanecem.
+- Falhas do provider são classificadas em categorias fechadas de listener, interfaces, envio, recepção e limite e transmitidas à CLI sem dados de exceção, mantendo timeout e not-found distintos. A descoberta passiva continua possível sem interface de broadcast.
+- Verificação offline: suíte backend com **478 testes aprovados**, usando fakes de descoberta; sem execução REAL ou dispositivos. A causa específica do DISCOVERY_FAILED relatado na tentativa original permanece desconhecida. Uma nova tentativa física exige autorização específica; o NO-GO integral de F2E.D.4.V1 permanece.
+
 ## CLI restrita de recuperação da Luz Mesa — implementação local
 
 - Entrada `recover-luz-mesa` com gates REAL, seleção exclusiva da Luz Mesa e autorizações separadas para preparar e confirmar; não expõe comandos de iluminação ou JSON. A proposta e a adoção são voláteis, limitadas ao processo, e não atualizam TOML ou desktop.
