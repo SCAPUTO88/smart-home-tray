@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .config import load_config
-from .recovery import ConfirmationStatus, PreparationStatus, ReadbackStatus
+from .recovery import ConfirmationStatus, PreparationStatus, ReadbackStatus, RecoveryFailure
 
 
 class _WindowsConsole:
@@ -113,6 +113,9 @@ def _run_mesa_recovery(*, environ, stdin, stdout, dependencies) -> int:
         if result.status is not PreparationStatus.PROPOSAL_READY_INTERNAL or result.proposal is None:
             label = result.status.name if isinstance(result.status, PreparationStatus) else 'UNKNOWN'
             say(f'Preparação: {label}. Pare e revise o resultado.')
+            stages = {RecoveryFailure.STAGE_LISTENER, RecoveryFailure.STAGE_INTERFACES, RecoveryFailure.STAGE_SEND, RecoveryFailure.STAGE_RECEIVE, RecoveryFailure.STAGE_LIMIT}
+            if result.status is PreparationStatus.DISCOVERY_FAILED and result.failure in stages:
+                say(f'Etapa da descoberta: {result.failure.name}')
             return 2
         proposal = result.proposal
         candidate = ipaddress.IPv4Address(proposal.candidate_address)

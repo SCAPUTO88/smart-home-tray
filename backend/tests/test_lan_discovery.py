@@ -324,7 +324,7 @@ def test_retired_listener_makes_partial_candidate_result_fail_closed():
     result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
 
     assert result.status is DiscoveryResultStatus.FAILED
-    assert result.failure.value == "provider_error"
+    assert result.failure.value == "stage_receive"
     assert result.candidates == ()
     assert all(sock.closed for sock in factory.sockets)
 
@@ -339,7 +339,7 @@ def test_failed_broadcast_makes_partial_candidate_result_fail_closed():
     result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
 
     assert result.status is DiscoveryResultStatus.FAILED
-    assert result.failure.value == "provider_error"
+    assert result.failure.value == "stage_send"
     assert result.candidates == ()
     assert all(sock.closed for sock in factory.sockets)
 
@@ -431,7 +431,7 @@ def test_first_candidate_followed_by_packet_budget_saturation_fails_closed():
 
     assert result.status is DiscoveryResultStatus.FAILED
     assert result.candidates == ()
-    assert result.failure.value == "provider_error"
+    assert result.failure.value == "stage_limit"
     assert all(sock.closed for sock in factory.sockets)
 
 
@@ -446,7 +446,7 @@ def test_candidate_budget_saturation_fails_closed():
 
     assert result.status is DiscoveryResultStatus.FAILED
     assert result.candidates == ()
-    assert result.failure.value == "provider_error"
+    assert result.failure.value == "stage_limit"
     assert all(sock.closed for sock in factory.sockets)
 
 
@@ -524,3 +524,68 @@ def test_duplicate_packets_do_not_consume_distinct_candidate_limit():
     assert result.status is DiscoveryResultStatus.AMBIGUOUS
     assert len(result.candidates) == 2
 
+
+
+def test_default_interfaces_derives_missing_broadcast(monkeypatch):
+    import smart_home_tray.lan_discovery as lan
+    class FakePsutil:
+        @staticmethod
+        def net_if_stats():
+            return {"ethernet": SimpleNamespace(isup=True)}
+        @staticmethod
+        def net_if_addrs():
+            return {"ethernet": [SimpleNamespace(family=lan.socket.AF_INET, address="192.0.2.2", netmask="255.255.255.0", broadcast=None, ptp=None)]}
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+    assert lan.TinyTuyaLanDiscoveryProvider._default_interfaces() == (("192.0.2.255", "192.0.2.2", "255.255.255.0"),)
+
+
+@pytest.mark.parametrize("stage", ["listener", "interfaces", "send", "receive", "limit"])
+def test_discovery_failure_exposes_safe_stage(stage):
+    from smart_home_tray.discovery import DiscoveryFailure
+    clock = FakeClock()
+    factory = FakeSocketFactory(bind_fail_ports={6666, 6667, 7000} if stage == "listener" else (), send_error=stage == "send", receive_error=stage == "receive", datagrams=[(packet_33(), ("192.0.2.50", 6667))] if stage == "limit" else ())
+    provider = make_provider(factory, clock, interfaces=(lambda: (_ for _ in ()).throw(OSError("sensitive"))) if stage == "interfaces" else None, packet_limit=1 if stage == "limit" else 256)
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure is DiscoveryFailure["STAGE_" + stage.upper()]
+    assert result.candidates == ()
+
+
+@pytest.mark.parametrize("address,mask,ptp,flags", [
+    ("127.0.0.1", "255.0.0.0", None, ""),
+    ("192.0.2.2", "255.255.255.254", None, ""),
+    ("192.0.2.2", "255.255.255.255", None, ""),
+    ("192.0.2.2", "255.0.255.0", None, ""),
+    ("invalid", "255.255.255.0", None, ""),
+    ("192.0.2.2", "255.255.255.0", "192.0.2.1", ""),
+    ("192.0.2.2", "255.255.255.0", None, "up, pointopoint"),
+])
+def test_invalid_or_point_to_point_interface_has_no_broadcast(monkeypatch, address, mask, ptp, flags):
+    import smart_home_tray.lan_discovery as lan
+    class FakePsutil:
+        @staticmethod
+        def net_if_stats():
+            return {"x": SimpleNamespace(isup=True, flags=flags)}
+        @staticmethod
+        def net_if_addrs():
+            return {"x": [SimpleNamespace(family=lan.socket.AF_INET, address=address, netmask=mask, broadcast=None, ptp=ptp)]}
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+    assert lan.TinyTuyaLanDiscoveryProvider._default_interfaces() == ()
+
+
+def test_passive_announcement_without_broadcast_interface():
+    factory = FakeSocketFactory([(packet_33(), ("192.0.2.44", 6667))])
+    provider = make_provider(factory, FakeClock(), interfaces=lambda: ())
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.status is DiscoveryResultStatus.CANDIDATES
+    assert len(factory.sockets) == 3
+
+
+def test_listener_wait_timeout_remains_timeout():
+    factory = FakeSocketFactory()
+    provider = make_provider(factory, FakeClock())
+    provider._wait_readable = lambda *_args: (_ for _ in ()).throw(TimeoutError("private"))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure.value == "timeout"
+    assert result.candidates == ()

@@ -610,3 +610,11 @@ def test_device_manager_catalog_reads_only_protocol_from_public_status():
     assert catalog.protocol_version_for(DEVICE_ID) == 3.5
     assert catalog.protocol_version_for("missing-synthetic-id") is None
     assert manager.lookups == [DEVICE_ID]
+
+
+def test_discovery_stage_survives_preparation_mapping():
+    from smart_home_tray.recovery import RecoveryFailure, RecoveryResult, RecoveryService, RecoveryStatus, PreparationStatus
+    result = RecoveryService._preparation_from_discovery(RecoveryResult(RecoveryStatus.DISCOVERY_FAILED, failure=RecoveryFailure.STAGE_INTERFACES))
+    assert result.status is PreparationStatus.DISCOVERY_FAILED
+    assert result.failure is RecoveryFailure.STAGE_INTERFACES
+    assert result.proposal is None

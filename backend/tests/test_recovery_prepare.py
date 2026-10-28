@@ -493,3 +493,24 @@ def test_scheduler_shutdown_cancels_queued_prepare_as_closed_without_validation(
         recovery.close(timeout_seconds=1)
         scheduler.stop(timeout_seconds=1)
 
+
+
+@pytest.mark.parametrize("stage", ["STAGE_LISTENER", "STAGE_INTERFACES", "STAGE_SEND", "STAGE_RECEIVE", "STAGE_LIMIT"])
+def test_prepare_preserves_safe_discovery_stage_without_proposal(stage):
+    from smart_home_tray.discovery import DiscoveryFailure, DiscoveryStageError
+    from smart_home_tray.recovery import RecoveryFailure
+    class FailedProvider:
+        def discover(self, expected_device_id, *, timeout_seconds):
+            raise DiscoveryStageError(DiscoveryFailure[stage], "private diagnostic")
+    manager = make_manager(make_store())
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    recovery = make_service(manager, FailedProvider())
+    try:
+        result = recovery.prepare_internal(DEVICE_ID, scheduler)
+        assert result.status is PreparationStatus.DISCOVERY_FAILED
+        assert result.failure is RecoveryFailure[stage]
+        assert result.proposal is None
+    finally:
+        recovery.close(timeout_seconds=1)
+        scheduler.stop(timeout_seconds=1)
