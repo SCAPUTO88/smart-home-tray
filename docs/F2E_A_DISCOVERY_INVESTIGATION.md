@@ -73,7 +73,7 @@ Timeout total, quantidade máxima de candidatos, concorrência global e faixa de
 3. **Faixa IPv4:** decidir se a aceitação futura exige IPv4 privado/unicast na LAN cadastrada ou apenas rejeita endereços especiais. Não escolher silenciosamente a política.
 4. **Compatibilidade:** a faixa `>=1.20,<2` não foi validada a partir de uma única versão. Escolher entre fixar a dependência, limitar a faixa validada ou manter CI nas versões mínima e máxima compatíveis e falhar fechado diante de API alterada.
 5. **Orçamentos:** medir broadcast em Windows com múltiplos adaptadores e decidir timeout, máximo de candidatos, concorrência global, cancelamento no encerramento e política de erros sem imprimir dados sensíveis.
-6. **Protocolo:** tratamento específico para 3.3 (incluindo o caso pendente de 904 da Luz Escritório) precisa continuar distinto; 904 não prova IP incorreto, falha de identidade ou causa do problema físico.
+6. **Protocolo:** tratamento específico para 3.3 (incluindo o erro 904 historicamente associado à Luz Escritório) precisa continuar distinto; o registro disponível não identifica se a unidade testada era a lâmpada antiga ou a substituta. O erro 904 não prova IP incorreto, falha de identidade ou causa do episódio de intermitência reportado para a lâmpada antiga.
 
 ## Proposta de F2E.B
 

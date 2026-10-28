@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 from typing import Sequence
@@ -16,7 +18,7 @@ from smart_home_tray.protocol import JsonLinesServer
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="smart-home-tray")
-    parser.add_argument("--config", required=True, help="Path to external TOML configuration")
+    parser.add_argument("--config", help="Path to external TOML configuration")
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("list", help="List configured devices without LAN access")
     status = commands.add_parser("status", help="Read device status over the local network")
@@ -40,6 +42,7 @@ def _parser() -> argparse.ArgumentParser:
     hsv.add_argument("--saturation", required=True, type=float)
     hsv.add_argument("--value", required=True, type=float)
     commands.add_parser("serve", help="Serve JSON Lines requests on stdin/stdout")
+    commands.add_parser("recover-luz-mesa", help="Interactive recovery of Luz Mesa")
     return parser
 
 
@@ -48,7 +51,25 @@ def _write_status(status: object) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if 'recover-luz-mesa' in arguments:
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                args = parser.parse_args(arguments)
+        except SystemExit as error:
+            if error.code:
+                print('Invalid recovery arguments', file=sys.stderr)
+            raise
+    else:
+        args = parser.parse_args(arguments)
+    if args.operation == "recover-luz-mesa":
+        if args.config is not None:
+            parser.error("--config is not accepted for recover-luz-mesa")
+        from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+        return run_mesa_recovery()
+    if args.config is None:
+        parser.error("--config is required for this operation")
     try:
         config = load_config(args.config)
         manager = DeviceManager(config)

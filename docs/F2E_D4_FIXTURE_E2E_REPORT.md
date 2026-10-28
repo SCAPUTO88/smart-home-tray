@@ -167,3 +167,32 @@ Após a execução, preencher neste relatório os resultados visuais e conferir 
 ## Resumo para revisão arquitetural
 
 Base `55404c58`; frontend 224/224, backend 400/400, Rust 28/28, typecheck/lint/build/compile Tauri sem bundle aprovados. O teste `BridgeClient` usa processo Python FIXTURE real e prova prepare/confirm/replay/shutdown sobre JSONL. React continua testado com invoke doubles. A janela/WebView não estava acessível (`apps: []`), logo os handlers Tauri no dispatcher e QA visual não foram percorridos. Sem REAL/LAN/hardware/credenciais. Parecer NO-GO até execução manual reproduzível.
+
+## Tentativa de continuação nativa — 2026-10-23
+
+**Resultado desta sessão: BLOQUEADA para observação nativa; NO-GO para o escopo ampliado de E2E/QA solicitado.** A enumeração da superfície de computador retornou `apps: []` e `browsers: []`. Não havia janela Tauri selecionável, e não foi possível observar ou interagir com a aplicação. Nenhum cenário visual ou de interação foi executado nesta sessão.
+
+- Não foram repetidos nem confirmados por observação nesta sessão o bootstrap/catálogo, prepare/confirm pelos handlers Tauri, `requestId` e readback, inelegibilidade, perfis de falha/ambiguidade, troca de seleção/ocultar durante confirmação, foco/teclado/Escape/anúncios, layout/escala/monitor secundário ou encerramento pelo tray e subprocesso.
+- Os relatos manuais anteriores neste documento permanecem evidência histórica reportada; não foram reclassificados nem reexecutados. Evidência por camada, gravação/jornada nativa reportada e homologação REAL continuam categorias distintas.
+- Nenhum processo de aplicação ou teste/build foi iniciado nesta tentativa. Portanto, nenhuma configuração de execução foi carregada e não houve acesso a REAL, TOML/credenciais, LAN, cloud ou hardware.
+- A referência local `origin/develop` observada era `2d41b286ad4e8d004f0ba0ec0270c43e1c9933de`. O checkout de validação continuou em `test/f2e-d4v1-fixture-e2e` / `9196026b1cceb9413c99a5170b2e5abe9cb43c70`, limpo antes desta anotação e dois commits atrás de `origin/test/f2e-d4v1-fixture-e2e`. Esta anotação não integra esses commits nem a referência de develop.
+- Próximo passo: repetir o roteiro em uma sessão Windows que exponha a janela nativa e registrar somente observações diretas. Manter NO-GO para conclusão integral enquanto os critérios ampliados permanecerem sem evidência.
+
+## Retomada sem acesso ao runtime nativo — 2026-10-23
+
+**Resultado: validação não iniciada; NO-GO mantido.** A chamada de inventário da interface falhou duas vezes com `failed to write kernel assets: O sistema não pode encontrar o caminho especificado. (os error 3)`, inclusive após reinicializar o runtime de UI. Assim, não foi possível confirmar se havia uma janela Tauri selecionável nesta sessão.
+
+- Nenhuma ação foi enviada à janela e nenhum cenário do roteiro foi executado. Não foram iniciados app, subprocesso, testes ou build; nenhuma configuração de execução foi carregada.
+- Os resultados e relatos registrados anteriormente permanecem históricos e sem alteração. Não há nova evidência visual, de handlers, `requestId`, readback ou shutdown nesta retomada.
+- Próximo passo: repetir em uma sessão Windows onde o runtime de UI inicialize e a janela Tauri possa ser selecionada. Até lá, manter os critérios sem observação pendentes e o NO-GO para conclusão integral.
+
+## Execução manual FIXTURE informada pelo mantenedor — 2026-10-24
+
+**Resultado informado e confirmado pelo mantenedor:** todos os cenários manuais planejados para esta validação foram executados em modo FIXTURE e passaram. Este registro atribui o resultado ao mantenedor; nesta sessão não assisti à gravação, não observei a janela nativa e não inspecionei logs ou capturas da execução. Não foram fornecidos nesta confirmação resultados individualizados, timestamps, `requestId`, capturas ou logs, portanto nenhum deles é afirmado aqui.
+
+**Parecer: encerramento parcial da execução manual planejada, mas NO-GO para encerrar F2E.D.4.V1 integralmente.** O relatório exige evidência para uma jornada React → handlers Tauri → subprocesso FIXTURE, observações nativas de UI/acessibilidade e, para alguns critérios, inspeção de `requestId`, chamadas `list()` e cleanup. O resultado geral reportado confirma que o mantenedor executou e aprovou os cenários planejados; sem artefatos ou observação independente disponíveis, ele não permite atribuir verificação direta a cada critério nem comprovar aspectos internos que não são visíveis na interface. As observações manuais detalhadas de 2026-10-21 permanecem evidência histórica separada e não foram tratadas como evidência desta execução.
+
+- **Limite entre evidências:** relato confirmado pelo mantenedor sustenta o resultado reportado dos cenários; observação direta exigiria acesso à janela/gravação; confirmação de `requestId`, contagem de `list()` e shutdown requer logs ou outra evidência técnica correspondente. Esses níveis não são intercambiáveis.
+- **Homologação física:** Luz Mesa e Fita LED têm homologações anteriores; a substituta da Luz Escritório não tem evidência de homologação própria. O histórico associa à Luz Escritório uma unidade Tuya 3.3/904, mas não permite identificar se era a lâmpada antiga ou a substituta. Segundo o mantenedor, a intermitência ocorreu com a antiga e não voltou após a substituição; a hipótese de Wi‑Fi não foi confirmada. Se disponíveis, dados históricos do roteador/ponto de acesso e SmartLife podem ser consultados sem reproduzir a falha ou alterar a rede; não há recomendação pendente para substituir a unidade atual.
+- **Segurança:** nenhuma conexão REAL, teste físico, comando de escrita ou ação na rede doméstica foi iniciado nesta tarefa. Antes de qualquer ação real, combinar explicitamente o dispositivo exato, modo/escopo e comandos permitidos, consentimento para cada escrita física e condição de parada; manter acesso somente pela rede local e testes automatizados sem contato com dispositivos. Não presumir rollback físico.
+- **Próximo passo sugerido:** fechar as lacunas de evidência observável desta validação conforme disponibilidade de janela/logs. Em trilha física separada, manter a substituta da Luz Escritório sem homologação até obter validação própria; eventual consulta a dados históricos de Wi‑Fi/SmartLife não confirma causa nem substitui homologação.
