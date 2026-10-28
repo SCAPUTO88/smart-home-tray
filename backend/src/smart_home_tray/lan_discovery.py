@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from .discovery import DiscoveryAnnouncement
+from .discovery import DiscoveryAnnouncement, DiscoveryFailure, DiscoveryStageError, DiscoveryLimitError
 
 _LOG = logging.getLogger(__name__)
 _PORTS = (6666, 6667, 7000)
@@ -101,16 +101,28 @@ class TinyTuyaLanDiscoveryProvider:
             if stats is None or not stats.isup:
                 continue
             for address in addresses:
-                if (
-                    address.family == socket.AF_INET
-                    and address.address
-                    and address.broadcast
-                    and address.netmask
-                    and address.address != address.broadcast
-                ):
-                    # Keep duplicate broadcast addresses: separate adapters may
-                    # use them while requiring different source addresses.
-                    interfaces.append((address.broadcast, address.address, address.netmask))
+                if address.family != socket.AF_INET or not address.address or not address.netmask:
+                    continue
+                if getattr(address, "ptp", None):
+                    continue
+                flags = getattr(stats, "flags", "") or ""
+                if "pointopoint" in {flag.strip() for flag in flags.lower().replace("-", "").split(",")}:
+                    continue
+                try:
+                    source = ipaddress.IPv4Address(address.address)
+                    network = ipaddress.IPv4Network((source, address.netmask), strict=False)
+                except (ValueError, TypeError):
+                    continue
+                if (network.prefixlen > 30 or source.is_unspecified or source.is_loopback
+                        or source.is_multicast or source in (network.network_address, network.broadcast_address)):
+                    continue
+                broadcast = address.broadcast
+                if broadcast is None:
+                    broadcast = str(network.broadcast_address)
+                if not broadcast or address.address == broadcast:
+                    continue
+                # Retain distinct source addresses even when the broadcast matches.
+                interfaces.append((broadcast, address.address, address.netmask))
         return tuple(interfaces)
 
     @staticmethod
@@ -227,7 +239,12 @@ class TinyTuyaLanDiscoveryProvider:
         broadcast_failed = False
         interfaces_truncated = False
         try:
-            listeners = self._open_listeners(deadline, opened)
+            try:
+                listeners = self._open_listeners(deadline, opened)
+            except TimeoutError:
+                raise
+            except Exception:
+                raise DiscoveryStageError(DiscoveryFailure.STAGE_LISTENER, "LAN discovery listeners unavailable") from None
             interfaces: Sequence[tuple[str, str, str]] = ()
             if self._monotonic() < deadline:
                 try:
@@ -238,20 +255,22 @@ class TinyTuyaLanDiscoveryProvider:
                         interfaces = discovered_interfaces
                 except Exception:
                     _LOG.debug("LAN interface enumeration unavailable")
-                    raise OSError("LAN interface enumeration failed") from None
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_INTERFACES, "LAN interface enumeration failed") from None
             if interfaces and self._monotonic() < deadline:
                 broadcast_failed, interfaces_truncated = self._send_v35_requests(
                     interfaces, deadline, opened
                 )
             while self._monotonic() < deadline and listeners:
                 if processed >= self._max_packets or len(candidate_addresses) >= self._max_candidates:
-                    raise RuntimeError("LAN discovery collection limit reached")
+                    raise DiscoveryLimitError("LAN discovery collection limit reached")
                 remaining = deadline - self._monotonic()
                 waited_for_packets = True
                 try:
                     ready, _, _ = self._wait_readable(listeners, min(remaining, 0.1))
+                except TimeoutError:
+                    raise
                 except OSError:
-                    raise OSError("LAN discovery listener wait failed") from None
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener wait failed") from None
                 if not ready:
                     continue
                 for sock in ready:
@@ -261,7 +280,7 @@ class TinyTuyaLanDiscoveryProvider:
                         processed >= self._max_packets
                         or len(candidate_addresses) >= self._max_candidates
                     ):
-                        raise RuntimeError("LAN discovery collection limit reached")
+                        raise DiscoveryLimitError("LAN discovery collection limit reached")
                     try:
                         packet, source = sock.recvfrom(4096)
                     except (BlockingIOError, socket.timeout):
@@ -281,17 +300,17 @@ class TinyTuyaLanDiscoveryProvider:
                         retired_listener = True
                         _LOG.debug("LAN discovery listener retired after repeated receive failures")
                 if not listeners:
-                    raise OSError("LAN discovery listeners failed")
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listeners failed")
             if not waited_for_packets and self._monotonic() >= deadline:
                 raise TimeoutError("LAN discovery budget expired before listening")
             if retired_listener:
-                raise OSError("LAN discovery listener receive failed")
+                raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener receive failed")
             if broadcast_failed:
-                raise OSError("LAN discovery broadcast failed")
+                raise DiscoveryStageError(DiscoveryFailure.STAGE_SEND, "LAN discovery broadcast failed")
             if interfaces_truncated:
-                raise RuntimeError("LAN discovery interface limit reached")
+                raise DiscoveryLimitError("LAN discovery interface limit reached")
             if processed >= self._max_packets or len(candidate_addresses) >= self._max_candidates:
-                raise RuntimeError("LAN discovery collection limit reached")
+                raise DiscoveryLimitError("LAN discovery collection limit reached")
             return announcements
         finally:
             for sock in reversed(opened):

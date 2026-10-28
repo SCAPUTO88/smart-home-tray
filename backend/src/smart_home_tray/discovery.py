@@ -27,6 +27,21 @@ class DiscoveryFailure(StrEnum):
     INVALID_ANNOUNCEMENT = "invalid_announcement"
     TIMEOUT = "timeout"
     PROVIDER_ERROR = "provider_error"
+    STAGE_LISTENER = "stage_listener"
+    STAGE_INTERFACES = "stage_interfaces"
+    STAGE_SEND = "stage_send"
+    STAGE_RECEIVE = "stage_receive"
+    STAGE_LIMIT = "stage_limit"
+
+
+class DiscoveryStageError(OSError):
+    def __init__(self, stage: DiscoveryFailure, message: str):
+        super().__init__(message)
+        self.stage = stage
+
+
+class DiscoveryLimitError(RuntimeError):
+    stage = DiscoveryFailure.STAGE_LIMIT
 
 
 @dataclass(frozen=True)
@@ -194,6 +209,9 @@ def discover_candidates(
         )
     except TimeoutError:
         return _failed(DiscoveryFailure.TIMEOUT)
+    except (DiscoveryStageError, DiscoveryLimitError) as error:
+        allowed = {DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
+        return _failed(error.stage if error.stage in allowed else DiscoveryFailure.PROVIDER_ERROR)
     except Exception:
         return _failed(DiscoveryFailure.PROVIDER_ERROR)
 
