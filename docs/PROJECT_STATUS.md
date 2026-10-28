@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## CLI restrita de recuperação da Luz Mesa — implementação local
+
+- Entrada `recover-luz-mesa` com gates REAL, seleção exclusiva da Luz Mesa e autorizações separadas para preparar e confirmar; não expõe comandos de iluminação ou JSON. A proposta e a adoção são voláteis, limitadas ao processo, e não atualizam TOML ou desktop.
+- Verificação local: suíte backend com **448 testes aprovados** e `git diff --check` sem erros. Os novos testes usam fakes e bloqueio de sockets; não constituem teste REAL. A recuperação física permanece condicionada a autorizações separadas. A implementação não encerra o NO-GO integral de F2E.D.4.V1.
+- Revisão arquitetural: entrada separada reaproveita serviço e scheduler de recuperação, mantém o `serve` existente e evita a hidratação automática do catálogo pelo desktop; o console interativo não comprova presença humana.
+
 ## F2E.D.4.UX1 — apresentação de recovery e controles (2026-10-21)
 
 - **Causas reproduzidas:** o painel apresentava exclusivamente o readback terminal de recovery, então continuava mostrando a falha imediata depois de um refresh manual válido. O indicador operacional usava `view.status=idle` como sinônimo de disponibilidade, sem considerar knowledge por campo nem os controles habilitados no modo atual.
@@ -85,9 +91,9 @@
 - **Achado de review corrigido pela CR-49.1:** remontagem completa da UI recriava integração/sessão, relistava catálogo, invalidava checkpoints e descartava proposta ativa. D-020 aprova o host persistente por runtime ativo e as regressões A–J cobrem o remount durante prepare/confirm.
 - **Riscos pendentes:** inspeção visual nativa/assistiva e E2E FIXTURE ainda não executados; consulte os limites de runtime no checkpoint CR-49.1 acima. Correção publicada e CI verde na PR #49; parar para code review, sem merge.
 
-- **Fase:** 2 — F2D.1 (Luz Mesa) e F2D.2 (Fita LED) homologadas manualmente pelo mantenedor em modo REAL; F2D.3 (Luz Escritório) pendente de investigação ou substituição. PRs #19–22 integradas em `develop` e `main` (conforme handoff do mantenedor). PR #44 está aberta com desenho documental F2E.D.4.0; não há implementação D.4.
+- **Fase:** 2 — F2D.1 (Luz Mesa) e F2D.2 (Fita LED) homologadas manualmente pelo mantenedor em modo REAL; a lâmpada substituta da Luz Escritório ainda não tem homologação própria. O histórico Tuya 3.3/904 associado à Luz Escritório não identifica se a unidade era a antiga ou a substituta; segundo o mantenedor, a intermitência ocorreu com a antiga e não voltou a ocorrer após a troca. PRs #19–22 integradas em `develop` e `main` (conforme handoff do mantenedor). PR #44 está aberta com desenho documental F2E.D.4.0; não há implementação D.4.
 - **Objetivo:** Backend local-first para dispositivos LAN e frontend React/Tauri com MOCK por padrão, FIXTURE sem rede e modo REAL local sob opt-in.
-- **Progresso:** PRs #19–22 integraram F2C.1/F2C.2, incluindo knowledge por campo, refresh manual e CR-28–31. PR #43 integrou F2E.D.3.B; PR #44 publica o refinamento documental D.4.0 e aguarda merge/review corretivo CR-44. A validação automatizada de CI e a homologação física manual são evidências distintas: Luz Mesa e Fita LED passaram pelos controles registrados abaixo; a Luz Escritório segue pendente. Uma mudança de DHCP durante a homologação motivou o refinamento proposto em `docs/LAN_IP_REDISCOVERY_PLAN.md`. Nenhuma credencial ou endereço doméstico é registrado aqui. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
+- **Progresso:** PRs #19–22 integraram F2C.1/F2C.2, incluindo knowledge por campo, refresh manual e CR-28–31. PR #43 integrou F2E.D.3.B; PR #44 publica o refinamento documental D.4.0 e aguarda merge/review corretivo CR-44. A validação automatizada de CI e a homologação física manual são evidências distintas: Luz Mesa e Fita LED passaram pelos controles registrados abaixo; a substituta da Luz Escritório segue sem homologação própria. O registro Tuya 3.3/904 não identifica qual unidade foi testada. A intermitência da lâmpada antiga não voltou a ocorrer após a troca, segundo o mantenedor; a hipótese de Wi‑Fi não foi confirmada. Uma mudança de DHCP durante a homologação motivou o refinamento proposto em `docs/LAN_IP_REDISCOVERY_PLAN.md`. Nenhuma credencial ou endereço doméstico é registrado aqui. F2B teve uma limitação de UX manual em posicionamento multi-monitor, registrada como CR-20.
 - **Legenda:** PLANEJADO = ainda sem implementação; IMPLEMENTADO = presente no código; TESTADO = executado com evidência; BLOQUEADO = impedido por uma dependência ou limitação confirmada.
 
 ## Implementações
@@ -170,7 +176,7 @@ Ver [DECISIONS.md](DECISIONS.md). A arquitetura aprovada está descrita em [arch
 
 ## Problemas conhecidos e riscos
 
-- O equipamento de escritório Tuya 3.3 retorna erro 904 e permanece fora do caminho crítico do MVP.
+- O histórico registra uma unidade associada à Luz Escritório como Tuya 3.3 com erro 904; não identifica se era a lâmpada antiga ou a substituta. A substituta continua sem homologação física própria.
 - Não há validação física automatizada; capacidades e faixas precisam permanecer identificadas como não validadas até evidência correspondente.
 - Atualização de IP é explícita via `update_address`; descoberta automática LAN não foi implementada.
 - A matriz Python 3.12/3.14 passou remotamente no commit `ed43395`; Python 3.12 não foi executado localmente.
@@ -321,9 +327,10 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 
 ### F2D.3 — Luz Escritório: pendente
 
-- Dispositivo Tuya 3.3 identificado pela descoberta LAN. A leitura TinyTuya retornou `DEVICE_ERROR` associado ao erro 904 (`Unexpected Payload from Device`).
-- O equipamento também apresentou comportamento físico intermitente de desligar e religar. A homologação foi adiada até investigação ou substituição.
-- Causa não determinada: não há evidência suficiente para atribuir definitivamente o erro 904 à Local Key, ao protocolo, ao hardware ou para declarar defeito físico comprovado.
+- O registro F2D.3 associou à Luz Escritório uma unidade Tuya 3.3 cuja leitura TinyTuya retornou `DEVICE_ERROR`/904 (`Unexpected Payload from Device`). O histórico disponível não identifica se essa unidade era a lâmpada antiga ou a substituta.
+- **Informação posterior do mantenedor:** a intermitência de desligar e religar ocorria com a lâmpada antiga; após substituí-la, esse comportamento não voltou a ocorrer, segundo o mantenedor. A suspeita de relação com Wi‑Fi refere-se somente ao episódio da antiga e não foi confirmada.
+- A lâmpada substituta permanece sem homologação física baseada em evidência própria. Não transferir para ela o Tuya 3.3 ou o erro 904 do registro histórico, nem inferir causa para o episódio da antiga.
+- Causa do erro 904 não determinada: não há evidência suficiente para atribuí-lo à Local Key, ao protocolo ou ao hardware, nem para declarar defeito físico comprovado.
 
 ### Ocorrências e resolução durante a homologação
 
@@ -336,8 +343,8 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 ### Evidência e lacunas
 
 - **Automatizada:** CI das PRs integradas #19–22 cobriu os contratos com testes automatizados em mocks, fakes e fixtures. Essa evidência não valida rede doméstica, dispositivos físicos, recuperação de desconexões ou descoberta automática.
-- **Manual física:** resultados de Luz Mesa e Fita LED acima foram executados e confirmados pelo mantenedor; Luz Escritório não foi homologada.
-- **Hipóteses em aberto:** concorrência de clientes pode estar relacionada às falhas intermitentes da Fita LED, mas ainda não foi isolada como causa. A origem do erro 904 da Luz Escritório também permanece indeterminada.
+- **Manual física:** resultados de Luz Mesa e Fita LED acima foram executados e confirmados pelo mantenedor; a lâmpada substituta da Luz Escritório não foi homologada com evidência própria.
+- **Hipóteses em aberto:** concorrência de clientes pode estar relacionada às falhas intermitentes da Fita LED, mas ainda não foi isolada como causa. A causa do erro 904 associado historicamente à Luz Escritório permanece indeterminada, e a unidade exata testada não foi identificada no registro. A suspeita de Wi‑Fi diz respeito à intermitência da lâmpada antiga e não foi confirmada.
 - **Lacunas:** não há validação de recuperação automática após desconexão/mudança de IP, nem garantia de reconexão sem ação manual. Descoberta LAN por IP está em refinamento; homologação REAL futura de qualquer alteração dependerá de autorização explícita do mantenedor.
 
 ## Planejamento — redescoberta de IP LAN
@@ -587,3 +594,38 @@ Este checkpoint registra resultados físicos relatados e confirmados manualmente
 - **Verificação local:** as regressões focadas passaram (**42 testes**), a suíte Vitest passou (**148 testes em 14 arquivos**), `npm run typecheck`, `npm run lint`, `npm run build` e `git diff --check` passaram. Neste ambiente Windows restrito, Vitest/build foram executados com pool `threads` e preload temporário que suprime somente a consulta auxiliar `net use` do Vite; nenhum arquivo temporário permanece no produto.
 - **Limites:** sem backend, contrato JSONL, D.4.C, LAN, cloud, credenciais ou hardware. CI remoto do novo head deve ser conferido após o push; o CI verde informado pela revisão refere-se ao head anterior.
 - **Estado:** alterações locais não commitadas na branch existente da PR #48; `git add` foi bloqueado pelo ambiente porque o índice do worktree fica em `D:/Projetos/smart-home-tray/.git/worktrees/f2e-d4b-recovery-controller`, fora da raiz gravável. Nenhum lock foi deixado e nenhum workaround de escrita externa foi usado. Commit, push e CI do novo head permanecem pendentes; sem merge/force-push e sem iniciar D.4.C. Parar para novo code review após publicação.
+
+### F2E.D.4.V1 — tentativa adicional de QA nativa (2026-10-23)
+
+- A sessão de validação não expôs janela nativa selecionável (`apps: []`, `browsers: []`); nenhum cenário E2E/visual adicional foi executado. Relatos anteriores de jornada principal e checklist permanecem históricos e separados de evidência observada nesta sessão.
+- Não foram iniciados app, subprocesso, testes ou build nesta tentativa. Não houve uso de configuração REAL, credenciais, LAN, cloud ou hardware.
+- Mantido **NO-GO para conclusão integral do escopo ampliado**: dispatcher/`requestId`, readback observado pelos handlers, perfis completos na janela, seleção/ocultação durante confirmação, critérios visuais de escala/monitor e encerramento precisam de evidência nativa direta conforme aplicável.
+- Próximo passo: executar o roteiro de `docs/F2E_D4_FIXTURE_E2E_REPORT.md` em sessão Windows com janela Tauri acessível; anotar cada resultado sem inferência a partir de testes ou builds.
+
+### Retomada sem acesso ao runtime nativo — 2026-10-23
+
+- O inventário de UI falhou duas vezes ao inicializar, com `failed to write kernel assets: O sistema não pode encontrar o caminho especificado. (os error 3)`, inclusive após reinicialização do runtime. A presença de uma janela Tauri selecionável não pôde ser confirmada.
+- Nenhuma interação, validação, aplicação, subprocesso, teste ou build foi iniciado. Nenhuma configuração de execução foi carregada.
+- NO-GO mantido; repetir o roteiro em sessão Windows com runtime de UI funcional e janela Tauri acessível.
+
+### F2E.D.4.V1 — execução manual FIXTURE informada pelo mantenedor (2026-10-24)
+
+- **Resultado informado e confirmado pelo mantenedor:** todos os cenários manuais planejados foram executados em FIXTURE e passaram. Não foram fornecidos resultados individualizados, timestamps, `requestId`, capturas ou logs; esta sessão não observou a janela nem inspecionou gravação/logs.
+- **Status:** execução manual planejada registrada como aprovada pelo mantenedor; **NO-GO para encerramento integral de F2E.D.4.V1** enquanto faltarem evidências diretas dos critérios nativos e internos definidos no relatório, incluindo jornada pelos handlers Tauri, observação de `requestId`/chamadas `list()` e QA visual/acessibilidade aplicável. Evidências específicas anteriores continuam históricas e separadas.
+- **Homologação física:** Luz Mesa e Fita LED permanecem registradas como homologadas. A substituta da Luz Escritório não tem homologação própria. O erro 904/Tuya 3.3 foi registrado para uma unidade associada à Luz Escritório, sem identificação que permita dizer se era a antiga ou a substituta; a intermitência, segundo o mantenedor, ocorria com a antiga e não voltou após a troca. Não há conclusão causal.
+- Nenhuma conexão REAL, teste físico, escrita ou ação na rede doméstica foi realizada. Antes de teste real, acordar dispositivo exato, escopo e comandos, consentimento explícito para escrita física, condição de parada e acesso somente pela rede local; não presumir rollback físico.
+- **Próximo passo:** obter a evidência nativa/logs ainda necessários para encerrar F2E.D.4.V1. Em trilha física separada, a substituta da Luz Escritório requer validação própria antes de qualquer homologação; consulta a registros históricos de roteador/ponto de acesso e SmartLife sobre a lâmpada antiga é opcional, se esses dados ainda estiverem disponíveis, e não presume causa nem exige reproduzir a falha.
+
+### Prontidão para recuperação REAL — roteiro proposto, não executado (2026-10-24)
+
+- **Identificação informada pelo mantenedor:** Luz Mesa e Luz Escritório são, segundo sua confirmação, unidades do mesmo modelo Elgin Smart 20 W bivolt, SKU 216, EAN 7908412514401. Referência de produto: [página oficial Elgin](https://www.elgin.com.br/bulbo-led-t-20w-biv-smart-color/p). A equivalência do SKU entre as unidades é uma informação do mantenedor; não explica nem invalida as diferenças históricas observadas no protocolo.
+- **Histórico e unidade testada:** F2D.1 Luz Mesa foi registrada como Tuya 3.5 e homologada. F2D.3 associou à Luz Escritório uma unidade Tuya 3.3 com leitura TinyTuya `DEVICE_ERROR`/904 (`Unexpected Payload from Device`), mas o histórico disponível não permite distinguir se era a lâmpada antiga ou a substituta. Segundo o mantenedor, a intermitência física ocorreu com a antiga e não voltou a ocorrer após a troca. Não transferir protocolo ou erro para a substituta com base no modelo/SKU/EAN comum.
+- **Informação adicional do mantenedor:** o app Elgin/SmartLife não apresenta firmware nem revisão de hardware. As caixas e etiquetas já não estão disponíveis; as lâmpadas foram instaladas há mais de duas semanas. Firmware e revisão por unidade ficam registrados como desconhecidos e indisponíveis pelas fontes atuais, sem serem condição obrigatória de coleta.
+- **Hipótese e verificação futura:** o mantenedor suspeita que a intermitência da lâmpada antiga possa ter relação com sinal Wi‑Fi; isso não foi confirmado. Se existirem dados históricos, consultar futuramente no roteador/ponto de acesso registros de sinal/desconexões da unidade e o histórico SmartLife. Não reproduzir a falha nem alterar a rede.
+- **Status físico:** manter a substituta da Luz Escritório fora da homologação física enquanto não houver evidência própria de validação. O histórico Tuya 3.3/904 continua sem associação identificável à lâmpada antiga ou à substituta; não há recomendação pendente para substituir a unidade atual.
+- **Roteiro futuro sujeito a autorização explícita:** usar inicialmente a Luz Mesa física, identificada pelo Device ID conferido pelo mantenedor. Iniciar o backend no modo REAL somente após autorização específica e gates existentes; manter configuração e segredos externos e não registrá-los. `recovery.prepare({deviceId})` pode emitir descoberta UDP na LAN e, havendo candidato único elegível Tuya 3.5, executar validação TCP autenticada read-only com a Local Key carregada internamente. O anúncio é candidato, não identidade comprovada; ambiguidade não avança.
+- Após revisar o candidato, somente uma confirmação humana explícita de `recovery.confirm({proposalId})` poderia repetir a validação read-only, fechar o adapter anterior, adotar o endereço no catálogo em memória e fazer um readback normal do mesmo Device ID. O efeito previsto é atualização volátil de endereço/estado observado; não há escrita de DPS, comando de iluminação ou persistência em TOML. A leitura autenticada é evidência no modelo de confiança aprovado, não prova independente de identidade física.
+- **Resultado esperado, caso autorizado:** um candidato único compatível com o Device ID esperado e protocolo 3.5; confirmação terminal `ADOPTED` com readback `SUCCEEDED` para o mesmo Device ID; estado físico da Luz Mesa inalterado. A preparação pode terminar sem proposta, e isso não autoriza selecionar outro candidato.
+- **Parada imediata:** mais de um candidato/ambiguidade; protocolo diferente ou incompatível; erro 904; timeout, falha de autenticação/transporte ou resultado de readback diferente de `SUCCEEDED`; Device ID inesperado; proposta expirada/resultado indeterminado; ou qualquer mudança física/anomalia observada. Não repetir, confirmar outro candidato nem seguir para a Luz Escritório sem nova avaliação e autorização.
+- Este roteiro não é autorização de execução. Nenhuma descoberta, conexão LAN/REAL, leitura ou escrita física foi executada ao prepará-lo. F2E.D.4 FIXTURE permanece uma validação separada e seu NO-GO integral por lacunas de evidência não é alterado por este plano.
+
