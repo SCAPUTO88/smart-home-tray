@@ -100,7 +100,7 @@ describe('lighting recovery session', () => {
     const pending = deferred<PublicDeviceStatus>()
     s.bridge.status = vi.fn(() => pending.promise)
     let confirmation!: Promise<ConfirmOutcome>
-    let refresh!: Promise<void>
+    let refresh!: Promise<unknown>
     act(() => {
       if (confirmationFirst) confirmation = s.result.current.confirmRecovery(proposal.proposalId)
       refresh = s.result.current.refreshDevice('lamp')
@@ -172,7 +172,7 @@ describe('lighting recovery session', () => {
     const oldRefresh = deferred<PublicDeviceStatus>()
     s.bridge.status = vi.fn(() => oldRefresh.promise)
     let confirmation!: Promise<ConfirmOutcome>
-    let refresh!: Promise<void>
+    let refresh!: Promise<unknown>
     act(() => { refresh = s.result.current.refreshDevice('lamp'); confirmation = s.result.current.confirmRecovery(proposal.proposalId) })
     const recovered = publicDevice()
     recovered.state.hsv = { hue: 316, saturation: 29, value: 46 }
@@ -200,7 +200,7 @@ describe('lighting recovery session', () => {
     const pending = deferred<PublicDeviceStatus>()
     s.bridge.status = vi.fn(() => pending.promise)
     let confirmation!: Promise<ConfirmOutcome>
-    let refresh!: Promise<void>
+    let refresh!: Promise<unknown>
     act(() => { confirmation = s.result.current.confirmRecovery(proposal.proposalId); refresh = s.result.current.refreshDevice('lamp') })
     s.confirm.reject({ code: 'TIMEOUT' })
     await act(async () => { expect(await confirmation).toMatchObject({ kind: 'indeterminate' }) })

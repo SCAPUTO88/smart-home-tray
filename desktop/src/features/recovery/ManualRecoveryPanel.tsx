@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { ConfirmOutcome, PrepareOutcome } from './ManualRecoveryController'
 import type { RecoveryEligibility } from './reconciliation'
 import type { RecoveryPresentation, RecoveryView } from './recoveryPresentation'
+import type { DeviceKnowledge, LightingDevice } from '../devices/types'
 
 interface Props {
   deviceId: string
@@ -10,12 +11,13 @@ interface Props {
   store: RecoveryPresentation
   prepareRecovery: (deviceId: string) => Promise<PrepareOutcome>
   confirmRecovery: (proposalId: string) => Promise<ConfirmOutcome>
-  refreshDevice?: (deviceId: string) => Promise<void>
+  refreshDevice?: (deviceId: string) => Promise<LightingDevice | void>
+  currentKnowledge: DeviceKnowledge
   refreshDisabled: boolean
   simulation: boolean
 }
 
-function resultMessage(state: RecoveryView): string {
+function resultMessage(state: RecoveryView, currentKnowledge: DeviceKnowledge): string {
   switch (state.kind) {
     case 'idle': return 'A busca começa somente ao preparar. Nenhum endereço é alterado sem sua confirmação.'
     case 'preparing': return 'Preparando proposta… Ocultar o painel não cancela a operação.'
@@ -26,15 +28,18 @@ function resultMessage(state: RecoveryView): string {
     case 'indeterminate': return 'Resultado desconhecido: a adoção pode ter ocorrido. Não repita a confirmação. Atualizar a leitura não comprova o resultado da adoção original.'
     case 'adopted': {
       const prefix = 'Adoção em memória concluída. '
-      if (state.readback.status === 'FAILED') return prefix + 'O estado físico ainda não foi confirmado.'
+      if (state.readback.status === 'FAILED' || state.readback.status === 'SUCCEEDED' && !state.readback.device) {
+        if (state.laterRefreshFields?.some((field) => currentKnowledge[field] === 'observed')) return 'Leitura posterior realizada. O estado atual foi atualizado com os campos observados.'
+        return state.readback.status === 'FAILED' ? prefix + 'A leitura realizada imediatamente após a recuperação falhou.' : prefix + 'Snapshot indisponível; o estado físico ainda não foi confirmado.'
+      }
       if (state.readback.status === 'SUPERSEDED') return prefix + 'A leitura foi superada por outra operação.'
-      return prefix + (state.readback.device ? 'Leitura recebida; os controles refletem o estado reconciliado.' : 'Snapshot indisponível; o estado físico ainda não foi confirmado.')
+      return prefix + 'Leitura recebida; os controles refletem o estado reconciliado.'
     }
   }
 }
 
 export function ManualRecoveryPanel(props: Props) {
-  const { deviceId, deviceName, eligibility, store, prepareRecovery, confirmRecovery, refreshDevice, refreshDisabled, simulation } = props
+  const { deviceId, deviceName, eligibility, store, prepareRecovery, confirmRecovery, refreshDevice, refreshDisabled, simulation, currentKnowledge } = props
   const state = useSyncExternalStore(store.subscribe, () => store.get(deviceId))
   const [expanded, setExpanded] = useState(false)
   const [, tick] = useState(0)
@@ -77,6 +82,18 @@ export function ManualRecoveryPanel(props: Props) {
     toggle.current?.focus()
   }
 
+  const refresh = async () => {
+    store.beginManualRefresh(deviceId)
+    try {
+      const snapshot = await refreshDevice?.(deviceId)
+      if (!snapshot || snapshot.deviceId !== deviceId) return
+      const observed = Object.entries(snapshot.state.knowledge).filter(([, quality]) => quality === 'observed').map(([field]) => field as keyof DeviceKnowledge)
+      store.recordManualRefresh(deviceId, observed)
+    } catch {
+      // The session owns refresh errors; a rejected refresh never changes recovery history.
+    }
+  }
+
   return <section className="recovery-panel" onKeyDown={(event) => {
     if (event.key === 'Escape' && expanded) { event.stopPropagation(); event.preventDefault(); dismiss() }
   }}>
@@ -87,7 +104,7 @@ export function ManualRecoveryPanel(props: Props) {
     {expanded && <div id={regionId} role="region" aria-label={`Recuperação manual de ${deviceName}`}>
       {simulation && <p className="recovery-simulation">Simulação · sem homologação em hardware real</p>}
       <p>{eligibility.status === 'ELIGIBLE' ? 'Elegível · Tuya 3.5' : eligibility.status === 'INELIGIBLE' ? `Protocolo ${eligibility.protocolVersion}: a recuperação atual exige Tuya 3.5.` : 'Elegibilidade desconhecida. Protocolo não informado.'}</p>
-      <div data-testid="recovery-state" data-state={state.kind} aria-live="polite" aria-atomic="true"><p>{resultMessage(state)}</p></div>
+      <div data-testid="recovery-state" data-state={state.kind} aria-live="polite" aria-atomic="true"><p>{resultMessage(state, currentKnowledge)}</p></div>
       {proposal && <div className="recovery-proposal">
         <h3 ref={heading} tabIndex={-1}>Confirmar recuperação de {state.kind !== 'idle' ? state.deviceName : deviceName}</h3>
         <dl><dt>Protocolo</dt><dd>Tuya 3.5</dd><dt>IPv4 candidato</dt><dd>{proposal.candidateIp}</dd></dl>
@@ -99,7 +116,7 @@ export function ManualRecoveryPanel(props: Props) {
       <div className="recovery-actions">
         {proposal && <button type="button" disabled={remaining <= 2} onClick={() => void store.confirm(deviceId, confirmRecovery)}>Confirmar recuperação</button>}
         {!proposal && state.kind !== 'indeterminate' && <button type="button" disabled={!canPrepare} onClick={() => void store.prepare(deviceId, deviceName, prepareRecovery)}>{busy ? 'Aguarde…' : 'Preparar recuperação'}</button>}
-        {needsRefresh && refreshDevice && <button type="button" disabled={refreshDisabled} onClick={() => void refreshDevice(deviceId)}>Atualizar leitura</button>}
+        {needsRefresh && refreshDevice && <button type="button" disabled={refreshDisabled} onClick={() => void refresh()}>Atualizar leitura</button>}
         {!busy && state.kind !== 'idle' && <button type="button" onClick={dismiss}>{state.kind === 'indeterminate' ? 'Ocultar resultado' : 'Dispensar'}</button>}
       </div>
       {proposal && <p>Dispensar não cancela a proposta no serviço; uma nova preparação pode aguardar sua expiração.</p>}
