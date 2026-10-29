@@ -253,3 +253,36 @@ def test_discovery_failure_cli_displays_only_closed_stage(setup_recovery, stage)
     assert stage in output
     assert "synthetic-private" not in output
     service.confirm_internal.assert_not_called()
+
+
+@pytest.mark.parametrize("category", ["PROVIDER_ERROR", "INVALID_ANNOUNCEMENT", "INVALID_RESULT", "COORDINATION_ERROR"])
+def test_discovery_other_closed_failures_are_reported(setup_recovery, category):
+    from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+    from smart_home_tray.recovery import PreparationResult, PreparationStatus, RecoveryFailure
+    env, deps, service, scheduler, stream = setup_recovery
+    service.prepare_internal.return_value = PreparationResult(PreparationStatus.DISCOVERY_FAILED, failure=RecoveryFailure[category])
+    assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
+    output = "".join(str(c.args[0]) for c in stream.write.call_args_list)
+    assert category in output
+    assert "synthetic-private" not in output
+    service.confirm_internal.assert_not_called()
+
+
+def test_catalog_failure_category_is_reported(setup_recovery):
+    from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+    from smart_home_tray.recovery import PreparationResult, PreparationStatus, RecoveryFailure
+    env, deps, service, scheduler, stream = setup_recovery
+    service.prepare_internal.return_value = PreparationResult(PreparationStatus.CATALOG_FAILED, failure=RecoveryFailure.CATALOG_ERROR)
+    assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
+    assert "CATALOG_ERROR" in "".join(str(c.args[0]) for c in stream.write.call_args_list)
+    service.confirm_internal.assert_not_called()
+
+
+def test_untrusted_failure_is_not_rendered(setup_recovery):
+    from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+    from smart_home_tray.recovery import PreparationStatus
+    env, deps, service, scheduler, stream = setup_recovery
+    service.prepare_internal.return_value = SimpleNamespace(status=PreparationStatus.DISCOVERY_FAILED, proposal=None, failure="private-marker")
+    assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
+    assert "private-marker" not in "".join(str(c.args[0]) for c in stream.write.call_args_list)
+    service.confirm_internal.assert_not_called()
