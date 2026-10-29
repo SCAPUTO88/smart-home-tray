@@ -242,7 +242,7 @@ def test_expiry_during_review_never_confirms(setup_recovery, answer):
     service.close.assert_called_once()
 
 
-@pytest.mark.parametrize("stage", ["STAGE_LISTENER", "STAGE_INTERFACES", "STAGE_SEND", "STAGE_RECEIVE", "STAGE_LIMIT"])
+@pytest.mark.parametrize("stage", ["STAGE_COORDINATION", "STAGE_LISTENER", "STAGE_INTERFACES", "STAGE_SEND", "STAGE_RECEIVE", "STAGE_LIMIT"])
 def test_discovery_failure_cli_displays_only_closed_stage(setup_recovery, stage):
     from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
     from smart_home_tray.recovery import PreparationResult, PreparationStatus, RecoveryFailure

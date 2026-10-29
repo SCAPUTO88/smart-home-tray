@@ -495,7 +495,7 @@ def test_scheduler_shutdown_cancels_queued_prepare_as_closed_without_validation(
 
 
 
-@pytest.mark.parametrize("stage", ["STAGE_LISTENER", "STAGE_INTERFACES", "STAGE_SEND", "STAGE_RECEIVE", "STAGE_LIMIT"])
+@pytest.mark.parametrize("stage", ["STAGE_COORDINATION", "STAGE_LISTENER", "STAGE_INTERFACES", "STAGE_SEND", "STAGE_RECEIVE", "STAGE_LIMIT"])
 def test_prepare_preserves_safe_discovery_stage_without_proposal(stage):
     from smart_home_tray.discovery import DiscoveryFailure, DiscoveryStageError
     from smart_home_tray.recovery import RecoveryFailure

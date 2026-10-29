@@ -27,6 +27,7 @@ class DiscoveryFailure(StrEnum):
     INVALID_ANNOUNCEMENT = "invalid_announcement"
     TIMEOUT = "timeout"
     PROVIDER_ERROR = "provider_error"
+    STAGE_COORDINATION = "stage_coordination"
     STAGE_LISTENER = "stage_listener"
     STAGE_INTERFACES = "stage_interfaces"
     STAGE_SEND = "stage_send"
@@ -38,6 +39,10 @@ class DiscoveryStageError(OSError):
     def __init__(self, stage: DiscoveryFailure, message: str):
         super().__init__(message)
         self.stage = stage
+
+
+class DiscoveryCoordinationError(RuntimeError):
+    stage = DiscoveryFailure.STAGE_COORDINATION
 
 
 class DiscoveryLimitError(RuntimeError):
@@ -209,8 +214,8 @@ def discover_candidates(
         )
     except TimeoutError:
         return _failed(DiscoveryFailure.TIMEOUT)
-    except (DiscoveryStageError, DiscoveryLimitError) as error:
-        allowed = {DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
+    except (DiscoveryStageError, DiscoveryLimitError, DiscoveryCoordinationError) as error:
+        allowed = {DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
         return _failed(error.stage if error.stage in allowed else DiscoveryFailure.PROVIDER_ERROR)
     except Exception:
         return _failed(DiscoveryFailure.PROVIDER_ERROR)

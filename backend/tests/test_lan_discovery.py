@@ -589,3 +589,81 @@ def test_listener_wait_timeout_remains_timeout():
     assert result.status is DiscoveryResultStatus.FAILED
     assert result.failure.value == "timeout"
     assert result.candidates == ()
+
+
+@pytest.mark.parametrize("case,expected", [("lock_busy", "stage_coordination"), ("lock_error", "stage_coordination"), ("send", "stage_send"), ("wait", "stage_receive"), ("recv", "stage_receive")])
+def test_non_os_errors_and_lock_are_classified(monkeypatch, case, expected):
+    import smart_home_tray.lan_discovery as lan
+    factory = FakeSocketFactory()
+    provider = make_provider(factory, FakeClock())
+    def fail(*args, **kwargs):
+        raise ValueError("private detail")
+    if case.startswith("lock"):
+        class Lock:
+            def acquire(self, **kwargs):
+                if case == "lock_error":
+                    raise ValueError("private detail")
+                return False
+        monkeypatch.setattr(lan, "_GLOBAL_SCAN_LOCK", Lock())
+    elif case == "send":
+        monkeypatch.setattr(provider, "_send_v35_requests", fail)
+    elif case == "wait":
+        monkeypatch.setattr(provider, "_wait_readable", fail)
+    else:
+        monkeypatch.setattr(provider, "_wait_readable", lambda sockets, timeout: (sockets[:1], [], []))
+        monkeypatch.setattr(FakeSocket, "recvfrom", fail)
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure.value == expected
+    assert result.candidates == ()
+    assert "private detail" not in repr(result)
+    assert all(sock.closed for sock in factory.sockets)
+
+
+def test_unexpected_send_timeout_is_distinct(monkeypatch):
+    provider = make_provider(FakeSocketFactory(), FakeClock())
+    monkeypatch.setattr(provider, "_send_v35_requests", lambda *args: (_ for _ in ()).throw(TimeoutError("private")))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.failure.value == "timeout"
+    assert result.candidates == ()
+
+
+def test_non_os_receive_failure_discards_previous_candidate(monkeypatch):
+    factory = FakeSocketFactory([(packet_33(), ("192.0.2.44", 6667))])
+    provider = make_provider(factory, FakeClock(), interfaces=lambda: ())
+    calls = iter([False, True])
+    original = FakeSocket.recvfrom
+    def receive(sock, size):
+        if next(calls):
+            raise ValueError("private failure")
+        return original(sock, size)
+    monkeypatch.setattr(FakeSocket, "recvfrom", receive)
+    monkeypatch.setattr(provider, "_wait_readable", lambda sockets, timeout: (sockets[:1], [], []))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.failure.value == "stage_receive"
+    assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)
+
+
+def test_coordination_release_error_discards_candidate(monkeypatch):
+    import smart_home_tray.lan_discovery as lan
+    class Lock:
+        def acquire(self, **kwargs): return True
+        def release(self): raise ValueError("private failure")
+    monkeypatch.setattr(lan, "_GLOBAL_SCAN_LOCK", Lock())
+    factory = FakeSocketFactory([(packet_33(), ("192.0.2.44", 6667))])
+    provider = make_provider(factory, FakeClock(), interfaces=lambda: ())
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.failure.value == "stage_coordination"
+    assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)
+
+
+def test_internal_broadcast_timeout_is_not_collapsed(monkeypatch):
+    factory = FakeSocketFactory()
+    provider = make_provider(factory, FakeClock())
+    monkeypatch.setattr(FakeSocket, "sendto", lambda *args: (_ for _ in ()).throw(TimeoutError("private")))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.failure.value == "timeout"
+    assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)

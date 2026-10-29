@@ -72,6 +72,7 @@ class RecoveryStatus(StrEnum):
 class RecoveryFailure(StrEnum):
     CATALOG_ERROR = "catalog_error"
     PROVIDER_ERROR = "provider_error"
+    STAGE_COORDINATION = "stage_coordination"
     STAGE_LISTENER = "stage_listener"
     STAGE_INTERFACES = "stage_interfaces"
     STAGE_SEND = "stage_send"
@@ -542,7 +543,7 @@ class RecoveryService:
                 return RecoveryResult(RecoveryStatus.TIMEOUT)
             failure = (
                 RecoveryFailure(discovery.failure.value)
-                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
+                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
                 else RecoveryFailure.PROVIDER_ERROR
             )
             return RecoveryResult(RecoveryStatus.DISCOVERY_FAILED, failure=failure)
@@ -715,7 +716,7 @@ class RecoveryService:
                 return RecoveryResult(RecoveryStatus.TIMEOUT)
             failure = (
                 RecoveryFailure(discovery.failure.value)
-                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
+                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
                 else RecoveryFailure.PROVIDER_ERROR
             )
             return RecoveryResult(
