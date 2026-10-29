@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from .discovery import DiscoveryAnnouncement, DiscoveryFailure, DiscoveryStageError, DiscoveryLimitError
+from .discovery import DiscoveryAnnouncement, DiscoveryFailure, DiscoveryStageError, DiscoveryLimitError, DiscoveryCoordinationError
 
 _LOG = logging.getLogger(__name__)
 _PORTS = (6666, 6667, 7000)
@@ -213,6 +213,8 @@ class TinyTuyaLanDiscoveryProvider:
                 if self._monotonic() >= deadline:
                     return failed, truncated
                 sock.sendto(self._discovery_packet(source_ip), (broadcast_ip, 7000))
+            except TimeoutError:
+                raise
             except Exception:
                 # A failed adapter is tolerated when listeners or other adapters work.
                 _LOG.debug("LAN discovery broadcast unavailable on one adapter")
@@ -224,12 +226,14 @@ class TinyTuyaLanDiscoveryProvider:
             raise ValueError("invalid discovery request")
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("invalid discovery timeout")
-        if not _GLOBAL_SCAN_LOCK.acquire(blocking=False):
-            raise RuntimeError("LAN discovery already active")
+        try:
+            acquired = _GLOBAL_SCAN_LOCK.acquire(blocking=False)
+        except Exception:
+            raise DiscoveryCoordinationError("LAN discovery coordination failed") from None
+        if not acquired:
+            raise DiscoveryCoordinationError("LAN discovery already active")
 
         opened: list[Any] = []
-        started_at = self._monotonic()
-        deadline = started_at + min(float(timeout_seconds), self._max_duration_seconds)
         announcements: list[DiscoveryAnnouncement] = []
         candidate_addresses: set[str] = set()
         processed = 0
@@ -239,6 +243,8 @@ class TinyTuyaLanDiscoveryProvider:
         broadcast_failed = False
         interfaces_truncated = False
         try:
+            started_at = self._monotonic()
+            deadline = started_at + min(float(timeout_seconds), self._max_duration_seconds)
             try:
                 listeners = self._open_listeners(deadline, opened)
             except TimeoutError:
@@ -257,9 +263,14 @@ class TinyTuyaLanDiscoveryProvider:
                     _LOG.debug("LAN interface enumeration unavailable")
                     raise DiscoveryStageError(DiscoveryFailure.STAGE_INTERFACES, "LAN interface enumeration failed") from None
             if interfaces and self._monotonic() < deadline:
-                broadcast_failed, interfaces_truncated = self._send_v35_requests(
-                    interfaces, deadline, opened
-                )
+                try:
+                    broadcast_failed, interfaces_truncated = self._send_v35_requests(
+                        interfaces, deadline, opened
+                    )
+                except TimeoutError:
+                    raise
+                except Exception:
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_SEND, "LAN discovery broadcast failed") from None
             while self._monotonic() < deadline and listeners:
                 if processed >= self._max_packets or len(candidate_addresses) >= self._max_candidates:
                     raise DiscoveryLimitError("LAN discovery collection limit reached")
@@ -269,7 +280,7 @@ class TinyTuyaLanDiscoveryProvider:
                     ready, _, _ = self._wait_readable(listeners, min(remaining, 0.1))
                 except TimeoutError:
                     raise
-                except OSError:
+                except Exception:
                     raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener wait failed") from None
                 if not ready:
                     continue
@@ -287,6 +298,8 @@ class TinyTuyaLanDiscoveryProvider:
                         receive_failures[sock] = receive_failures.get(sock, 0) + 1
                     except OSError:
                         receive_failures[sock] = receive_failures.get(sock, 0) + 1
+                    except Exception:
+                        raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener receive failed") from None
                     else:
                         receive_failures[sock] = 0
                         processed += 1
@@ -318,4 +331,7 @@ class TinyTuyaLanDiscoveryProvider:
                     sock.close()
                 except Exception:
                     _LOG.debug("LAN discovery socket cleanup failed")
-            _GLOBAL_SCAN_LOCK.release()
+            try:
+                _GLOBAL_SCAN_LOCK.release()
+            except Exception:
+                raise DiscoveryCoordinationError("LAN discovery coordination failed") from None

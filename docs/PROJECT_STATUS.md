@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## Classificação de falhas do provider — 2026-10-29
+
+- **Relato REAL do mantenedor:** a preparação da Luz Mesa retornou `DISCOVERY_FAILED` com `PROVIDER_ERROR`, sem candidato; não houve validação TCP do candidato, confirmação, adoção ou readback. A causa concreta permanece desconhecida.
+- **Ajuste offline:** falhas no lock do provider e exceções não `OSError` nos limites de envio e espera/recepção recebem categorias fechadas; timeout permanece distinto. Candidatos parciais não são retornados em falhas. `PROVIDER_ERROR` permanece para exceções não classificadas.
+- **Verificação:** 202 testes focados e 497 testes backend aprovados com fakes; nenhuma nova execução REAL ou acesso a dispositivos. Nova tentativa física exige autorização específica; o NO-GO integral de F2E.D.4.V1 permanece.
+
 ## Diagnóstico de descoberta da Luz Mesa — 2026-10-29
 
 - **Execução REAL informada pelo mantenedor:** após `PREPARAR LUZ MESA`, a CLI retornou `DISCOVERY_FAILED` sem linha de etapa e sem candidato. A mensagem sobre variáveis de Local Key é texto fixo; não comprova ausência de chave. A preparação não alcançou validação TCP do candidato, confirmação, adoção ou readback. A categoria e a causa concreta dessa falha não foram observadas.
