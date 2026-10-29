@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## Diagnóstico de descoberta da Luz Mesa — 2026-10-29
+
+- **Execução REAL informada pelo mantenedor:** após `PREPARAR LUZ MESA`, a CLI retornou `DISCOVERY_FAILED` sem linha de etapa e sem candidato. A mensagem sobre variáveis de Local Key é texto fixo; não comprova ausência de chave. A preparação não alcançou validação TCP do candidato, confirmação, adoção ou readback. A categoria e a causa concreta dessa falha não foram observadas.
+- **Correção offline:** a CLI exibe o nome de qualquer categoria fechada `RecoveryFailure` presente numa falha de preparação, sem expor exceções ou valores arbitrários. Categorias existentes de etapa permanecem distintas. Testes com fakes: 191 focados e 486 no backend aprovados; sem nova execução REAL, rede ou dispositivos.
+- A causa física original continua desconhecida; uma nova tentativa requer autorização específica. O NO-GO integral de F2E.D.4.V1 permanece.
+
 ## Descoberta LAN — broadcast e diagnóstico offline (2026-10-28)
 
 - A enumeração de interface ativa pode derivar o broadcast IPv4 da máscara quando o campo não é informado; endereços e máscaras inválidos, loopback, point-to-point conhecido e prefixos /31 e /32 são excluídos. Os limites existentes e a validação posterior permanecem.

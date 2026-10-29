@@ -514,3 +514,26 @@ def test_prepare_preserves_safe_discovery_stage_without_proposal(stage):
     finally:
         recovery.close(timeout_seconds=1)
         scheduler.stop(timeout_seconds=1)
+
+
+@pytest.mark.parametrize("kind", ["exception", "invalid_announcement"])
+def test_prepare_normalizes_provider_failures_without_proposal(kind):
+    from smart_home_tray.recovery import RecoveryFailure
+    class FailedProvider:
+        def discover(self, expected_device_id, *, timeout_seconds):
+            if kind == "exception":
+                raise RuntimeError("private diagnostic")
+            return (DiscoveryAnnouncement(expected_device_id, "invalid", "3.5"),)
+    manager = make_manager(make_store())
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    recovery = make_service(manager, FailedProvider())
+    try:
+        result = recovery.prepare_internal(DEVICE_ID, scheduler)
+        assert result.status is PreparationStatus.DISCOVERY_FAILED
+        assert result.failure is (RecoveryFailure.PROVIDER_ERROR if kind == "exception" else RecoveryFailure.INVALID_ANNOUNCEMENT)
+        assert result.proposal is None
+        assert "private diagnostic" not in repr(result)
+    finally:
+        recovery.close(timeout_seconds=1)
+        scheduler.stop(timeout_seconds=1)
