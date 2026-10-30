@@ -77,6 +77,9 @@ class RecoveryFailure(StrEnum):
     STAGE_INTERFACES = "stage_interfaces"
     STAGE_SEND = "stage_send"
     STAGE_RECEIVE = "stage_receive"
+    STAGE_RECEIVE_WAIT = "stage_receive_wait"
+    STAGE_RECEIVE_EXCEPTION = "stage_receive_exception"
+    STAGE_RECEIVE_RETIRED = "stage_receive_retired"
     STAGE_LIMIT = "stage_limit"
     INVALID_ANNOUNCEMENT = "invalid_announcement"
     INVALID_RESULT = "invalid_result"
@@ -543,7 +546,7 @@ class RecoveryService:
                 return RecoveryResult(RecoveryStatus.TIMEOUT)
             failure = (
                 RecoveryFailure(discovery.failure.value)
-                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
+                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_RECEIVE_WAIT, DiscoveryFailure.STAGE_RECEIVE_EXCEPTION, DiscoveryFailure.STAGE_RECEIVE_RETIRED, DiscoveryFailure.STAGE_LIMIT}
                 else RecoveryFailure.PROVIDER_ERROR
             )
             return RecoveryResult(RecoveryStatus.DISCOVERY_FAILED, failure=failure)
@@ -716,7 +719,7 @@ class RecoveryService:
                 return RecoveryResult(RecoveryStatus.TIMEOUT)
             failure = (
                 RecoveryFailure(discovery.failure.value)
-                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_LIMIT}
+                if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_RECEIVE_WAIT, DiscoveryFailure.STAGE_RECEIVE_EXCEPTION, DiscoveryFailure.STAGE_RECEIVE_RETIRED, DiscoveryFailure.STAGE_LIMIT}
                 else RecoveryFailure.PROVIDER_ERROR
             )
             return RecoveryResult(

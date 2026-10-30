@@ -115,7 +115,7 @@ def _run_mesa_recovery(*, environ, stdin, stdout, dependencies) -> int:
             say(f'Preparação: {label}. Pare e revise o resultado.')
             failure = getattr(result, 'failure', None)
             if isinstance(failure, RecoveryFailure):
-                stages = {RecoveryFailure.STAGE_COORDINATION, RecoveryFailure.STAGE_LISTENER, RecoveryFailure.STAGE_INTERFACES, RecoveryFailure.STAGE_SEND, RecoveryFailure.STAGE_RECEIVE, RecoveryFailure.STAGE_LIMIT}
+                stages = {RecoveryFailure.STAGE_COORDINATION, RecoveryFailure.STAGE_LISTENER, RecoveryFailure.STAGE_INTERFACES, RecoveryFailure.STAGE_SEND, RecoveryFailure.STAGE_RECEIVE, RecoveryFailure.STAGE_RECEIVE_WAIT, RecoveryFailure.STAGE_RECEIVE_EXCEPTION, RecoveryFailure.STAGE_RECEIVE_RETIRED, RecoveryFailure.STAGE_LIMIT}
                 prefix = 'Etapa da descoberta' if result.status is PreparationStatus.DISCOVERY_FAILED and failure in stages else 'Categoria da falha'
                 say(f'{prefix}: {failure.name}')
             return 2

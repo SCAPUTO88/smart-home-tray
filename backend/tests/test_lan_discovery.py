@@ -324,7 +324,7 @@ def test_retired_listener_makes_partial_candidate_result_fail_closed():
     result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
 
     assert result.status is DiscoveryResultStatus.FAILED
-    assert result.failure.value == "stage_receive"
+    assert result.failure.value == "stage_receive_retired"
     assert result.candidates == ()
     assert all(sock.closed for sock in factory.sockets)
 
@@ -547,7 +547,8 @@ def test_discovery_failure_exposes_safe_stage(stage):
     provider = make_provider(factory, clock, interfaces=(lambda: (_ for _ in ()).throw(OSError("sensitive"))) if stage == "interfaces" else None, packet_limit=1 if stage == "limit" else 256)
     result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
     assert result.status is DiscoveryResultStatus.FAILED
-    assert result.failure is DiscoveryFailure["STAGE_" + stage.upper()]
+    expected = "STAGE_RECEIVE_RETIRED" if stage == "receive" else "STAGE_" + stage.upper()
+    assert result.failure is DiscoveryFailure[expected]
     assert result.candidates == ()
 
 
@@ -591,7 +592,7 @@ def test_listener_wait_timeout_remains_timeout():
     assert result.candidates == ()
 
 
-@pytest.mark.parametrize("case,expected", [("lock_busy", "stage_coordination"), ("lock_error", "stage_coordination"), ("send", "stage_send"), ("wait", "stage_receive"), ("recv", "stage_receive")])
+@pytest.mark.parametrize("case,expected", [("lock_busy", "stage_coordination"), ("lock_error", "stage_coordination"), ("send", "stage_send"), ("wait", "stage_receive_wait"), ("recv", "stage_receive_exception")])
 def test_non_os_errors_and_lock_are_classified(monkeypatch, case, expected):
     import smart_home_tray.lan_discovery as lan
     factory = FakeSocketFactory()
@@ -640,7 +641,7 @@ def test_non_os_receive_failure_discards_previous_candidate(monkeypatch):
     monkeypatch.setattr(FakeSocket, "recvfrom", receive)
     monkeypatch.setattr(provider, "_wait_readable", lambda sockets, timeout: (sockets[:1], [], []))
     result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
-    assert result.failure.value == "stage_receive"
+    assert result.failure.value == "stage_receive_exception"
     assert result.candidates == ()
     assert all(sock.closed for sock in factory.sockets)
 
@@ -666,4 +667,21 @@ def test_internal_broadcast_timeout_is_not_collapsed(monkeypatch):
     result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
     assert result.failure.value == "timeout"
     assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)
+
+
+@pytest.mark.parametrize("kind,expected", [("wait", "stage_receive_wait"), ("recv", "stage_receive_exception"), ("retired", "stage_receive_retired")])
+def test_receive_failure_has_specific_category(monkeypatch, kind, expected):
+    factory = FakeSocketFactory(receive_error=(kind == "retired"))
+    provider = make_provider(factory, FakeClock(), interfaces=lambda: ())
+    if kind == "wait":
+        monkeypatch.setattr(provider, "_wait_readable", lambda *a: (_ for _ in ()).throw(ValueError("private details")))
+    elif kind == "recv":
+        monkeypatch.setattr(provider, "_wait_readable", lambda sockets, timeout: (sockets[:1], [], []))
+        monkeypatch.setattr(FakeSocket, "recvfrom", lambda *a: (_ for _ in ()).throw(ValueError("private details")))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.status is DiscoveryResultStatus.FAILED
+    assert result.failure.value == expected
+    assert result.candidates == ()
+    assert "private details" not in repr(result)
     assert all(sock.closed for sock in factory.sockets)
