@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .config import load_config
+from .discovery import WaitDiagnostic, WaitFailureKind
 from .recovery import ConfirmationStatus, PreparationStatus, ReadbackStatus, RecoveryFailure
 
 
@@ -118,6 +119,14 @@ def _run_mesa_recovery(*, environ, stdin, stdout, dependencies) -> int:
                 stages = {RecoveryFailure.STAGE_COORDINATION, RecoveryFailure.STAGE_LISTENER, RecoveryFailure.STAGE_INTERFACES, RecoveryFailure.STAGE_SEND, RecoveryFailure.STAGE_RECEIVE, RecoveryFailure.STAGE_RECEIVE_WAIT, RecoveryFailure.STAGE_RECEIVE_EXCEPTION, RecoveryFailure.STAGE_RECEIVE_RETIRED, RecoveryFailure.STAGE_LIMIT}
                 prefix = 'Etapa da descoberta' if result.status is PreparationStatus.DISCOVERY_FAILED and failure in stages else 'Categoria da falha'
                 say(f'{prefix}: {failure.name}')
+                diagnostic = getattr(result, 'wait_diagnostic', None)
+                if failure is RecoveryFailure.STAGE_RECEIVE_WAIT and isinstance(diagnostic, WaitDiagnostic) and isinstance(diagnostic.kind, WaitFailureKind):
+                    say(f'Diagnóstico da espera: {diagnostic.kind.name}')
+                    if diagnostic.kind is WaitFailureKind.OS_ERROR:
+                        for field in ('winerror', 'errno'):
+                            value = getattr(diagnostic, field, None)
+                            if type(value) is int and -(2**31) <= value < 2**32:
+                                say(f'{field}={value}')
             return 2
         proposal = result.proposal
         candidate = ipaddress.IPv4Address(proposal.candidate_address)

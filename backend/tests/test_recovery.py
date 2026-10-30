@@ -352,7 +352,7 @@ def test_single_candidate_is_explicitly_unverified_and_contains_only_allowlisted
     assert str(result.candidates[0].address) == "192.0.2.10"
     assert result.candidates[0].announced_versions == ("3.5",)
     assert {field.name for field in dataclasses.fields(result)} == {
-        "status", "candidates", "failure"
+        "status", "candidates", "failure", "wait_diagnostic"
     }
     assert {field.name for field in dataclasses.fields(result.candidates[0])} == {
         "device_id", "address", "announced_versions"
