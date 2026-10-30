@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from .discovery import DiscoveryAnnouncement, DiscoveryFailure, DiscoveryStageError, DiscoveryLimitError, DiscoveryCoordinationError
+from .discovery import DiscoveryAnnouncement, DiscoveryFailure, DiscoveryStageError, DiscoveryLimitError, DiscoveryCoordinationError, WaitDiagnostic, WaitFailureKind
 
 _LOG = logging.getLogger(__name__)
 _PORTS = (6666, 6667, 7000)
@@ -280,8 +280,22 @@ class TinyTuyaLanDiscoveryProvider:
                     ready, _, _ = self._wait_readable(listeners, min(remaining, 0.1))
                 except TimeoutError:
                     raise
-                except Exception:
-                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_WAIT, "LAN discovery listener wait failed") from None
+                except Exception as error:
+                    if isinstance(error, OSError):
+                        def number(name):
+                            try:
+                                value = getattr(error, name, None)
+                                return value if type(value) is int and -(2**31) <= value < 2**32 else None
+                            except Exception:
+                                return None
+                        diagnostic = WaitDiagnostic(WaitFailureKind.OS_ERROR, errno=number("errno"), winerror=number("winerror"))
+                    elif isinstance(error, ValueError):
+                        diagnostic = WaitDiagnostic(WaitFailureKind.VALUE_ERROR)
+                    elif isinstance(error, TypeError):
+                        diagnostic = WaitDiagnostic(WaitFailureKind.TYPE_ERROR)
+                    else:
+                        diagnostic = WaitDiagnostic(WaitFailureKind.OTHER_ERROR)
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_WAIT, "LAN discovery listener wait failed", wait_diagnostic=diagnostic) from None
                 if not ready:
                     continue
                 for sock in ready:

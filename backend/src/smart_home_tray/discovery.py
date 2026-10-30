@@ -38,10 +38,34 @@ class DiscoveryFailure(StrEnum):
     STAGE_LIMIT = "stage_limit"
 
 
+class WaitFailureKind(StrEnum):
+    OS_ERROR = "os_error"
+    VALUE_ERROR = "value_error"
+    TYPE_ERROR = "type_error"
+    OTHER_ERROR = "other_error"
+
+
+@dataclass(frozen=True)
+class WaitDiagnostic:
+    kind: WaitFailureKind
+    errno: int | None = None
+    winerror: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, WaitFailureKind):
+            raise ValueError("invalid wait diagnostic kind")
+        for value in (self.errno, self.winerror):
+            if value is not None and (type(value) is not int or not -(2**31) <= value < 2**32):
+                raise ValueError("invalid wait diagnostic number")
+        if self.kind is not WaitFailureKind.OS_ERROR and (self.errno is not None or self.winerror is not None):
+            raise ValueError("non-OS diagnostics cannot carry codes")
+
+
 class DiscoveryStageError(OSError):
-    def __init__(self, stage: DiscoveryFailure, message: str):
+    def __init__(self, stage: DiscoveryFailure, message: str, *, wait_diagnostic: WaitDiagnostic | None = None):
         super().__init__(message)
         self.stage = stage
+        self.wait_diagnostic = wait_diagnostic
 
 
 class DiscoveryCoordinationError(RuntimeError):
@@ -77,6 +101,7 @@ class DiscoveryResult:
     status: DiscoveryResultStatus
     candidates: tuple[DiscoveryCandidate, ...] = ()
     failure: DiscoveryFailure | None = None
+    wait_diagnostic: WaitDiagnostic | None = None
 
     def __post_init__(self) -> None:
         if self.status is DiscoveryResultStatus.FAILED:
@@ -102,8 +127,8 @@ class DiscoveryProvider(Protocol):
         """Return announcements observed within the caller-provided time budget."""
 
 
-def _failed(failure: DiscoveryFailure) -> DiscoveryResult:
-    return DiscoveryResult(DiscoveryResultStatus.FAILED, failure=failure)
+def _failed(failure: DiscoveryFailure, *, wait_diagnostic: WaitDiagnostic | None = None) -> DiscoveryResult:
+    return DiscoveryResult(DiscoveryResultStatus.FAILED, failure=failure, wait_diagnostic=wait_diagnostic)
 
 
 def _normalize_version(value: object) -> str | None:
@@ -219,7 +244,11 @@ def discover_candidates(
         return _failed(DiscoveryFailure.TIMEOUT)
     except (DiscoveryStageError, DiscoveryLimitError, DiscoveryCoordinationError) as error:
         allowed = {DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_RECEIVE_WAIT, DiscoveryFailure.STAGE_RECEIVE_EXCEPTION, DiscoveryFailure.STAGE_RECEIVE_RETIRED, DiscoveryFailure.STAGE_LIMIT}
-        return _failed(error.stage if error.stage in allowed else DiscoveryFailure.PROVIDER_ERROR)
+        stage = error.stage if error.stage in allowed else DiscoveryFailure.PROVIDER_ERROR
+        diagnostic = getattr(error, "wait_diagnostic", None)
+        if stage is not DiscoveryFailure.STAGE_RECEIVE_WAIT or not isinstance(diagnostic, WaitDiagnostic):
+            diagnostic = None
+        return _failed(stage, wait_diagnostic=diagnostic)
     except Exception:
         return _failed(DiscoveryFailure.PROVIDER_ERROR)
 

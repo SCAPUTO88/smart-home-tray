@@ -558,3 +558,26 @@ def test_receive_stage_does_not_publish_proposal(stage):
     finally:
         recovery.close(timeout_seconds=1)
         scheduler.stop(timeout_seconds=1)
+
+
+def test_wait_diagnostic_survives_prepare_without_proposal():
+    from smart_home_tray.discovery import DiscoveryFailure, DiscoveryStageError, WaitDiagnostic, WaitFailureKind
+    from smart_home_tray.recovery import RecoveryFailure
+    diagnostic = WaitDiagnostic(WaitFailureKind.OS_ERROR, errno=22, winerror=10038)
+    class FailedProvider:
+        def discover(self, expected_device_id, *, timeout_seconds):
+            raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_WAIT, "private details", wait_diagnostic=diagnostic)
+    manager = make_manager(make_store())
+    scheduler = CommandScheduler(manager, coalescing_window_seconds=0)
+    scheduler.start()
+    recovery = make_service(manager, FailedProvider())
+    try:
+        result = recovery.prepare_internal(DEVICE_ID, scheduler)
+        assert result.status is PreparationStatus.DISCOVERY_FAILED
+        assert result.failure is RecoveryFailure.STAGE_RECEIVE_WAIT
+        assert result.wait_diagnostic == diagnostic
+        assert result.proposal is None
+        assert "private details" not in repr(result)
+    finally:
+        recovery.close(timeout_seconds=1)
+        scheduler.stop(timeout_seconds=1)

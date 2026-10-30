@@ -685,3 +685,48 @@ def test_receive_failure_has_specific_category(monkeypatch, kind, expected):
     assert result.candidates == ()
     assert "private details" not in repr(result)
     assert all(sock.closed for sock in factory.sockets)
+
+
+@pytest.mark.parametrize("case", ["os", "other"])
+def test_wait_failure_has_sanitized_diagnostic(monkeypatch, case):
+    from smart_home_tray.discovery import WaitFailureKind
+    factory = FakeSocketFactory()
+    provider = make_provider(factory, FakeClock(), interfaces=lambda: ())
+    error = OSError(22, "sensitive-message") if case == "os" else ValueError("sensitive-message")
+    if case == "os":
+        error.winerror = 10038
+    def fail(*args):
+        raise error
+    monkeypatch.setattr(provider, "_wait_readable", fail)
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.failure.value == "stage_receive_wait"
+    assert result.wait_diagnostic.kind is (WaitFailureKind.OS_ERROR if case == "os" else WaitFailureKind.VALUE_ERROR)
+    assert result.wait_diagnostic.errno == (22 if case == "os" else None)
+    assert result.wait_diagnostic.winerror == (10038 if case == "os" else None)
+    assert "sensitive-message" not in repr(result)
+    assert result.candidates == ()
+    assert all(sock.closed for sock in factory.sockets)
+
+
+def test_wait_non_numeric_os_fields_are_discarded(monkeypatch):
+    from smart_home_tray.discovery import WaitFailureKind
+    provider = make_provider(FakeSocketFactory(), FakeClock(), interfaces=lambda: ())
+    error = OSError("private-message")
+    error.errno = "private-errno"
+    error.winerror = True
+    monkeypatch.setattr(provider, "_wait_readable", lambda *args: (_ for _ in ()).throw(error))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.wait_diagnostic.kind is WaitFailureKind.OS_ERROR
+    assert result.wait_diagnostic.errno is None
+    assert result.wait_diagnostic.winerror is None
+    assert "private" not in repr(result)
+
+
+@pytest.mark.parametrize("error,expected", [(TypeError("private"), "TYPE_ERROR"), (RuntimeError("private"), "OTHER_ERROR")])
+def test_wait_non_os_errors_have_closed_kind(monkeypatch, error, expected):
+    provider = make_provider(FakeSocketFactory(), FakeClock(), interfaces=lambda: ())
+    monkeypatch.setattr(provider, "_wait_readable", lambda *args: (_ for _ in ()).throw(error))
+    result = discover_candidates(provider, DEVICE_ID, timeout_seconds=1.0)
+    assert result.failure.value == "stage_receive_wait"
+    assert result.wait_diagnostic.kind.name == expected
+    assert "private" not in repr(result)
