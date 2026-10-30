@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## Diagnóstico de recepção UDP — 2026-10-30
+
+- **Relato REAL do mantenedor:** a preparação terminou em `DISCOVERY_FAILED` / `STAGE_RECEIVE`. O comando informado apontava para um checkout pós-PR #61, mas não há confirmação independente do processo executado. A categoria não identifica a causa física.
+- **Ajuste offline:** a recepção distingue falha de espera, exceção inesperada de `recvfrom` e retirada de listener após erros consecutivos; as categorias fechadas chegam à CLI sem dados brutos. `TIMEOUT`, escuta sem dados e descarte de candidatos parciais permanecem distintos.
+- **Verificação:** 211 testes focados e 506 testes backend passaram com fakes. Não houve nova execução REAL ou acesso a dispositivos. O NO-GO integral de F2E.D.4.V1 permanece.
+
 ## Classificação de falhas do provider — 2026-10-29
 
 - **Relato REAL do mantenedor:** a preparação da Luz Mesa retornou `DISCOVERY_FAILED` com `PROVIDER_ERROR`, sem candidato; não houve validação TCP do candidato, confirmação, adoção ou readback. A causa concreta permanece desconhecida.

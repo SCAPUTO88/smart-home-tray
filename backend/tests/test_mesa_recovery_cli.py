@@ -286,3 +286,16 @@ def test_untrusted_failure_is_not_rendered(setup_recovery):
     assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
     assert "private-marker" not in "".join(str(c.args[0]) for c in stream.write.call_args_list)
     service.confirm_internal.assert_not_called()
+
+
+@pytest.mark.parametrize("category", ["STAGE_RECEIVE_WAIT", "STAGE_RECEIVE_EXCEPTION", "STAGE_RECEIVE_RETIRED"])
+def test_specific_receive_failure_does_not_confirm(setup_recovery, category):
+    from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+    from smart_home_tray.recovery import PreparationResult, PreparationStatus, RecoveryFailure
+    env, deps, service, scheduler, stream = setup_recovery
+    service.prepare_internal.return_value = PreparationResult(PreparationStatus.DISCOVERY_FAILED, failure=RecoveryFailure[category])
+    assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
+    output = "".join(str(c.args[0]) for c in stream.write.call_args_list)
+    assert category in output
+    assert "synthetic-private" not in output
+    service.confirm_internal.assert_not_called()
