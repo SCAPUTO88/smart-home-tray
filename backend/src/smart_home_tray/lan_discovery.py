@@ -281,7 +281,7 @@ class TinyTuyaLanDiscoveryProvider:
                 except TimeoutError:
                     raise
                 except Exception:
-                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener wait failed") from None
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_WAIT, "LAN discovery listener wait failed") from None
                 if not ready:
                     continue
                 for sock in ready:
@@ -299,7 +299,7 @@ class TinyTuyaLanDiscoveryProvider:
                     except OSError:
                         receive_failures[sock] = receive_failures.get(sock, 0) + 1
                     except Exception:
-                        raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener receive failed") from None
+                        raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_EXCEPTION, "LAN discovery listener receive failed") from None
                     else:
                         receive_failures[sock] = 0
                         processed += 1
@@ -313,11 +313,11 @@ class TinyTuyaLanDiscoveryProvider:
                         retired_listener = True
                         _LOG.debug("LAN discovery listener retired after repeated receive failures")
                 if not listeners:
-                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listeners failed")
+                    raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_RETIRED, "LAN discovery listeners failed")
             if not waited_for_packets and self._monotonic() >= deadline:
                 raise TimeoutError("LAN discovery budget expired before listening")
             if retired_listener:
-                raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE, "LAN discovery listener receive failed")
+                raise DiscoveryStageError(DiscoveryFailure.STAGE_RECEIVE_RETIRED, "LAN discovery listener receive failed")
             if broadcast_failed:
                 raise DiscoveryStageError(DiscoveryFailure.STAGE_SEND, "LAN discovery broadcast failed")
             if interfaces_truncated:
