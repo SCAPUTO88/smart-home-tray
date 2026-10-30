@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## Diagnóstico da espera UDP — 2026-10-30
+
+- **Relato do mantenedor:** a última tentativa REAL terminou em `STAGE_RECEIVE_WAIT`. O diagnóstico posterior de `select()` em loopback retornou sem erro e sem sockets legíveis; não reproduz os listeners da aplicação e não determina a causa.
+- **Ajuste offline:** a falha de espera preserva a categoria existente e transporta somente uma classe fechada e, para `OSError`, códigos numéricos válidos `winerror` e `errno` quando disponíveis. A CLI não apresenta mensagem ou traceback da exceção.
+- **Verificação:** 219 testes focados e 514 testes backend passaram com fakes. Não houve nova execução REAL nesta tarefa. A autorização anterior foi consumida; qualquer nova tentativa física exige autorização específica. F2E.D.4.V1 permanece em NO-GO integral.
+
 ## Diagnóstico de recepção UDP — 2026-10-30
 
 - **Relato REAL do mantenedor:** a preparação terminou em `DISCOVERY_FAILED` / `STAGE_RECEIVE`. O comando informado apontava para um checkout pós-PR #61, mas não há confirmação independente do processo executado. A categoria não identifica a causa física.

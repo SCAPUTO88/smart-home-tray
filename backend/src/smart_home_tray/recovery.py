@@ -20,6 +20,7 @@ from .models import DeviceStatus, ErrorCode
 from .device_manager import DeviceManager
 from .discovery import (
     DiscoveryFailure,
+    WaitDiagnostic,
     DiscoveryProvider,
     DiscoveryResultStatus,
     discover_candidates,
@@ -114,6 +115,7 @@ class PreparationResult:
     proposal: ProposalDescriptor | None = None
     failure: RecoveryFailure | None = None
     validation_status: str | None = None
+    wait_diagnostic: WaitDiagnostic | None = None
 
     def __post_init__(self) -> None:
         if (self.status is PreparationStatus.PROPOSAL_READY_INTERNAL) != (self.proposal is not None):
@@ -177,6 +179,7 @@ class RecoveryResult:
     status: RecoveryStatus
     candidates: tuple[RecoveryCandidate, ...] = ()
     failure: RecoveryFailure | None = None
+    wait_diagnostic: WaitDiagnostic | None = None
 
     def __post_init__(self) -> None:
         if self.status is RecoveryStatus.CANDIDATE_UNVERIFIED and len(self.candidates) != 1:
@@ -549,7 +552,7 @@ class RecoveryService:
                 if discovery.failure in {DiscoveryFailure.INVALID_ANNOUNCEMENT, DiscoveryFailure.STAGE_COORDINATION, DiscoveryFailure.STAGE_LISTENER, DiscoveryFailure.STAGE_INTERFACES, DiscoveryFailure.STAGE_SEND, DiscoveryFailure.STAGE_RECEIVE, DiscoveryFailure.STAGE_RECEIVE_WAIT, DiscoveryFailure.STAGE_RECEIVE_EXCEPTION, DiscoveryFailure.STAGE_RECEIVE_RETIRED, DiscoveryFailure.STAGE_LIMIT}
                 else RecoveryFailure.PROVIDER_ERROR
             )
-            return RecoveryResult(RecoveryStatus.DISCOVERY_FAILED, failure=failure)
+            return RecoveryResult(RecoveryStatus.DISCOVERY_FAILED, failure=failure, wait_diagnostic=discovery.wait_diagnostic)
         if discovery.status is DiscoveryResultStatus.NOT_FOUND:
             return RecoveryResult(RecoveryStatus.NOT_FOUND)
         candidates = tuple(
@@ -583,6 +586,7 @@ class RecoveryService:
         return PreparationResult(
             mapping.get(result.status, PreparationStatus.INTERNAL_ERROR),
             failure=result.failure,
+            wait_diagnostic=result.wait_diagnostic,
         )
 
     def _await_prepare_future(self, future, deadline: float) -> PreparationResult:
@@ -725,6 +729,7 @@ class RecoveryService:
             return RecoveryResult(
                 RecoveryStatus.DISCOVERY_FAILED,
                 failure=failure,
+                wait_diagnostic=discovery.wait_diagnostic,
             )
         if discovery.status is DiscoveryResultStatus.NOT_FOUND:
             return RecoveryResult(RecoveryStatus.NOT_FOUND)

@@ -299,3 +299,27 @@ def test_specific_receive_failure_does_not_confirm(setup_recovery, category):
     assert category in output
     assert "synthetic-private" not in output
     service.confirm_internal.assert_not_called()
+
+
+def test_wait_os_diagnostic_is_sanitized_and_never_confirms(setup_recovery):
+    from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+    from smart_home_tray.discovery import WaitDiagnostic, WaitFailureKind
+    from smart_home_tray.recovery import PreparationResult, PreparationStatus, RecoveryFailure
+    env, deps, service, scheduler, stream = setup_recovery
+    service.prepare_internal.return_value = PreparationResult(PreparationStatus.DISCOVERY_FAILED, failure=RecoveryFailure.STAGE_RECEIVE_WAIT, wait_diagnostic=WaitDiagnostic(WaitFailureKind.OS_ERROR, errno=22, winerror=10038))
+    assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
+    output = "".join(str(call.args[0]) for call in stream.write.call_args_list)
+    assert "STAGE_RECEIVE_WAIT" in output and "OS_ERROR" in output
+    assert "errno=22" in output and "winerror=10038" in output
+    assert "synthetic-private" not in output
+    service.confirm_internal.assert_not_called()
+
+
+def test_wait_diagnostic_untrusted_object_is_not_printed(setup_recovery):
+    from smart_home_tray.mesa_recovery_cli import run_mesa_recovery
+    from smart_home_tray.recovery import PreparationStatus, RecoveryFailure
+    env, deps, service, scheduler, stream = setup_recovery
+    service.prepare_internal.return_value = SimpleNamespace(status=PreparationStatus.DISCOVERY_FAILED, proposal=None, failure=RecoveryFailure.STAGE_RECEIVE_WAIT, wait_diagnostic=SimpleNamespace(kind="private-marker", errno="private-marker", winerror="private-marker"))
+    assert run_mesa_recovery(environ=env, stdin=stream, stdout=stream, dependencies=deps) != 0
+    assert "private-marker" not in "".join(str(c.args[0]) for c in stream.write.call_args_list)
+    service.confirm_internal.assert_not_called()
