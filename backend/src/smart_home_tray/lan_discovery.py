@@ -25,6 +25,10 @@ _MAX_INTERFACE_RECORDS = 64
 _MAX_RECEIVE_FAILURES_PER_LISTENER = 3
 
 
+def _wait_for_readable(listeners: Sequence[Any], timeout: float) -> tuple[Sequence[Any], Any, Any]:
+    return select.select(listeners, [], [], timeout)
+
+
 def _version_text(value: object) -> str | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -65,7 +69,7 @@ class TinyTuyaLanDiscoveryProvider:
         *,
         socket_factory: Callable[..., Any] = socket.socket,
         interface_provider: Callable[[], Sequence[tuple[str, str, str]]] | None = None,
-        wait_readable: Callable[[Sequence[Any], float], tuple[Sequence[Any], Any, Any]] = select.select,
+        wait_readable: Callable[[Sequence[Any], float], tuple[Sequence[Any], Any, Any]] = _wait_for_readable,
         monotonic: Callable[[], float] = time.monotonic,
         max_packets: int = 256,
         max_candidates: int = 64,
