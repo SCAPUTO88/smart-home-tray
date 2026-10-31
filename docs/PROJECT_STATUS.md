@@ -1,5 +1,11 @@
 # Smart Home Tray — Project Status
 
+## Correção da espera UDP — 2026-10-31
+
+- **Causa reproduzida offline:** com três listeners criados por `_open_listeners()`, a chamada padrão de espera produziu `TypeError`: `select expected at least 3 arguments, got 2`. O provider chamava `select.select` diretamente com listeners e timeout; os testes existentes injetavam fakes de dois argumentos.
+- **Correção:** um adaptador mantém a interface de dois argumentos do provider e chama `select.select(listeners, [], [], timeout)`. Uma regressão offline verifica os argumentos e o retorno usando um `select` falso.
+- **Verificação offline:** 193 testes focados e 515 testes backend passaram; `git diff --check` passou. Não houve CLI REAL, acesso à LAN ou dispositivos, nem validação física. A autorização física anterior foi consumida; uma nova tentativa exige autorização específica. F2E.D.4.V1 permanece em NO-GO integral.
+
 ## Diagnóstico da espera UDP — 2026-10-30
 
 - **Relato do mantenedor:** a última tentativa REAL terminou em `STAGE_RECEIVE_WAIT`. O diagnóstico posterior de `select()` em loopback retornou sem erro e sem sockets legíveis; não reproduz os listeners da aplicação e não determina a causa.

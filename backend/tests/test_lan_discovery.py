@@ -155,6 +155,22 @@ class FakeClock:
         self.now += seconds
 
 
+def test_default_wait_passes_read_write_exception_lists_and_timeout(monkeypatch):
+    calls = []
+    listeners = [object(), object(), object()]
+    result = ([listeners[0]], [], [])
+
+    def fake_select(read, write, exceptional, timeout):
+        calls.append((read, write, exceptional, timeout))
+        return result
+
+    monkeypatch.setattr("smart_home_tray.lan_discovery.select.select", fake_select)
+    provider = TinyTuyaLanDiscoveryProvider()
+
+    assert provider._wait_readable(listeners, 0.1) == result
+    assert calls == [(listeners, [], [], 0.1)]
+
+
 def make_provider(factory, clock, *, interfaces=None, packet_limit=256, candidate_limit=64):
     def wait_readable(sockets, timeout):
         clock.advance(timeout)
